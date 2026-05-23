@@ -772,7 +772,7 @@ follow_log() {
     fail "Log file not found: ${log_file}"
   fi
   log "Following log: ${log_file} (Ctrl+C to stop)"
-  tail -f "${log_file}"
+  tail -F "${log_file}"
 }
 
 do_run() {
