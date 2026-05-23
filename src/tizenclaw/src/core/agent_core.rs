@@ -1503,6 +1503,10 @@ impl AgentCore {
     }
 
     pub async fn register_mcp_session(&self, server_name: &str, session_id: &str) -> bool {
+        self.register_mcp_session_with_flag(server_name, session_id, None).await
+    }
+
+    pub async fn register_mcp_session_with_flag(&self, server_name: &str, session_id: &str, custom_flag: Option<&str>) -> bool {
         let mcp_config_path = self.platform.paths.config_dir.join("mcp_servers.json");
 
         let content = match std::fs::read_to_string(&mcp_config_path) {
@@ -1525,12 +1529,35 @@ impl AgentCore {
             None => return false,
         };
 
+        // Scan existing arguments to determine the session ID flag
+        let token_flags = vec!["--session", "--mcp-session-id", "oauth_token", "--token", "token"];
+        let mut target_flag = custom_flag.map(|f| f.to_string());
+
+        if target_flag.is_none() {
+            if let Some(args_arr) = server_config.get("args").and_then(|v| v.as_array()) {
+                for flag in &token_flags {
+                    if args_arr.iter().any(|arg| arg.as_str() == Some(*flag)) {
+                        target_flag = Some(flag.to_string());
+                        break;
+                    }
+                }
+            }
+        }
+
+        let target_flag = target_flag.unwrap_or_else(|| {
+            if server_name.contains("zepto") {
+                "--session".to_string()
+            } else {
+                "--mcp-session-id".to_string()
+            }
+        });
+
         let mut args_updated = false;
         if let Some(args_arr) = server_config.get_mut("args").and_then(|v| v.as_array_mut()) {
             let mut i = 0;
             while i < args_arr.len() {
                 if let Some(arg_str) = args_arr[i].as_str() {
-                    if arg_str == "--session" && i + 1 < args_arr.len() {
+                    if arg_str == target_flag && i + 1 < args_arr.len() {
                         args_arr[i + 1] = serde_json::json!(session_id);
                         args_updated = true;
                         break;
@@ -1539,22 +1566,15 @@ impl AgentCore {
                 i += 1;
             }
             if !args_updated {
-                args_arr.push(serde_json::json!("--session"));
+                args_arr.push(serde_json::json!(target_flag));
                 args_arr.push(serde_json::json!(session_id));
             }
         } else {
             let mut arr = Vec::new();
-            if let Some(s_type) = server_config.get("type").and_then(|v| v.as_str()) {
-                if s_type == "http" {
-                } else {
-                    arr.push(serde_json::json!("--session"));
-                    arr.push(serde_json::json!(session_id));
-                }
-            } else {
-                arr.push(serde_json::json!("--session"));
+            let is_http = server_config.get("type").and_then(|v| v.as_str()) == Some("http");
+            if !is_http {
+                arr.push(serde_json::json!(target_flag));
                 arr.push(serde_json::json!(session_id));
-            }
-            if !arr.is_empty() {
                 server_config.as_object_mut().unwrap().insert("args".to_string(), Value::Array(arr));
             }
         }
@@ -1563,10 +1583,12 @@ impl AgentCore {
         if let Some(env_obj) = server_config.get_mut("env").and_then(|v| v.as_object_mut()) {
             env_obj.insert(env_key, serde_json::json!(session_id));
             env_obj.insert("SESSION_ID".to_string(), serde_json::json!(session_id));
+            env_obj.insert("MCP_SESSION_ID".to_string(), serde_json::json!(session_id));
         } else {
             let mut env_map = serde_json::Map::new();
             env_map.insert(env_key, serde_json::json!(session_id));
             env_map.insert("SESSION_ID".to_string(), serde_json::json!(session_id));
+            env_map.insert("MCP_SESSION_ID".to_string(), serde_json::json!(session_id));
             server_config.as_object_mut().unwrap().insert("env".to_string(), Value::Object(env_map));
         }
 
@@ -3190,21 +3212,27 @@ impl AgentCore {
             let parts: Vec<&str> = prompt_trimmed.split_whitespace().collect();
             if parts.len() >= 4 {
                 let server_name = parts[2];
-                let raw_token = parts[3..].join(" ");
-                let session_id = Self::extract_session_id(&raw_token);
-                if self.register_mcp_session(server_name, &session_id).await {
-                    return format!(
-                        "Successfully registered session ID for MCP server '{}' and reloaded configuration. You can now use it!",
-                        server_name
-                    );
-                } else {
-                    return format!(
-                        "Failed to register session ID for MCP server '{}'. Please check that the server exists in mcp_servers.json.",
-                        server_name
-                    );
+                let mut flag = None;
+                let mut token_start_idx = 3;
+                if parts[3].starts_with('-') {
+                    flag = Some(parts[3]);
+                    token_start_idx = 4;
                 }
+                
+                if parts.len() > token_start_idx {
+                    let raw_token = parts[token_start_idx..].join(" ");
+                    let session_id = Self::extract_session_id(&raw_token);
+                    if self.register_mcp_session_with_flag(server_name, &session_id, flag).await {
+                        return format!(
+                            "Successfully registered session ID with flag '{}' for MCP server '{}' and reloaded configuration.",
+                            flag.unwrap_or("auto"),
+                            server_name
+                        );
+                    }
+                }
+                return format!("Failed to register session ID for MCP server '{}'. Please check your arguments.", server_name);
             } else {
-                return "Usage: `/mcp session <server_name> <session_token_or_url>`".to_string();
+                return "Usage: `/mcp session <server_name> [--mcp-session-id | --session | oauth_token] <session_token_or_url>`".to_string();
             }
         }
 

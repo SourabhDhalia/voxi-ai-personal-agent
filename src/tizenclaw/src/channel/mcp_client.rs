@@ -267,19 +267,34 @@ pub struct McpClient {
 fn run_sse_listener(
     client: reqwest::blocking::Client,
     url: String,
+    session_id: Option<String>,
     endpoint_url: Arc<RwLock<Option<String>>>,
     received_responses: Arc<Mutex<std::collections::HashMap<i32, Value>>>,
     stop_signal: Arc<AtomicBool>,
 ) {
     while !stop_signal.load(Ordering::SeqCst) {
-        let mut resp = match client
-            .get(&url)
-            .header("Accept", "text/event-stream")
-            .send()
-        {
+        let mut target_url = url.clone();
+        if let Some(ref sid) = session_id {
+            if !target_url.contains("session=") && !target_url.contains("session_id=") {
+                let separator = if target_url.contains('?') { "&" } else { "?" };
+                target_url = format!("{}{}session={}", target_url, separator, sid);
+            }
+        }
+
+        let mut req = client.get(&target_url)
+            .header("Accept", "text/event-stream");
+
+        if let Some(ref sid) = session_id {
+            req = req.header("x-session-id", sid)
+                     .header("x-mcp-session-id", sid)
+                     .header("Authorization", format!("Bearer {}", sid))
+                     .header("Cookie", format!("session_id={}; session={}", sid, sid));
+        }
+
+        let mut resp = match req.send() {
             Ok(r) => r,
             Err(e) => {
-                log::error!("SSE connection error to '{}': {}", url, e);
+                log::error!("SSE connection error to '{}': {}", target_url, e);
                 std::thread::sleep(Duration::from_secs(2));
                 continue;
             }
@@ -398,6 +413,146 @@ impl McpClient {
         self.last_used_ms
     }
 
+    fn find_session_id(&self) -> Option<String> {
+        let token_flags = vec!["--session", "--mcp-session-id", "oauth_token", "--token", "token"];
+        let mut i = 0;
+        while i < self.args.len() {
+            if let Some(arg) = self.args.get(i) {
+                if token_flags.contains(&arg.as_str()) && i + 1 < self.args.len() {
+                    return self.args.get(i + 1).cloned();
+                }
+            }
+            i += 1;
+        }
+
+        if let Some(ref envs) = self.envs {
+            let keys = vec![
+                "SESSION_ID",
+                "MCP_SESSION_ID",
+                &format!("{}_SESSION", self.server_name.to_ascii_uppercase()),
+            ];
+            for key in keys {
+                if let Some(val) = envs.get(key) {
+                    return Some(val.clone());
+                }
+            }
+        }
+        None
+    }
+
+    fn extract_and_save_session_from_headers(&self, resp: &reqwest::blocking::Response) {
+        let mut new_session_id = None;
+
+        if let Some(cookie) = resp.headers().get("set-cookie").and_then(|v| v.to_str().ok()) {
+            for cookie_part in cookie.split(';') {
+                let cookie_part = cookie_part.trim();
+                if cookie_part.to_ascii_lowercase().starts_with("session_id=") {
+                    new_session_id = Some(cookie_part["session_id=".len()..].to_string());
+                    break;
+                }
+                if cookie_part.to_ascii_lowercase().starts_with("session=") {
+                    new_session_id = Some(cookie_part["session=".len()..].to_string());
+                    break;
+                }
+            }
+        }
+
+        if new_session_id.is_none() {
+            if let Some(sid) = resp.headers().get("x-session-id").and_then(|v| v.to_str().ok()) {
+                new_session_id = Some(sid.to_string());
+            } else if let Some(sid) = resp.headers().get("x-mcp-session-id").and_then(|v| v.to_str().ok()) {
+                new_session_id = Some(sid.to_string());
+            }
+        }
+
+        if let Some(sid) = new_session_id {
+            let current = self.find_session_id();
+            if current.as_ref() != Some(&sid) {
+                log::warn!("Auto-detected updated session token from HTTP headers for server '{}': {}", self.server_name, sid);
+                let data_dir = std::env::var("TIZENCLAW_DATA_DIR")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|_| {
+                        std::env::var("HOME")
+                            .map(|h| std::path::PathBuf::from(h).join(".tizenclaw"))
+                            .unwrap_or_else(|_| std::path::PathBuf::from("/opt/usr/share/tizenclaw"))
+                    });
+                let config_path = data_dir.join("config").join("mcp_servers.json");
+                if config_path.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&config_path) {
+                        if let Ok(mut json_val) = serde_json::from_str::<Value>(&content) {
+                            if let Some(servers) = json_val.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
+                                if let Some(server) = servers.get_mut(&self.server_name) {
+                                    let mut updated = false;
+                                    
+                                    let token_flags = vec!["--session", "--mcp-session-id", "oauth_token", "--token", "token"];
+                                    let mut target_flag = None;
+                                    if let Some(args_arr) = server.get("args").and_then(|v| v.as_array()) {
+                                        for flag in &token_flags {
+                                            if args_arr.iter().any(|arg| arg.as_str() == Some(*flag)) {
+                                                target_flag = Some(flag.to_string());
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    let target_flag = target_flag.unwrap_or_else(|| {
+                                        if self.server_name.contains("zepto") {
+                                            "--session".to_string()
+                                        } else {
+                                            "--mcp-session-id".to_string()
+                                        }
+                                    });
+
+                                    if let Some(args_arr) = server.get_mut("args").and_then(|v| v.as_array_mut()) {
+                                        let mut i = 0;
+                                        while i < args_arr.len() {
+                                            if let Some(arg_str) = args_arr[i].as_str() {
+                                                if arg_str == target_flag && i + 1 < args_arr.len() {
+                                                    args_arr[i + 1] = serde_json::json!(sid);
+                                                    updated = true;
+                                                    break;
+                                                }
+                                            }
+                                            i += 1;
+                                        }
+                                        if !updated {
+                                            args_arr.push(serde_json::json!(target_flag));
+                                            args_arr.push(serde_json::json!(sid));
+                                        }
+                                    } else {
+                                        let mut arr = Vec::new();
+                                        let is_http = server.get("type").and_then(|v| v.as_str()) == Some("http");
+                                        if !is_http {
+                                            arr.push(serde_json::json!(target_flag));
+                                            arr.push(serde_json::json!(sid));
+                                            server.as_object_mut().unwrap().insert("args".to_string(), Value::Array(arr));
+                                        }
+                                    }
+                                    
+                                    let env_key = format!("{}_SESSION", self.server_name.to_ascii_uppercase());
+                                    if let Some(env_obj) = server.get_mut("env").and_then(|v| v.as_object_mut()) {
+                                        env_obj.insert(env_key, serde_json::json!(sid));
+                                        env_obj.insert("SESSION_ID".to_string(), serde_json::json!(sid));
+                                        env_obj.insert("MCP_SESSION_ID".to_string(), serde_json::json!(sid));
+                                    } else {
+                                        let mut env_map = serde_json::Map::new();
+                                        env_map.insert(env_key, serde_json::json!(sid));
+                                        env_map.insert("SESSION_ID".to_string(), serde_json::json!(sid));
+                                        env_map.insert("MCP_SESSION_ID".to_string(), serde_json::json!(sid));
+                                        server.as_object_mut().unwrap().insert("env".to_string(), Value::Object(env_map));
+                                    }
+                                    
+                                    if let Ok(new_content) = serde_json::to_string_pretty(&json_val) {
+                                        let _ = std::fs::write(&config_path, new_content);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Spawn the server process or start the HTTP client and perform the MCP handshake.
     pub fn connect(&mut self) -> bool {
         if self.connected {
@@ -426,12 +581,13 @@ impl McpClient {
             self.stop_signal.store(false, Ordering::SeqCst);
 
             let url = self.http_url.clone();
+            let session_id = self.find_session_id();
             let endpoint_url = self.endpoint_url.clone();
             let received_responses = self.received_responses.clone();
             let stop_signal = self.stop_signal.clone();
 
             let handle = std::thread::spawn(move || {
-                run_sse_listener(client, url, endpoint_url, received_responses, stop_signal);
+                run_sse_listener(client, url, session_id, endpoint_url, received_responses, stop_signal);
             });
             self.sse_thread = Some(handle);
             self.connected = true;
@@ -719,14 +875,32 @@ impl McpClient {
             let client = self.http_client.as_ref().ok_or("No HTTP client")?;
             let ep = self.endpoint_url.read().unwrap().clone().ok_or("No message endpoint URL")?;
 
-            let resp = client.post(&ep)
-                .json(message)
+            let session_id = self.find_session_id();
+            let mut target_ep = ep;
+            if let Some(ref sid) = session_id {
+                if !target_ep.contains("session=") && !target_ep.contains("session_id=") {
+                    let separator = if target_ep.contains('?') { "&" } else { "?" };
+                    target_ep = format!("{}{}session={}", target_ep, separator, sid);
+                }
+            }
+
+            let mut req = client.post(&target_ep);
+            if let Some(ref sid) = session_id {
+                req = req.header("x-session-id", sid)
+                         .header("x-mcp-session-id", sid)
+                         .header("Authorization", format!("Bearer {}", sid))
+                         .header("Cookie", format!("session_id={}; session={}", sid, sid));
+            }
+
+            let resp = req.json(message)
                 .send()
                 .map_err(|e| e.to_string())?;
 
             if !resp.status().is_success() {
                 return Err(format!("HTTP POST failed: {}", resp.status()));
             }
+
+            self.extract_and_save_session_from_headers(&resp);
 
             // Check if server returns synchronous response directly in body
             if let Ok(v) = resp.json::<Value>() {
