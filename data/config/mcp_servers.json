@@ -2,7 +2,11 @@
   "mcpServers": {
     "sqlite": {
       "command": "npx",
-      "args": ["-y", "mcp-server-sqlite-npx", "/tmp/sqlite.db"]
+      "args": [
+        "-y",
+        "mcp-server-sqlite-npx",
+        "/tmp/sqlite.db"
+      ]
     },
     "zepto": {
       "type": "http",
@@ -22,6 +26,26 @@
     "swiggy-dineout": {
       "type": "http",
       "url": "https://mcp.swiggy.com/dineout",
+      "timeout_ms": 60000
+    },
+    "swiggy-instamart_python": {
+      "command": "/root/.tizenclaw/bin/mcp_http_bridge.py",
+      "args": [
+        "https://mcp.swiggy.com/im"
+      ],
+      "env": {
+        "SWIGGY_MCP_TOKEN": "TOKEN1"
+      },
+      "timeout_ms": 60000
+    },
+    "zepto_python": {
+      "command": "/root/.tizenclaw/bin/mcp_http_bridge.py",
+      "args": [
+        "https://mcp.zepto.co.in/mcp"
+      ],
+      "env": {
+        "ZEPTO_MCP_TOKEN": "TOKEN2"
+      },
       "timeout_ms": 60000
     }
   }
