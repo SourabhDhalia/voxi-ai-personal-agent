@@ -453,10 +453,11 @@ impl McpClient {
 
         // 3. Look in env variables
         if let Some(ref envs) = self.envs {
+            let env_session_key = format!("{}_SESSION", self.server_name.to_ascii_uppercase());
             let keys = vec![
                 "SESSION_ID",
                 "MCP_SESSION_ID",
-                &format!("{}_SESSION", self.server_name.to_ascii_uppercase()),
+                env_session_key.as_str(),
             ];
             for key in keys {
                 if let Some(val) = envs.get(key) {
