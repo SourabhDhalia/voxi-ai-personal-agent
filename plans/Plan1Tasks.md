@@ -1,0 +1,8 @@
+- [x] Configure Zepto and Swiggy MCP servers in `data/config/mcp_servers.json`
+- [x] Implement map-based `mcpServers` parser in `src/tizenclaw/src/channel/mcp_client.rs`
+- [x] Add `"type": "http"` transparent wrapper (`npx mcp-remote <url>`) in `mcp_client.rs`
+- [x] Wire `McpClientManager` as a field on `AgentCore` and initialize it in `AgentCore::initialize`
+- [x] Collect MCP tool declarations in `AgentCore::get_bridge_tool_declarations`
+- [x] Add routing for `mcp_` prefix tool execution in `AgentCore::execute_tool` and chat session loops
+- [x] Add native function calling support to `src/tizenclaw/src/llm/ollama.rs`
+- [x] Add `request_user_clarification` built-in tool / action
