@@ -333,11 +333,10 @@ impl McpClientManager {
             Err(_) => return false,
         };
 
-        if let Some(servers) = config["servers"].as_array() {
-            for s in servers {
-                let name = s["name"].as_str().unwrap_or("").to_string();
-                let command = s["command"].as_str().unwrap_or("").to_string();
-                let args: Vec<String> = s["args"]
+        if let Some(servers_map) = config["mcpServers"].as_object() {
+            for (name, s) in servers_map {
+                let mut command = s["command"].as_str().unwrap_or("").to_string();
+                let mut args: Vec<String> = s["args"]
                     .as_array()
                     .map(|a| {
                         a.iter()
@@ -346,6 +345,51 @@ impl McpClientManager {
                     })
                     .unwrap_or_default();
                 let timeout = s["timeout_ms"].as_u64().unwrap_or(30000);
+
+                let mcp_type = s["type"].as_str().unwrap_or("stdio");
+                if mcp_type == "http" {
+                    if let Some(url) = s["url"].as_str() {
+                        command = "npx".to_string();
+                        args = vec!["-y", "mcp-remote", url].into_iter().map(String::from).collect();
+                    }
+                }
+
+                if name.is_empty() || command.is_empty() {
+                    continue;
+                }
+
+                let mut client = McpClient::new(name, &command, &args, timeout);
+                if client.connect() {
+                    client.discover_tools();
+                    log::debug!(
+                        "MCP Client: '{}' connected ({} tools)",
+                        name,
+                        client.get_tools().len()
+                    );
+                }
+                self.clients.push(client);
+            }
+        } else if let Some(servers) = config["servers"].as_array() {
+            for s in servers {
+                let name = s["name"].as_str().unwrap_or("").to_string();
+                let mut command = s["command"].as_str().unwrap_or("").to_string();
+                let mut args: Vec<String> = s["args"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let timeout = s["timeout_ms"].as_u64().unwrap_or(30000);
+
+                let mcp_type = s["type"].as_str().unwrap_or("stdio");
+                if mcp_type == "http" {
+                    if let Some(url) = s["url"].as_str() {
+                        command = "npx".to_string();
+                        args = vec!["-y", "mcp-remote", url].into_iter().map(String::from).collect();
+                    }
+                }
 
                 if name.is_empty() || command.is_empty() {
                     continue;

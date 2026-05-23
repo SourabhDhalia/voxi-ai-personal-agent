@@ -98,6 +98,20 @@ impl ToolDeclarationBuilder {
             parameters: json!({"type": "object", "properties": {}, "required": []}),
         });
         tools.push(LlmToolDecl {
+            name: "request_user_clarification".into(),
+            description: "Ask the user a clarifying question when you need choice selection, payment approval, checkout details, or more information to fulfill their request. The execution will pause until the user responds.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question to ask the user"
+                    }
+                },
+                "required": ["question"]
+            }),
+        });
+        tools.push(LlmToolDecl {
             name: "list_agents".into(),
             description: "List all running agents with their status.".into(),
             parameters: json!({"type": "object", "properties": {}, "required": []}),

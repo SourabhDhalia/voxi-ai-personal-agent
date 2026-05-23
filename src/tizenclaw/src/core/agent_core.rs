@@ -38,6 +38,7 @@ use crate::core::tool_dispatcher::ToolDispatcher;
 use crate::infra::key_store::KeyStore;
 use crate::llm::backend::{self, LlmBackend, LlmMessage, LlmResponse};
 use crate::storage::session_store::SessionStore;
+use crate::channel::mcp_client::McpClientManager;
 
 const MAX_CONTEXT_MESSAGES: usize = 100;
 const CONTEXT_TOKEN_BUDGET: usize = 256_000;
@@ -1408,6 +1409,7 @@ pub struct AgentCore {
     /// Used to detect when the prompt changes so that the server-side
     /// cached content can be refreshed (e.g. Gemini CachedContent API).
     prompt_hash: tokio::sync::RwLock<u64>,
+    mcp_client_manager: tokio::sync::RwLock<McpClientManager>,
 }
 
 impl AgentCore {
@@ -1433,6 +1435,7 @@ impl AgentCore {
             agent_roles: RwLock::new(AgentRoleRegistry::new()),
             session_profiles: Mutex::new(HashMap::new()),
             prompt_hash: tokio::sync::RwLock::new(0),
+            mcp_client_manager: tokio::sync::RwLock::new(McpClientManager::new()),
         }
     }
 
@@ -1518,6 +1521,10 @@ impl AgentCore {
         tools.extend(Self::bridge_builtin_tools());
         if let Ok(bridge) = self.action_bridge.lock() {
             tools.extend(bridge.get_action_declarations());
+        }
+        {
+            let mcp = self.mcp_client_manager.read().await;
+            tools.extend(mcp.get_all_tools());
         }
 
         let mut seen = std::collections::HashSet::new();
@@ -2128,6 +2135,16 @@ impl AgentCore {
                 json!({"error": format!("Unknown CLI tool: {}", requested_tool)})
             }
             "generate_web_app" => self.generate_web_app(args).await,
+            "request_user_clarification" => {
+                let question = args.get("question").and_then(|v| v.as_str()).unwrap_or("");
+                let outbound_args = json!({
+                    "channels": ["web_dashboard"],
+                    "message": question,
+                    "title": "Clarification Required"
+                });
+                let _ = self.send_outbound_message(&outbound_args, None).await;
+                json!({"status": "success", "message": "Clarification request sent to user"})
+            },
             "validate_web_search" => {
                 let engine = args.get("engine").and_then(|value| value.as_str());
                 feature_tools::validate_web_search(&self.platform.paths.config_dir, engine)
@@ -2228,6 +2245,13 @@ impl AgentCore {
                 }
                 Err(_) => json!({"error": "Failed to lock action bridge"}),
             },
+            _ if tool_name.starts_with("mcp_") => {
+                let mut mcp = self.mcp_client_manager.write().await;
+                match mcp.call_tool(tool_name, args) {
+                    Some(res) => res,
+                    None => serde_json::json!({"error": format!("MCP server for tool {} not found or disconnected", tool_name)}),
+                }
+            }
             _ => {
                 self.tool_dispatcher
                     .read()
@@ -2443,6 +2467,17 @@ impl AgentCore {
         {
             let mut bridge = self.action_bridge.lock().unwrap();
             bridge.start();
+        }
+
+        // Initialize MCP client manager and connect to configured servers
+        {
+            let mcp_config_path = paths.config_dir.join("mcp_servers.json");
+            let mut mcp = self.mcp_client_manager.write().await;
+            if mcp.load_config_and_connect(&mcp_config_path.to_string_lossy()) {
+                log::info!("MCP Client Manager loaded configuration and connected to servers");
+            } else {
+                log::warn!("No MCP servers connected during initialization (check config)");
+            }
         }
 
         true
@@ -3011,6 +3046,24 @@ impl AgentCore {
             .read()
             .await
             .get_tool_declarations_filtered(&intent_keywords);
+        {
+            let mcp = self.mcp_client_manager.read().await;
+            let mcp_tools = mcp.get_all_tools();
+            if intent_keywords.is_empty() {
+                tools.extend(mcp_tools);
+            } else {
+                for t in mcp_tools {
+                    let name_lower = t.name.to_lowercase();
+                    let desc_lower = t.description.to_lowercase();
+                    if intent_keywords.iter().any(|k| {
+                        let kl = k.to_lowercase();
+                        name_lower.contains(&kl) || desc_lower.contains(&kl)
+                    }) {
+                        tools.push(t);
+                    }
+                }
+            }
+        }
         crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(
             &mut tools, prompt,
         );
@@ -3634,6 +3687,7 @@ impl AgentCore {
                     let session_workdir = session_workdir.clone();
                     let llm_doc = llm_doc.clone();
                     let search_config_dir = search_config_dir.clone();
+                    let mcp_ref = &self.mcp_client_manager;
 
                     // ── Phase 11: SafetyCheck per tool ───────────────────
                     let block_reason = if let Ok(tp) = self.tool_policy.lock() {
@@ -4103,6 +4157,15 @@ impl AgentCore {
                             ).await
                         } else if tc_name == "send_outbound_message" {
                             self.send_outbound_message(&tc_args, Some(session_id)).await
+                        } else if tc_name == "request_user_clarification" {
+                            let question = tc_args.get("question").and_then(|v| v.as_str()).unwrap_or("");
+                            let outbound_args = json!({
+                                "channels": ["web_dashboard"],
+                                "message": question,
+                                "title": "Clarification Required"
+                            });
+                            let _ = self.send_outbound_message(&outbound_args, Some(session_id)).await;
+                            json!({"status": "success", "message": "Clarification request sent to user"})
                         } else if tc_name == "generate_web_app" {
                             self.generate_web_app(&tc_args).await
                         } else if tc_name == "extract_document_text" {
@@ -4184,6 +4247,12 @@ impl AgentCore {
                             } else {
                                 serde_json::json!({"error": "MemoryStore not initialized"})
                             }
+                        } else if tc_name.starts_with("mcp_") {
+                            let mut mcp = mcp_ref.write().await;
+                            match mcp.call_tool(&tc_name, &tc_args) {
+                                Some(res) => res,
+                                None => serde_json::json!({"error": format!("MCP server for tool {} not found or disconnected", tc_name)}),
+                            }
                         } else {
                             td_guard_ref
                                 .execute(&tc_name, &tc_args, Some(&session_workdir))
@@ -4214,6 +4283,28 @@ impl AgentCore {
                         }
                     }
                 }
+
+                let mut clarification_question = None;
+                for tc in &detected_tool_calls {
+                    if tc.name == "request_user_clarification" {
+                        if let Some(q) = tc.args.get("question").and_then(|v| v.as_str()) {
+                            clarification_question = Some(q.to_string());
+                        }
+                    }
+                }
+
+                if let Some(question) = clarification_question {
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            store.add_message(session_id, "assistant", &question);
+                            store.add_structured_assistant_text_message(session_id, &question);
+                        }
+                    }
+                    loop_state.transition(AgentPhase::Complete);
+                    log_conversation("Assistant", &question);
+                    return question;
+                }
+
                 let (budgeted_results, budgeted_count) = context_engine
                     .budget_tool_result_messages(results, DEFAULT_TOOL_RESULT_BUDGET_CHARS);
                 if budgeted_count > 0 {
