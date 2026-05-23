@@ -1532,51 +1532,74 @@ impl AgentCore {
         // Scan existing arguments to determine the session ID flag
         let token_flags = vec!["--session", "--mcp-session-id", "oauth_token", "--token", "token"];
         let mut target_flag = custom_flag.map(|f| f.to_string());
+        let mut has_flag = false;
 
         if target_flag.is_none() {
             if let Some(args_arr) = server_config.get("args").and_then(|v| v.as_array()) {
                 for flag in &token_flags {
                     if args_arr.iter().any(|arg| arg.as_str() == Some(*flag)) {
                         target_flag = Some(flag.to_string());
+                        has_flag = true;
                         break;
                     }
                 }
             }
+        } else {
+            has_flag = true;
         }
-
-        let target_flag = target_flag.unwrap_or_else(|| {
-            if server_name.contains("zepto") {
-                "--session".to_string()
-            } else {
-                "--mcp-session-id".to_string()
-            }
-        });
 
         let mut args_updated = false;
         if let Some(args_arr) = server_config.get_mut("args").and_then(|v| v.as_array_mut()) {
-            let mut i = 0;
-            while i < args_arr.len() {
-                if let Some(arg_str) = args_arr[i].as_str() {
-                    if arg_str == target_flag && i + 1 < args_arr.len() {
-                        args_arr[i + 1] = serde_json::json!(session_id);
-                        args_updated = true;
-                        break;
+            if has_flag {
+                let flag_name = target_flag.as_ref().unwrap();
+                let mut i = 0;
+                while i < args_arr.len() {
+                    if let Some(arg_str) = args_arr[i].as_str() {
+                        if arg_str == flag_name && i + 1 < args_arr.len() {
+                            args_arr[i + 1] = serde_json::json!(session_id);
+                            args_updated = true;
+                            break;
+                        }
                     }
+                    i += 1;
                 }
-                i += 1;
-            }
-            if !args_updated {
-                args_arr.push(serde_json::json!(target_flag));
-                args_arr.push(serde_json::json!(session_id));
+                if !args_updated {
+                    args_arr.push(serde_json::json!(flag_name.clone()));
+                    args_arr.push(serde_json::json!(session_id));
+                    args_updated = true;
+                }
+            } else {
+                // If there's exactly one argument and it doesn't start with '-', update it directly
+                if args_arr.len() == 1 && !args_arr[0].as_str().unwrap_or("").starts_with('-') {
+                    args_arr[0] = serde_json::json!(session_id);
+                    args_updated = true;
+                } else {
+                    // Fall back to creating/appending the default flag
+                    let default_flag = if server_name.contains("zepto") {
+                        "--session".to_string()
+                    } else {
+                        "--mcp-session-id".to_string()
+                    };
+                    args_arr.push(serde_json::json!(default_flag));
+                    args_arr.push(serde_json::json!(session_id));
+                    args_updated = true;
+                }
             }
         } else {
             let mut arr = Vec::new();
-            let is_http = server_config.get("type").and_then(|v| v.as_str()) == Some("http");
-            if !is_http {
-                arr.push(serde_json::json!(target_flag));
+            if has_flag {
+                arr.push(serde_json::json!(target_flag.unwrap()));
                 arr.push(serde_json::json!(session_id));
-                server_config.as_object_mut().unwrap().insert("args".to_string(), Value::Array(arr));
+            } else {
+                let default_flag = if server_name.contains("zepto") {
+                    "--session".to_string()
+                } else {
+                    "--mcp-session-id".to_string()
+                };
+                arr.push(serde_json::json!(default_flag));
+                arr.push(serde_json::json!(session_id));
             }
+            server_config.as_object_mut().unwrap().insert("args".to_string(), Value::Array(arr));
         }
 
         let env_key = format!("{}_SESSION", server_name.to_ascii_uppercase());

@@ -415,16 +415,43 @@ impl McpClient {
 
     fn find_session_id(&self) -> Option<String> {
         let token_flags = vec!["--session", "--mcp-session-id", "oauth_token", "--token", "token"];
+        
+        // 1. Look for standard flag-value pairs or inline parameters in args
         let mut i = 0;
         while i < self.args.len() {
             if let Some(arg) = self.args.get(i) {
                 if token_flags.contains(&arg.as_str()) && i + 1 < self.args.len() {
                     return self.args.get(i + 1).cloned();
                 }
+                for flag in &token_flags {
+                    let prefix = format!("{}=", flag);
+                    if arg.starts_with(&prefix) {
+                        return Some(arg[prefix.len()..].to_string());
+                    }
+                }
             }
             i += 1;
         }
 
+        // 2. Look for raw direct token in args
+        // If there's an argument that is alphanumeric, length >= 6, doesn't start with '-',
+        // and is not a known flag, a URL (starts with http), or a file path (contains / or \),
+        // we treat it as a direct token.
+        for arg in &self.args {
+            let trimmed = arg.trim();
+            if trimmed.len() >= 6 
+                && !trimmed.starts_with('-') 
+                && !trimmed.starts_with("http://") 
+                && !trimmed.starts_with("https://") 
+                && !trimmed.contains('/') 
+                && !trimmed.contains('\\') 
+                && !token_flags.contains(&trimmed)
+            {
+                return Some(trimmed.to_string());
+            }
+        }
+
+        // 3. Look in env variables
         if let Some(ref envs) = self.envs {
             let keys = vec![
                 "SESSION_ID",
@@ -441,27 +468,56 @@ impl McpClient {
     }
 
     fn extract_and_save_session_from_headers(&self, resp: &reqwest::blocking::Response) {
+        // Only run this if we have --session, --mcp-session-id, or if this is zepto
+        let has_session_indicator = self.args.iter().any(|arg| arg == "--session" || arg == "--mcp-session-id") 
+            || self.server_name.contains("zepto");
+            
+        if !has_session_indicator {
+            return;
+        }
+
         let mut new_session_id = None;
 
+        // Try extracting from Cookie headers
         if let Some(cookie) = resp.headers().get("set-cookie").and_then(|v| v.to_str().ok()) {
             for cookie_part in cookie.split(';') {
                 let cookie_part = cookie_part.trim();
-                if cookie_part.to_ascii_lowercase().starts_with("session_id=") {
-                    new_session_id = Some(cookie_part["session_id=".len()..].to_string());
-                    break;
-                }
-                if cookie_part.to_ascii_lowercase().starts_with("session=") {
-                    new_session_id = Some(cookie_part["session=".len()..].to_string());
-                    break;
+                if let Some(pos) = cookie_part.find('=') {
+                    let key = cookie_part[..pos].trim().to_ascii_lowercase();
+                    let val = cookie_part[pos + 1..].trim();
+                    if key == "session_id" || key == "session" || key == "token" || key == "oauth_token" || key == "mcp_session_id" || key == "mcp-session-id" {
+                        new_session_id = Some(val.to_string());
+                        break;
+                    }
                 }
             }
         }
 
+        // Try extracting from other custom headers
         if new_session_id.is_none() {
-            if let Some(sid) = resp.headers().get("x-session-id").and_then(|v| v.to_str().ok()) {
-                new_session_id = Some(sid.to_string());
-            } else if let Some(sid) = resp.headers().get("x-mcp-session-id").and_then(|v| v.to_str().ok()) {
-                new_session_id = Some(sid.to_string());
+            let header_names = vec![
+                "x-session-id",
+                "x-mcp-session-id",
+                "session-id",
+                "mcp-session-id",
+                "session_id",
+                "session",
+                "token",
+                "authorization"
+            ];
+            for name in header_names {
+                if let Some(val) = resp.headers().get(name).and_then(|v| v.to_str().ok()) {
+                    let val = val.trim();
+                    let token_val = if name == "authorization" && val.to_ascii_lowercase().starts_with("bearer ") {
+                        val["bearer ".len()..].trim().to_string()
+                    } else {
+                        val.to_string()
+                    };
+                    if !token_val.is_empty() {
+                        new_session_id = Some(token_val);
+                        break;
+                    }
+                }
             }
         }
 
@@ -515,17 +571,18 @@ impl McpClient {
                                             i += 1;
                                         }
                                         if !updated {
-                                            args_arr.push(serde_json::json!(target_flag));
-                                            args_arr.push(serde_json::json!(sid));
+                                            if args_arr.len() == 1 && !args_arr[0].as_str().unwrap_or("").starts_with('-') {
+                                                args_arr[0] = serde_json::json!(sid);
+                                            } else {
+                                                args_arr.push(serde_json::json!(target_flag));
+                                                args_arr.push(serde_json::json!(sid));
+                                            }
                                         }
                                     } else {
                                         let mut arr = Vec::new();
-                                        let is_http = server.get("type").and_then(|v| v.as_str()) == Some("http");
-                                        if !is_http {
-                                            arr.push(serde_json::json!(target_flag));
-                                            arr.push(serde_json::json!(sid));
-                                            server.as_object_mut().unwrap().insert("args".to_string(), Value::Array(arr));
-                                        }
+                                        arr.push(serde_json::json!(target_flag));
+                                        arr.push(serde_json::json!(sid));
+                                        server.as_object_mut().unwrap().insert("args".to_string(), Value::Array(arr));
                                     }
                                     
                                     let env_key = format!("{}_SESSION", self.server_name.to_ascii_uppercase());
@@ -551,7 +608,6 @@ impl McpClient {
                 }
             }
         }
-    }
 
     /// Spawn the server process or start the HTTP client and perform the MCP handshake.
     pub fn connect(&mut self) -> bool {
@@ -1089,7 +1145,6 @@ impl McpClientManager {
                 if mcp_type == "http" {
                     if let Some(url) = s["url"].as_str() {
                         command = url.to_string();
-                        args.clear();
                     }
                 }
 
@@ -1135,7 +1190,6 @@ impl McpClientManager {
                 if mcp_type == "http" {
                     if let Some(url) = s["url"].as_str() {
                         command = url.to_string();
-                        args.clear();
                     }
                 }
 
@@ -1232,5 +1286,58 @@ impl McpClientManager {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_session_id() {
+        // Test with flag-value pair
+        let client_flag = McpClient::new(
+            "zepto",
+            "https://mcp.zepto.co.in/mcp",
+            &["--session".to_string(), "my_test_session_token_123".to_string()],
+            30000,
+        );
+        assert_eq!(client_flag.find_session_id(), Some("my_test_session_token_123".to_string()));
+
+        // Test with inline flag parameter
+        let client_inline = McpClient::new(
+            "zepto",
+            "https://mcp.zepto.co.in/mcp",
+            &["--session=my_inline_session_token_456".to_string()],
+            30000,
+        );
+        assert_eq!(client_inline.find_session_id(), Some("my_inline_session_token_456".to_string()));
+
+        // Test with direct token argument
+        let client_direct = McpClient::new(
+            "zepto",
+            "https://mcp.zepto.co.in/mcp",
+            &["my_raw_direct_token_value_789".to_string()],
+            30000,
+        );
+        assert_eq!(client_direct.find_session_id(), Some("my_raw_direct_token_value_789".to_string()));
+
+        // Test with direct token argument when URL is also in args
+        let client_direct_with_url = McpClient::new(
+            "zepto",
+            "https://mcp.zepto.co.in/mcp",
+            &["https://mcp.zepto.co.in/mcp".to_string(), "token_directly_appended_abc".to_string()],
+            30000,
+        );
+        assert_eq!(client_direct_with_url.find_session_id(), Some("token_directly_appended_abc".to_string()));
+
+        // Test with no token
+        let client_empty = McpClient::new(
+            "zepto",
+            "https://mcp.zepto.co.in/mcp",
+            &[],
+            30000,
+        );
+        assert_eq!(client_empty.find_session_id(), None);
     }
 }
