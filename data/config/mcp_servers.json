@@ -2,7 +2,7 @@
   "mcpServers": {
     "sqlite": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sqlite", "/tmp/sqlite.db"]
+      "args": ["-y", "mcp-server-sqlite-npx", "/tmp/sqlite.db"]
     },
     "zepto": {
       "type": "http",

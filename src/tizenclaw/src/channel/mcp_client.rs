@@ -287,6 +287,7 @@ fn run_sse_listener(
         if let Some(ref sid) = session_id {
             req = req.header("x-session-id", sid)
                      .header("x-mcp-session-id", sid)
+                     .header("mcp-session-id", sid)
                      .header("Authorization", format!("Bearer {}", sid))
                      .header("Cookie", format!("session_id={}; session={}", sid, sid));
         }
@@ -302,6 +303,19 @@ fn run_sse_listener(
 
         if !resp.status().is_success() {
             log::error!("SSE connection failed with status: {}", resp.status());
+            let status = resp.status();
+            if status == reqwest::StatusCode::METHOD_NOT_ALLOWED
+                || status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN
+                || status == reqwest::StatusCode::NOT_FOUND
+            {
+                log::warn!(
+                    "SSE transport not supported or unauthorized (status: {}) for '{}'. Terminating SSE listener thread.",
+                    status,
+                    url
+                );
+                break;
+            }
             std::thread::sleep(Duration::from_secs(2));
             continue;
         }
@@ -462,6 +476,46 @@ impl McpClient {
             for key in keys {
                 if let Some(val) = envs.get(key) {
                     return Some(val.clone());
+                }
+            }
+        }
+
+        // 4. Look in secrets file under TIZENCLAW_DATA_DIR/secrets/ or ~/.tizenclaw/secrets/
+        let data_dir = std::env::var("TIZENCLAW_DATA_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::env::var("HOME")
+                    .map(|h| std::path::PathBuf::from(h).join(".tizenclaw"))
+                    .unwrap_or_else(|_| std::path::PathBuf::from("/root/.tizenclaw"))
+            });
+
+        let secrets_dir = data_dir.join("secrets");
+        let name_lower = self.server_name.to_ascii_lowercase();
+        let name_upper = self.server_name.to_ascii_uppercase();
+
+        let mut variants = vec![
+            format!("{}_token", name_lower),
+            format!("{}_token", name_lower.replace('-', "_")),
+            format!("{}_token", name_lower.replace('_', "-")),
+            format!("{}_token", name_upper),
+            format!("{}_token", name_upper.replace('-', "_")),
+            format!("{}_token", name_upper.replace('_', "-")),
+        ];
+
+        // Fallback to "swiggy_food_token" if it's any swiggy server
+        if name_lower.contains("swiggy") {
+            variants.push("swiggy_food_token".to_string());
+        }
+
+        for var in variants {
+            let file_path = secrets_dir.join(&var);
+            if file_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&file_path) {
+                    let trimmed = content.trim().to_string();
+                    if !trimmed.is_empty() {
+                        log::info!("MCP Client: Loaded session token for '{}' from secrets file '{}'", self.server_name, var);
+                        return Some(trimmed);
+                    }
                 }
             }
         }
@@ -739,7 +793,9 @@ impl McpClient {
                         let trimmed = l.trim();
                         if !trimmed.is_empty() {
                             log::info!("MCP Server [{}] stderr: {}", server_name_cloned, trimmed);
-                            if trimmed.contains("http://") || trimmed.contains("https://") {
+                            if (trimmed.contains("http://") || trimmed.contains("https://"))
+                                && !trimmed.contains("registry.npmjs.org")
+                            {
                                 log::warn!("**************************************************");
                                 log::warn!("MCP Server [{}] AUTHENTICATION LINK DETECTED!", server_name_cloned);
                                 log::warn!("Please open this link in any browser to authenticate:");
@@ -945,6 +1001,7 @@ impl McpClient {
             if let Some(ref sid) = session_id {
                 req = req.header("x-session-id", sid)
                          .header("x-mcp-session-id", sid)
+                         .header("mcp-session-id", sid)
                          .header("Authorization", format!("Bearer {}", sid))
                          .header("Cookie", format!("session_id={}; session={}", sid, sid));
             }
@@ -1340,5 +1397,28 @@ mod tests {
             30000,
         );
         assert_eq!(client_empty.find_session_id(), None);
+    }
+
+    #[test]
+    fn test_find_session_id_secrets() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let secrets_dir = temp_dir.path().join("secrets");
+        std::fs::create_dir_all(&secrets_dir).unwrap();
+        
+        let token_file = secrets_dir.join("swiggy_food_token");
+        std::fs::write(&token_file, "secret_swiggy_token_val").unwrap();
+        
+        std::env::set_var("TIZENCLAW_DATA_DIR", temp_dir.path());
+        
+        let client = McpClient::new(
+            "swiggy-instamart",
+            "https://mcp.swiggy.com/im",
+            &[],
+            30000,
+        );
+        
+        assert_eq!(client.find_session_id(), Some("secret_swiggy_token_val".to_string()));
+        
+        std::env::remove_var("TIZENCLAW_DATA_DIR");
     }
 }
