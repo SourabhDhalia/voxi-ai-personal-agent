@@ -153,6 +153,6 @@
 | Robust MCP Session Refinement | Supervisor Gate 4 | PASS | Build gate passed. |
 | Robust MCP Session Refinement | 5. Test/Review | PASS | Inspected source changes, verified diff, and verified config writer behavior conceptually. |
 | Robust MCP Session Refinement | Supervisor Gate 5 | PASS | Test cycle complete. |
-| Robust MCP Session Refinement | 6. Commit | PASS | Initial changes committed at `af543a65`, brace fix at `b898b036`, and compiler fixes at `753adf30`. |
-| Robust MCP Session Refinement | Supervisor Gate 6 | PASS | Pushed all commits to origin/main; setup finalized. |
+| Robust MCP Session Refinement | 6. Commit | PASS | Initial changes committed at `af543a65`, brace fix at `b898b036`, compiler fixes at `753adf30`, and offline builder fixes at `165ea1cf`. |
+| Robust MCP Session Refinement | Supervisor Gate 6 | PASS | Commits registered locally; setup finalized. |
 
