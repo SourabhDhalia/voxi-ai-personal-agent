@@ -1874,7 +1874,8 @@ impl AgentCore {
             token_endpoint,
             registration_endpoint: Self::auth_value(server_config, "registration_endpoint"),
             scope: Self::auth_value(server_config, "scope"),
-            resource: Self::mcp_server_url(server_config),
+            resource: Self::auth_value(server_config, "resource")
+                .or_else(|| Self::mcp_server_url(server_config)),
         })
     }
 
@@ -1959,7 +1960,7 @@ impl AgentCore {
             "id": 1,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": "2025-11-25",
                 "capabilities": {},
                 "clientInfo": {"name": "tizenclaw-mcp-client", "version": "1.0.0"}
             }
@@ -1972,6 +1973,7 @@ impl AgentCore {
                 reqwest::header::ACCEPT,
                 "application/json, text/event-stream",
             )
+            .header("MCP-Protocol-Version", "2025-11-25")
             .json(&initialize)
             .send()
         {
@@ -2052,7 +2054,8 @@ impl AgentCore {
             token_endpoint,
             registration_endpoint,
             scope,
-            resource: Some(server_url.to_string()),
+            resource: Self::auth_value(server_config, "resource")
+                .or_else(|| Some(server_url.to_string())),
         })
     }
 
@@ -2151,8 +2154,9 @@ impl AgentCore {
         let endpoints = Self::discover_oauth_endpoints(&server_url, &server_config)?;
         let redirect_uri = Self::auth_value(&server_config, "redirect_uri")
             .unwrap_or_else(|| "http://127.0.0.1:39137/oauth/callback".to_string());
-        let configured_client =
-            Self::auth_value(&server_config, "client_id").map(|client_id| McpOAuthClient {
+        let configured_client = Self::auth_value(&server_config, "client_id")
+            .or_else(|| Self::auth_value(&server_config, "client_id_metadata_url"))
+            .map(|client_id| McpOAuthClient {
                 client_id,
                 client_secret: Self::auth_value(&server_config, "client_secret"),
             });
@@ -2275,7 +2279,22 @@ impl AgentCore {
                 .timeout(std::time::Duration::from_secs(30))
                 .build()
                 .ok()?;
-            let resp = client.post(&token_endpoint).form(&form).send().ok()?;
+            let mut resp = client.post(&token_endpoint).form(&form).send().ok()?;
+            if matches!(
+                resp.status(),
+                reqwest::StatusCode::BAD_REQUEST
+                    | reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE
+                    | reqwest::StatusCode::UNPROCESSABLE_ENTITY
+            ) {
+                let json_body = Value::Object(
+                    form.iter()
+                        .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+                        .collect(),
+                );
+                if let Ok(json_resp) = client.post(&token_endpoint).json(&json_body).send() {
+                    resp = json_resp;
+                }
+            }
             if !resp.status().is_success() {
                 return Some(format!(
                     "OAuth token exchange failed for MCP server '{}' with HTTP {}.",
@@ -3884,8 +3903,63 @@ impl AgentCore {
     ) -> String {
         let prompt_trimmed = prompt.trim();
 
+        if prompt_trimmed == "/mcp status" {
+            let mcp = self.mcp_client_manager.read().await;
+            let statuses = mcp.statuses();
+            if statuses.is_empty() {
+                return "No MCP servers are configured.".to_string();
+            }
+
+            let mut lines = vec!["MCP server status:".to_string()];
+            for status in statuses {
+                let tools = if status.tool_count == 1 {
+                    "tool"
+                } else {
+                    "tools"
+                };
+                let token_note = if status.transport == "http" {
+                    if status.has_access_token {
+                        ", token: present"
+                    } else {
+                        ", token: missing"
+                    }
+                } else {
+                    ""
+                };
+                let endpoint_note = status
+                    .endpoint
+                    .as_deref()
+                    .map(|endpoint| format!(", endpoint: {}", endpoint))
+                    .unwrap_or_default();
+                let protocol_note = status
+                    .negotiated_protocol_version
+                    .as_deref()
+                    .map(|version| format!(", protocol: {}", version))
+                    .unwrap_or_default();
+                lines.push(format!(
+                    "- {} [{}]: {} ({} {}{}{}{})",
+                    status.name,
+                    status.transport,
+                    status.state.as_str(),
+                    status.tool_count,
+                    tools,
+                    token_note,
+                    protocol_note,
+                    endpoint_note
+                ));
+                if let Some(message) = status.message.as_deref() {
+                    lines.push(format!("  {}", message));
+                }
+                if let Some(command) = status.suggested_command.as_deref() {
+                    lines.push(format!("  Run `{}` to authenticate.", command));
+                }
+            }
+            return lines.join("\n");
+        }
+
         if prompt_trimmed == "/mcp" || prompt_trimmed == "/mcp help" {
             return "MCP setup commands:\n\
+                    `/mcp status` shows connection, auth, and tool loading state.\n\
                     `/mcp login <server>` starts OAuth when the provider exposes OAuth metadata.\n\
                     `/mcp token <server> <access_token_or_authorization_header>` stores a bearer token securely and reloads tools.\n\
                     `/mcp session <server> <mcp_session_id>` stores a manual MCP session id for legacy servers.\n\

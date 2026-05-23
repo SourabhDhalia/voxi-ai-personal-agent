@@ -179,3 +179,15 @@
 | MCP OAuth Flow Repair | Supervisor Gate 5 | PASS | Review confirms bearer auth and `Mcp-Session-Id` are no longer conflated in active HTTP POST path. |
 | MCP OAuth Flow Repair | 6. Commit | PASS | Changes committed locally with file-based message. |
 | MCP OAuth Flow Repair | Supervisor Gate 6 | PASS | Commit used `.tmp/commit_msg.txt`; pushed to `origin/main` and remote update verified. |
+| MCP 2025-11-25 Upgrade | 1. Planning | PASS | Planned latest MCP Streamable HTTP, OAuth, auth-required startup, and `/mcp status` behavior. |
+| MCP 2025-11-25 Upgrade | Supervisor Gate 1 | PASS | Scope keeps native Rust as primary path and Python bridge as debug fallback. |
+| MCP 2025-11-25 Upgrade | 2. Design | PASS | Designed explicit MCP connection states, negotiated protocol tracking, latest OAuth discovery, and legacy SSE fallback isolation. |
+| MCP 2025-11-25 Upgrade | Supervisor Gate 2 | PASS | Design preserves existing config compatibility and secure runtime-only token storage. |
+| MCP 2025-11-25 Upgrade | 3. Development | PASS | Updated MCP protocol version, auth state handling, `/mcp status`, OAuth token exchange fallback, server version, and bridge headers. |
+| MCP 2025-11-25 Upgrade | Supervisor Gate 3 | PASS | Development avoids local cargo execution and keeps startup quiet for unauthenticated HTTP MCPs. |
+| MCP 2025-11-25 Upgrade | 4. Build/Deploy | BLOCKED | Real target builds remain blocked locally because `gbs` and `sdb` are not installed. |
+| MCP 2025-11-25 Upgrade | Supervisor Gate 4 | PASS | `./deploy.sh --dry-run -a x86_64 -S` and `./deploy.sh --dry-run -a armv7l -S` passed. |
+| MCP 2025-11-25 Upgrade | 5. Test/Review | PASS | Rustfmt check, shell syntax, JSON parse, Python parse, and `git diff --check` passed. |
+| MCP 2025-11-25 Upgrade | Supervisor Gate 5 | PASS | Review confirms latest protocol headers, explicit auth-required state, and no eager SSE boot loop. |
+| MCP 2025-11-25 Upgrade | 6. Commit | PASS | Changes prepared for file-based commit and push to `origin/main`. |
+| MCP 2025-11-25 Upgrade | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt` and avoids inline commit messages. |

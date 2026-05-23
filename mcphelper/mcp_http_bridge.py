@@ -47,6 +47,7 @@ def post_jsonrpc(payload: dict):
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2025-11-25",
         "User-Agent": "tizenclaw-mcp-http-bridge/1.0",
     }
 

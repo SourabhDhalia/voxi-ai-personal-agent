@@ -3,12 +3,12 @@
 //! Implements the MCP server protocol for exposing TizenClaw tools
 //! to external MCP clients (e.g., Claude Desktop, Cursor).
 //!
-//! Protocol version: 2024-11-05
+//! Protocol version: 2025-11-25
 //! Transport: stdio (line-delimited JSON-RPC)
 
 use serde_json::{json, Value};
 
-const PROTOCOL_VERSION: &str = "2024-11-05";
+const PROTOCOL_VERSION: &str = "2025-11-25";
 const SERVER_VERSION: &str = "1.0.0";
 
 /// A tool discovered from SKILL.md or built-in.

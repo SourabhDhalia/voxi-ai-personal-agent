@@ -16,8 +16,42 @@ use std::time::{Duration, Instant};
 
 use crate::llm::backend::LlmToolDecl;
 
-const STREAMABLE_HTTP_PROTOCOL_VERSION: &str = "2025-06-18";
-const STDIO_PROTOCOL_VERSION: &str = "2024-11-05";
+const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+const LEGACY_HTTP_SSE_PROTOCOL_VERSION: &str = "2024-11-05";
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum McpConnectionState {
+    Disconnected,
+    Connected,
+    AuthRequired,
+    Failed,
+}
+
+impl McpConnectionState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            McpConnectionState::Disconnected => "disconnected",
+            McpConnectionState::Connected => "connected",
+            McpConnectionState::AuthRequired => "auth_required",
+            McpConnectionState::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct McpServerStatus {
+    pub name: String,
+    pub transport: String,
+    pub state: McpConnectionState,
+    pub connected: bool,
+    pub auth_required: bool,
+    pub has_access_token: bool,
+    pub tool_count: usize,
+    pub endpoint: Option<String>,
+    pub negotiated_protocol_version: Option<String>,
+    pub message: Option<String>,
+    pub suggested_command: Option<String>,
+}
 
 #[derive(Clone, Debug)]
 pub struct McpToolInfo {
@@ -257,7 +291,7 @@ pub struct McpClient {
     last_used_ms: u64,
     envs: Option<std::collections::HashMap<String, String>>,
 
-    // New fields for HTTP/SSE transport
+    // HTTP transport state.
     is_http: bool,
     http_url: String,
     http_client: Option<reqwest::blocking::Client>,
@@ -267,6 +301,10 @@ pub struct McpClient {
     received_responses: Arc<Mutex<std::collections::HashMap<i32, Value>>>,
     stop_signal: Arc<AtomicBool>,
     sse_thread: Option<std::thread::JoinHandle<()>>,
+    connection_state: RwLock<McpConnectionState>,
+    status_message: RwLock<Option<String>>,
+    auth_challenge: RwLock<Option<String>>,
+    negotiated_protocol_version: RwLock<String>,
 }
 
 fn run_sse_listener(
@@ -298,7 +336,11 @@ fn run_sse_listener(
         };
 
         if !resp.status().is_success() {
-            log::error!("SSE connection failed with status: {}", resp.status());
+            log::warn!(
+                "Legacy HTTP+SSE listener for '{}' ended with status: {}",
+                url,
+                resp.status()
+            );
             let status = resp.status();
             if status == reqwest::StatusCode::METHOD_NOT_ALLOWED
                 || status == reqwest::StatusCode::UNAUTHORIZED
@@ -407,6 +449,10 @@ impl McpClient {
             received_responses: Arc::new(Mutex::new(std::collections::HashMap::new())),
             stop_signal: Arc::new(AtomicBool::new(false)),
             sse_thread: None,
+            connection_state: RwLock::new(McpConnectionState::Disconnected),
+            status_message: RwLock::new(None),
+            auth_challenge: RwLock::new(None),
+            negotiated_protocol_version: RwLock::new(MCP_PROTOCOL_VERSION.to_string()),
         }
     }
 
@@ -421,6 +467,69 @@ impl McpClient {
     ) -> Self {
         self.http_headers = headers.unwrap_or_default();
         self
+    }
+
+    fn set_connection_state(&self, state: McpConnectionState, message: Option<String>) {
+        if let Ok(mut guard) = self.connection_state.write() {
+            *guard = state;
+        }
+        if let Ok(mut guard) = self.status_message.write() {
+            *guard = message;
+        }
+    }
+
+    fn set_auth_challenge(&self, challenge: Option<String>) {
+        if let Ok(mut guard) = self.auth_challenge.write() {
+            *guard = challenge.filter(|value| !value.trim().is_empty());
+        }
+    }
+
+    fn set_negotiated_protocol_version(&self, version: &str) {
+        let version = version.trim();
+        if version.is_empty() {
+            return;
+        }
+        if let Ok(mut guard) = self.negotiated_protocol_version.write() {
+            *guard = version.to_string();
+        }
+    }
+
+    fn negotiated_protocol_version(&self) -> String {
+        self.negotiated_protocol_version
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_else(|_| MCP_PROTOCOL_VERSION.to_string())
+    }
+
+    fn reset_http_transport(&mut self) {
+        self.stop_signal.store(true, Ordering::SeqCst);
+        if let Some(handle) = self.sse_thread.take() {
+            let _ = handle.join();
+        }
+        self.http_client = None;
+        if let Ok(mut ep) = self.endpoint_url.write() {
+            *ep = None;
+        }
+        if let Ok(mut session) = self.mcp_session_id.write() {
+            *session = None;
+        }
+        if let Ok(mut map) = self.received_responses.lock() {
+            map.clear();
+        }
+    }
+
+    fn status_message(&self) -> Option<String> {
+        self.status_message
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
+    }
+
+    fn auth_challenge(&self) -> Option<String> {
+        self.auth_challenge
+            .read()
+            .ok()
+            .and_then(|guard| guard.clone())
     }
 
     fn now_ms() -> u64 {
@@ -676,6 +785,113 @@ impl McpClient {
         ))
     }
 
+    fn is_auth_error(message: &str) -> bool {
+        message.contains("401 Unauthorized")
+            || message.contains("403 Forbidden")
+            || message.contains("HTTP 401")
+            || message.contains("HTTP 403")
+    }
+
+    fn should_try_legacy_http_sse(message: &str) -> bool {
+        message.contains("400 Bad Request")
+            || message.contains("404 Not Found")
+            || message.contains("405 Method Not Allowed")
+            || message.contains("HTTP 400")
+            || message.contains("HTTP 404")
+            || message.contains("HTTP 405")
+    }
+
+    fn record_protocol_from_initialize(&self, resp: &Value) {
+        if let Some(version) = resp
+            .get("result")
+            .and_then(|result| result.get("protocolVersion"))
+            .and_then(|value| value.as_str())
+        {
+            self.set_negotiated_protocol_version(version);
+        }
+    }
+
+    fn legacy_endpoint_from_event(base_url: &str, data: &str) -> String {
+        let data = data.trim();
+        if data.starts_with("http://") || data.starts_with("https://") {
+            return data.to_string();
+        }
+        let base = base_url.trim_end_matches('/');
+        if data.starts_with('/') {
+            format!("{}{}", base, data)
+        } else {
+            format!("{}/{}", base, data)
+        }
+    }
+
+    fn discover_legacy_sse_endpoint(
+        &self,
+        client: &reqwest::blocking::Client,
+    ) -> Result<String, String> {
+        let resp = client
+            .get(&self.http_url)
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .send()
+            .map_err(|err| err.to_string())?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("legacy SSE GET failed with {}", status));
+        }
+
+        let mut reader = BufReader::new(resp);
+        let mut line = String::new();
+        let mut current_event = String::new();
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_millis(self.timeout_ms.min(10_000)) {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let trimmed = line.trim();
+                    if let Some(event) = trimmed.strip_prefix("event:") {
+                        current_event = event.trim().to_string();
+                    } else if current_event == "endpoint" {
+                        if let Some(data) = trimmed.strip_prefix("data:") {
+                            let endpoint = data.trim();
+                            if !endpoint.is_empty() {
+                                return Ok(Self::legacy_endpoint_from_event(
+                                    &self.http_url,
+                                    endpoint,
+                                ));
+                            }
+                        }
+                    }
+                }
+                Err(err) => return Err(err.to_string()),
+            }
+        }
+
+        Err("legacy SSE endpoint event was not received".to_string())
+    }
+
+    fn start_legacy_sse_listener(&mut self, client: reqwest::blocking::Client) {
+        self.stop_signal.store(false, Ordering::SeqCst);
+        let url = self.http_url.clone();
+        let session_id = self
+            .mcp_session_id
+            .read()
+            .ok()
+            .and_then(|session| session.clone());
+        let endpoint_url = Arc::clone(&self.endpoint_url);
+        let received_responses = Arc::clone(&self.received_responses);
+        let stop_signal = Arc::clone(&self.stop_signal);
+        self.sse_thread = Some(std::thread::spawn(move || {
+            run_sse_listener(
+                client,
+                url,
+                session_id,
+                endpoint_url,
+                received_responses,
+                stop_signal,
+            )
+        }));
+    }
+
     fn remember_http_response(&self, value: Value) {
         if value.get("jsonrpc").is_some()
             && (value.get("result").is_some() || value.get("error").is_some())
@@ -732,6 +948,10 @@ impl McpClient {
             {
                 Ok(c) => c,
                 Err(e) => {
+                    self.set_connection_state(
+                        McpConnectionState::Failed,
+                        Some(format!("failed to build HTTP client: {}", e)),
+                    );
                     log::error!(
                         "MCP Client: Failed to build HTTP client for '{}': {}",
                         self.server_name,
@@ -743,6 +963,9 @@ impl McpClient {
 
             self.http_client = Some(client);
             self.stop_signal.store(false, Ordering::SeqCst);
+            self.set_negotiated_protocol_version(MCP_PROTOCOL_VERSION);
+            self.set_connection_state(McpConnectionState::Disconnected, None);
+            self.set_auth_challenge(None);
 
             if let Ok(mut ep) = self.endpoint_url.write() {
                 *ep = Some(self.http_url.clone());
@@ -750,33 +973,164 @@ impl McpClient {
             if let Ok(mut session) = self.mcp_session_id.write() {
                 *session = self.find_mcp_session_id();
             }
+            if let Ok(mut map) = self.received_responses.lock() {
+                map.clear();
+            }
             self.connected = true;
 
             log::debug!(
-                "MCP Client: Streamable HTTP transport prepared for '{}'",
-                self.server_name
+                "MCP Client: Streamable HTTP transport prepared for '{}' (protocol {})",
+                self.server_name,
+                MCP_PROTOCOL_VERSION
             );
 
             // Perform initialize handshake
             let init_params = json!({
-                "protocolVersion": STREAMABLE_HTTP_PROTOCOL_VERSION,
+                "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {"name": "tizenclaw-mcp-client", "version": "1.0.0"}
             });
 
             match self.send_request_sync("initialize", &init_params, 10000) {
                 Ok(resp) => {
-                    if resp.get("error").is_some() {
+                    if let Some(error) = resp.get("error") {
+                        let message = format!("initialize returned JSON-RPC error: {}", error);
+                        self.connected = false;
+                        self.reset_http_transport();
+                        self.set_connection_state(McpConnectionState::Failed, Some(message));
                         log::error!("MCP Client: Handshake failed for '{}'", self.server_name);
-                        self.disconnect();
                         return false;
                     }
+                    self.record_protocol_from_initialize(&resp);
                 }
                 Err(e) => {
-                    log::error!("MCP Client: Init error for '{}': {}", self.server_name, e);
-                    self.disconnect();
-                    return false;
+                    if Self::is_auth_error(&e) {
+                        self.connected = false;
+                        self.reset_http_transport();
+                        self.set_connection_state(
+                            McpConnectionState::AuthRequired,
+                            Some("OAuth bearer token required or expired".to_string()),
+                        );
+                        log::warn!(
+                            "MCP Client: '{}' requires OAuth; run `/mcp login {}` or provide a bearer token.",
+                            self.server_name,
+                            self.server_name
+                        );
+                        return false;
+                    }
+
+                    if Self::should_try_legacy_http_sse(&e) {
+                        log::debug!(
+                            "MCP Client: '{}' did not accept Streamable HTTP initialize; trying legacy HTTP+SSE fallback",
+                            self.server_name
+                        );
+                        if let Some(legacy_client) = self.http_client.as_ref().cloned() {
+                            match self.discover_legacy_sse_endpoint(&legacy_client) {
+                                Ok(endpoint) => {
+                                    if let Ok(mut ep) = self.endpoint_url.write() {
+                                        *ep = Some(endpoint);
+                                    }
+                                    self.set_negotiated_protocol_version(
+                                        LEGACY_HTTP_SSE_PROTOCOL_VERSION,
+                                    );
+                                    self.start_legacy_sse_listener(legacy_client);
+                                    let legacy_init = json!({
+                                        "protocolVersion": LEGACY_HTTP_SSE_PROTOCOL_VERSION,
+                                        "capabilities": {},
+                                        "clientInfo": {"name": "tizenclaw-mcp-client", "version": "1.0.0"}
+                                    });
+                                    match self.send_request_sync("initialize", &legacy_init, 10000)
+                                    {
+                                        Ok(resp) if resp.get("error").is_none() => {
+                                            self.record_protocol_from_initialize(&resp);
+                                        }
+                                        Ok(resp) => {
+                                            let message = format!(
+                                                "legacy initialize returned JSON-RPC error: {}",
+                                                resp.get("error").unwrap_or(&Value::Null)
+                                            );
+                                            self.connected = false;
+                                            self.reset_http_transport();
+                                            self.set_connection_state(
+                                                McpConnectionState::Failed,
+                                                Some(message),
+                                            );
+                                            return false;
+                                        }
+                                        Err(legacy_err) if Self::is_auth_error(&legacy_err) => {
+                                            self.connected = false;
+                                            self.reset_http_transport();
+                                            self.set_connection_state(
+                                                McpConnectionState::AuthRequired,
+                                                Some(
+                                                    "OAuth bearer token required or expired"
+                                                        .to_string(),
+                                                ),
+                                            );
+                                            return false;
+                                        }
+                                        Err(legacy_err) => {
+                                            self.connected = false;
+                                            self.reset_http_transport();
+                                            self.set_connection_state(
+                                                McpConnectionState::Failed,
+                                                Some(format!(
+                                                    "legacy HTTP+SSE initialize failed: {}",
+                                                    legacy_err
+                                                )),
+                                            );
+                                            return false;
+                                        }
+                                    }
+                                }
+                                Err(legacy_err) => {
+                                    self.connected = false;
+                                    self.reset_http_transport();
+                                    self.set_connection_state(
+                                        McpConnectionState::Failed,
+                                        Some(format!(
+                                            "Streamable HTTP initialize failed: {}; legacy HTTP+SSE fallback failed: {}",
+                                            e, legacy_err
+                                        )),
+                                    );
+                                    return false;
+                                }
+                            }
+                        }
+                    } else {
+                        self.connected = false;
+                        self.reset_http_transport();
+                        self.set_connection_state(
+                            McpConnectionState::Failed,
+                            Some(format!("initialize failed: {}", e)),
+                        );
+                        log::error!("MCP Client: Init error for '{}': {}", self.server_name, e);
+                        return false;
+                    }
+                    if !self.connected {
+                        return false;
+                    }
+                    if self
+                        .connection_state
+                        .read()
+                        .map(|state| *state == McpConnectionState::Failed)
+                        .unwrap_or(false)
+                    {
+                        return false;
+                    }
+                    if self.http_client.is_none() {
+                        self.set_connection_state(
+                            McpConnectionState::Failed,
+                            Some(format!("initialize failed: {}", e)),
+                        );
+                        return false;
+                    }
+                    // Legacy fallback succeeded.
                 }
+            }
+
+            if !self.connected {
+                return false;
             }
 
             // Send notifications/initialized
@@ -785,10 +1139,13 @@ impl McpClient {
                 "method": "notifications/initialized"
             });
             let _ = self.send_rpc_message(&notif);
+            self.set_connection_state(McpConnectionState::Connected, None);
+            self.set_auth_challenge(None);
 
             log::debug!(
-                "MCP Client: Handshake succeeded for HTTP server '{}'",
-                self.server_name
+                "MCP Client: Handshake succeeded for HTTP server '{}' (negotiated protocol {})",
+                self.server_name,
+                self.negotiated_protocol_version()
             );
             return true;
         }
@@ -806,6 +1163,10 @@ impl McpClient {
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
+                self.set_connection_state(
+                    McpConnectionState::Failed,
+                    Some(format!("failed to spawn '{}': {}", self.command, e)),
+                );
                 log::error!("MCP Client: Failed to spawn '{}': {}", self.command, e);
                 return false;
             }
@@ -820,6 +1181,8 @@ impl McpClient {
         self.writer = Some(Mutex::new(stdin));
         self.child = Some(child);
         self.connected = true;
+        self.set_negotiated_protocol_version(MCP_PROTOCOL_VERSION);
+        self.set_connection_state(McpConnectionState::Disconnected, None);
 
         log::debug!("MCP Client: '{}' started (PID: {})", self.server_name, pid);
 
@@ -854,22 +1217,29 @@ impl McpClient {
 
         // Perform initialize handshake
         let init_params = json!({
-            "protocolVersion": STDIO_PROTOCOL_VERSION,
+            "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": {"name": "tizenclaw-mcp-client", "version": "1.0.0"}
         });
 
         match self.send_request_sync("initialize", &init_params, 10000) {
             Ok(resp) => {
-                if resp.get("error").is_some() {
+                if let Some(error) = resp.get("error") {
+                    let message = format!("initialize returned JSON-RPC error: {}", error);
                     log::error!("MCP Client: Handshake failed for '{}'", self.server_name);
                     self.disconnect();
+                    self.set_connection_state(McpConnectionState::Failed, Some(message));
                     return false;
                 }
+                self.record_protocol_from_initialize(&resp);
             }
             Err(e) => {
                 log::error!("MCP Client: Init error for '{}': {}", self.server_name, e);
                 self.disconnect();
+                self.set_connection_state(
+                    McpConnectionState::Failed,
+                    Some(format!("initialize failed: {}", e)),
+                );
                 return false;
             }
         }
@@ -880,8 +1250,13 @@ impl McpClient {
             "method": "notifications/initialized"
         });
         let _ = self.send_rpc_message(&notif);
+        self.set_connection_state(McpConnectionState::Connected, None);
 
-        log::debug!("MCP Client: Handshake succeeded for '{}'", self.server_name);
+        log::debug!(
+            "MCP Client: Handshake succeeded for '{}' (negotiated protocol {})",
+            self.server_name,
+            self.negotiated_protocol_version()
+        );
         true
     }
 
@@ -891,17 +1266,8 @@ impl McpClient {
         self.writer = None;
 
         if self.is_http {
-            self.stop_signal.store(true, Ordering::SeqCst);
-            if let Some(handle) = self.sse_thread.take() {
-                let _ = handle.join();
-            }
-            self.http_client = None;
-            if let Ok(mut ep) = self.endpoint_url.write() {
-                *ep = None;
-            }
-            if let Ok(mut map) = self.received_responses.lock() {
-                map.clear();
-            }
+            self.reset_http_transport();
+            self.set_connection_state(McpConnectionState::Disconnected, None);
             return;
         }
 
@@ -909,6 +1275,7 @@ impl McpClient {
             let _ = child.kill();
             let _ = child.wait();
         }
+        self.set_connection_state(McpConnectionState::Disconnected, None);
     }
 
     /// Discover tools from the remote server.
@@ -993,6 +1360,43 @@ impl McpClient {
         self.connected
     }
 
+    pub fn status(&self) -> McpServerStatus {
+        let state = self
+            .connection_state
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or(McpConnectionState::Disconnected);
+        let endpoint = if self.is_http {
+            self.endpoint_url
+                .read()
+                .ok()
+                .and_then(|guard| guard.clone())
+        } else {
+            Some(self.command.clone())
+        };
+        let negotiated_protocol_version = self
+            .negotiated_protocol_version
+            .read()
+            .ok()
+            .map(|guard| guard.clone())
+            .filter(|value| !value.trim().is_empty());
+        let auth_required = state == McpConnectionState::AuthRequired;
+        McpServerStatus {
+            name: self.server_name.clone(),
+            transport: if self.is_http { "http" } else { "stdio" }.to_string(),
+            state,
+            connected: self.connected,
+            auth_required,
+            has_access_token: self.is_http && self.find_access_token().is_some(),
+            tool_count: self.tools.len(),
+            endpoint,
+            negotiated_protocol_version,
+            message: self.status_message().or_else(|| self.auth_challenge()),
+            suggested_command: (self.is_http && auth_required)
+                .then(|| format!("/mcp login {}", self.server_name)),
+        }
+    }
+
     fn resolve_remote_tool_name<'a>(&'a self, full_name: &'a str) -> Option<&'a str> {
         self.tool_infos
             .iter()
@@ -1042,7 +1446,7 @@ impl McpClient {
                     reqwest::header::ACCEPT,
                     "application/json, text/event-stream",
                 )
-                .header("MCP-Protocol-Version", STREAMABLE_HTTP_PROTOCOL_VERSION);
+                .header("MCP-Protocol-Version", self.negotiated_protocol_version());
             req = self.apply_configured_http_headers(req);
 
             if let Some(access_token) = self.find_access_token() {
@@ -1075,6 +1479,26 @@ impl McpClient {
             let body = resp.text().map_err(|e| e.to_string())?;
 
             if !status.is_success() {
+                if status == reqwest::StatusCode::UNAUTHORIZED
+                    || status == reqwest::StatusCode::FORBIDDEN
+                {
+                    self.set_auth_challenge(
+                        (!auth_challenge.is_empty()).then_some(auth_challenge.clone()),
+                    );
+                    self.set_connection_state(
+                        McpConnectionState::AuthRequired,
+                        Some("OAuth bearer token required or expired".to_string()),
+                    );
+                }
+                if status == reqwest::StatusCode::NOT_FOUND && current_session.is_some() {
+                    if let Ok(mut session) = self.mcp_session_id.write() {
+                        *session = None;
+                    }
+                    self.set_connection_state(
+                        McpConnectionState::Disconnected,
+                        Some("MCP HTTP session expired; reinitialize required".to_string()),
+                    );
+                }
                 let auth_hint = if auth_challenge.is_empty() {
                     String::new()
                 } else {
@@ -1304,6 +1728,20 @@ impl McpClientManager {
                         name,
                         client.get_tools().len()
                     );
+                } else {
+                    let status = client.status();
+                    if status.auth_required {
+                        log::warn!(
+                            "MCP Client: '{}' is auth-required; run `{}`",
+                            name,
+                            status
+                                .suggested_command
+                                .as_deref()
+                                .unwrap_or("/mcp login <server>")
+                        );
+                    } else if let Some(message) = status.message.as_deref() {
+                        log::warn!("MCP Client: '{}' not connected: {}", name, message);
+                    }
                 }
                 self.clients.push(client);
             }
@@ -1356,6 +1794,20 @@ impl McpClientManager {
                         name,
                         client.get_tools().len()
                     );
+                } else {
+                    let status = client.status();
+                    if status.auth_required {
+                        log::warn!(
+                            "MCP Client: '{}' is auth-required; run `{}`",
+                            name,
+                            status
+                                .suggested_command
+                                .as_deref()
+                                .unwrap_or("/mcp login <server>")
+                        );
+                    } else if let Some(message) = status.message.as_deref() {
+                        log::warn!("MCP Client: '{}' not connected: {}", name, message);
+                    }
                 }
                 self.clients.push(client);
             }
@@ -1377,6 +1829,10 @@ impl McpClientManager {
             .iter()
             .flat_map(|client| client.get_tool_infos().to_vec())
             .collect()
+    }
+
+    pub fn statuses(&self) -> Vec<McpServerStatus> {
+        self.clients.iter().map(McpClient::status).collect()
     }
 
     pub fn search_tools(&self, query: &str, limit: usize) -> Vec<McpToolSearchResult> {
