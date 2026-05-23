@@ -1502,6 +1502,123 @@ impl AgentCore {
         }
     }
 
+    pub async fn register_mcp_session(&self, server_name: &str, session_id: &str) -> bool {
+        let mcp_config_path = self.platform.paths.config_dir.join("mcp_servers.json");
+
+        let content = match std::fs::read_to_string(&mcp_config_path) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+
+        let mut config: Value = match serde_json::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+
+        let servers_map = match config.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
+            Some(m) => m,
+            None => return false,
+        };
+
+        let server_config = match servers_map.get_mut(server_name) {
+            Some(s) => s,
+            None => return false,
+        };
+
+        let mut args_updated = false;
+        if let Some(args_arr) = server_config.get_mut("args").and_then(|v| v.as_array_mut()) {
+            let mut i = 0;
+            while i < args_arr.len() {
+                if let Some(arg_str) = args_arr[i].as_str() {
+                    if arg_str == "--session" && i + 1 < args_arr.len() {
+                        args_arr[i + 1] = serde_json::json!(session_id);
+                        args_updated = true;
+                        break;
+                    }
+                }
+                i += 1;
+            }
+            if !args_updated {
+                args_arr.push(serde_json::json!("--session"));
+                args_arr.push(serde_json::json!(session_id));
+            }
+        } else {
+            let mut arr = Vec::new();
+            if let Some(s_type) = server_config.get("type").and_then(|v| v.as_str()) {
+                if s_type == "http" {
+                } else {
+                    arr.push(serde_json::json!("--session"));
+                    arr.push(serde_json::json!(session_id));
+                }
+            } else {
+                arr.push(serde_json::json!("--session"));
+                arr.push(serde_json::json!(session_id));
+            }
+            if !arr.is_empty() {
+                server_config.as_object_mut().unwrap().insert("args".to_string(), Value::Array(arr));
+            }
+        }
+
+        let env_key = format!("{}_SESSION", server_name.to_ascii_uppercase());
+        if let Some(env_obj) = server_config.get_mut("env").and_then(|v| v.as_object_mut()) {
+            env_obj.insert(env_key, serde_json::json!(session_id));
+            env_obj.insert("SESSION_ID".to_string(), serde_json::json!(session_id));
+        } else {
+            let mut env_map = serde_json::Map::new();
+            env_map.insert(env_key, serde_json::json!(session_id));
+            env_map.insert("SESSION_ID".to_string(), serde_json::json!(session_id));
+            server_config.as_object_mut().unwrap().insert("env".to_string(), Value::Object(env_map));
+        }
+
+        let new_content = match serde_json::to_string_pretty(&config) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+
+        if std::fs::write(&mcp_config_path, new_content).is_err() {
+            return false;
+        }
+
+        let mut mcp = self.mcp_client_manager.write().await;
+        mcp.load_config_and_connect(&mcp_config_path.to_string_lossy())
+    }
+
+    fn extract_session_id(input: &str) -> String {
+        let input_trimmed = input.trim();
+        if input_trimmed.starts_with("http://") || input_trimmed.starts_with("https://") {
+            if let Ok(url) = reqwest::Url::parse(input_trimmed) {
+                for (key, val) in url.query_pairs() {
+                    if key == "code" || key == "session" || key == "token" || key == "session_id" || key == "accessToken" {
+                        return val.to_string();
+                    }
+                }
+            }
+        }
+
+        for line in input_trimmed.lines() {
+            let line_lower = line.to_ascii_lowercase();
+            if line_lower.contains("cookie:") || line_lower.contains("authorization:") || line_lower.contains("session") {
+                if let Some(pos) = line.find(':') {
+                    let val = line[pos + 1..].trim();
+                    if line_lower.contains("cookie:") {
+                        for cookie_part in val.split(';') {
+                            let cookie_part = cookie_part.trim();
+                            if cookie_part.to_ascii_lowercase().starts_with("session_id=") {
+                                return cookie_part["session_id=".len()..].to_string();
+                            }
+                            if cookie_part.to_ascii_lowercase().starts_with("session=") {
+                                return cookie_part["session=".len()..].to_string();
+                            }
+                        }
+                    }
+                    return val.to_string();
+                }
+            }
+        }
+
+        input_trimmed.to_string()
+    }
+
     fn try_confirm_pending_mcp_action(
         pending_map: &Mutex<HashMap<String, PendingMcpConfirmation>>,
         session_id: &str,
@@ -3067,6 +3184,70 @@ impl AgentCore {
         prompt: &str,
         on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
     ) -> String {
+        let prompt_trimmed = prompt.trim();
+
+        if prompt_trimmed.starts_with("/mcp session") || prompt_trimmed.starts_with("/mcp login") {
+            let parts: Vec<&str> = prompt_trimmed.split_whitespace().collect();
+            if parts.len() >= 4 {
+                let server_name = parts[2];
+                let raw_token = parts[3..].join(" ");
+                let session_id = Self::extract_session_id(&raw_token);
+                if self.register_mcp_session(server_name, &session_id).await {
+                    return format!(
+                        "Successfully registered session ID for MCP server '{}' and reloaded configuration. You can now use it!",
+                        server_name
+                    );
+                } else {
+                    return format!(
+                        "Failed to register session ID for MCP server '{}'. Please check that the server exists in mcp_servers.json.",
+                        server_name
+                    );
+                }
+            } else {
+                return "Usage: `/mcp session <server_name> <session_token_or_url>`".to_string();
+            }
+        }
+
+        if (prompt_trimmed.starts_with("http://") || prompt_trimmed.starts_with("https://"))
+            && (prompt_trimmed.contains("code=") || prompt_trimmed.contains("session=") || prompt_trimmed.contains("token="))
+        {
+            let server_name = if prompt_trimmed.contains("zepto") {
+                "zepto"
+            } else if prompt_trimmed.contains("swiggy") {
+                "swiggy-instamart"
+            } else {
+                "zepto"
+            };
+            let session_id = Self::extract_session_id(prompt_trimmed);
+            if !session_id.is_empty() {
+                if self.register_mcp_session(server_name, &session_id).await {
+                    return format!(
+                        "Auto-detected OAuth callback URL! Successfully registered session ID for MCP server '{}' and reloaded configuration.",
+                        server_name
+                    );
+                }
+            }
+        }
+
+        if prompt_trimmed.contains("session_id=") || prompt_trimmed.to_lowercase().contains("set-cookie:") {
+            let server_name = if prompt_trimmed.contains("zepto") {
+                "zepto"
+            } else if prompt_trimmed.contains("swiggy") {
+                "swiggy-instamart"
+            } else {
+                "zepto"
+            };
+            let session_id = Self::extract_session_id(prompt_trimmed);
+            if !session_id.is_empty() && session_id != prompt_trimmed {
+                if self.register_mcp_session(server_name, &session_id).await {
+                    return format!(
+                        "Auto-detected pasted session headers/cookies! Successfully registered session ID for MCP server '{}' and reloaded configuration.",
+                        server_name
+                    );
+                }
+            }
+        }
+
         // ── Phase 1: GoalParsing ─────────────────────────────────────────
         let mut loop_state = AgentLoopState::new(session_id, prompt);
 

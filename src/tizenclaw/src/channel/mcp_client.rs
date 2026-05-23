@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicI32, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use crate::llm::backend::LlmToolDecl;
@@ -238,7 +238,7 @@ fn build_searchable_text(
     )
 }
 
-/// A single MCP client connected to a server process.
+/// A single MCP client connected to a server process or an HTTP server.
 pub struct McpClient {
     pub server_name: String,
     command: String,
@@ -252,10 +252,107 @@ pub struct McpClient {
     tool_infos: Vec<McpToolInfo>,
     next_req_id: AtomicI32,
     last_used_ms: u64,
+    envs: Option<std::collections::HashMap<String, String>>,
+
+    // New fields for HTTP/SSE transport
+    is_http: bool,
+    http_url: String,
+    http_client: Option<reqwest::blocking::Client>,
+    endpoint_url: Arc<RwLock<Option<String>>>,
+    received_responses: Arc<Mutex<std::collections::HashMap<i32, Value>>>,
+    stop_signal: Arc<AtomicBool>,
+    sse_thread: Option<std::thread::JoinHandle<()>>,
+}
+
+fn run_sse_listener(
+    client: reqwest::blocking::Client,
+    url: String,
+    endpoint_url: Arc<RwLock<Option<String>>>,
+    received_responses: Arc<Mutex<std::collections::HashMap<i32, Value>>>,
+    stop_signal: Arc<AtomicBool>,
+) {
+    while !stop_signal.load(Ordering::SeqCst) {
+        let mut resp = match client
+            .get(&url)
+            .header("Accept", "text/event-stream")
+            .send()
+        {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("SSE connection error to '{}': {}", url, e);
+                std::thread::sleep(Duration::from_secs(2));
+                continue;
+            }
+        };
+
+        if !resp.status().is_success() {
+            log::error!("SSE connection failed with status: {}", resp.status());
+            std::thread::sleep(Duration::from_secs(2));
+            continue;
+        }
+
+        let mut reader = BufReader::new(resp);
+        let mut line = String::new();
+        let mut current_event = String::new();
+
+        loop {
+            if stop_signal.load(Ordering::SeqCst) {
+                break;
+            }
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) => break, // Connection closed
+                Ok(_) => {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        current_event.clear();
+                        continue;
+                    }
+
+                    if trimmed.starts_with("event:") {
+                        current_event = trimmed["event:".len()..].trim().to_string();
+                    } else if trimmed.starts_with("data:") {
+                        let data = trimmed["data:".len()..].trim().to_string();
+
+                        if current_event == "endpoint" {
+                            let mut ep = endpoint_url.write().unwrap();
+                            let resolved = if data.starts_with("http://") || data.starts_with("https://") {
+                                data
+                            } else {
+                                let base = url.trim_end_matches('/');
+                                if data.starts_with('/') {
+                                    format!("{}{}", base, data)
+                                } else {
+                                    format!("{}/{}", base, data)
+                                }
+                            };
+                            *ep = Some(resolved);
+                        } else if current_event == "message" || current_event.is_empty() {
+                            if let Ok(v) = serde_json::from_str::<Value>(&data) {
+                                if let Some(id) = v.get("id").and_then(|id_val| id_val.as_i64()) {
+                                    if let Ok(mut map) = received_responses.lock() {
+                                        map.insert(id as i32, v);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("SSE read error: {}", e);
+                    break;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
 }
 
 impl McpClient {
     pub fn new(server_name: &str, command: &str, args: &[String], timeout_ms: u64) -> Self {
+        let is_http = command.starts_with("http://") || command.starts_with("https://");
+        let http_url = if is_http { command.to_string() } else { String::new() };
+
         McpClient {
             server_name: server_name.into(),
             command: command.into(),
@@ -269,7 +366,21 @@ impl McpClient {
             tool_infos: Vec::new(),
             next_req_id: AtomicI32::new(1),
             last_used_ms: Self::now_ms(),
+            envs: None,
+
+            is_http,
+            http_url,
+            http_client: None,
+            endpoint_url: Arc::new(RwLock::new(None)),
+            received_responses: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            stop_signal: Arc::new(AtomicBool::new(false)),
+            sse_thread: None,
         }
+    }
+
+    pub fn with_env(mut self, envs: Option<std::collections::HashMap<String, String>>) -> Self {
+        self.envs = envs;
+        self
     }
 
     fn now_ms() -> u64 {
@@ -287,20 +398,105 @@ impl McpClient {
         self.last_used_ms
     }
 
-    /// Spawn the server process and perform the MCP handshake.
+    /// Spawn the server process or start the HTTP client and perform the MCP handshake.
     pub fn connect(&mut self) -> bool {
         if self.connected {
             return true;
         }
         self.update_last_used();
 
-        let mut child = match Command::new(&self.command)
-            .args(&self.args)
+        if self.is_http {
+            let client = match reqwest::blocking::Client::builder()
+                .cookie_store(true)
+                .timeout(Duration::from_millis(self.timeout_ms))
+                .build()
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!(
+                        "MCP Client: Failed to build HTTP client for '{}': {}",
+                        self.server_name,
+                        e
+                    );
+                    return false;
+                }
+            };
+
+            self.http_client = Some(client.clone());
+            self.stop_signal.store(false, Ordering::SeqCst);
+
+            let url = self.http_url.clone();
+            let endpoint_url = self.endpoint_url.clone();
+            let received_responses = self.received_responses.clone();
+            let stop_signal = self.stop_signal.clone();
+
+            let handle = std::thread::spawn(move || {
+                run_sse_listener(client, url, endpoint_url, received_responses, stop_signal);
+            });
+            self.sse_thread = Some(handle);
+            self.connected = true;
+
+            // Wait up to 5s for endpoint to resolve via SSE
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_secs(5) {
+                if self.endpoint_url.read().unwrap().is_some() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+
+            // Fallback if no SSE endpoint was resolved
+            if self.endpoint_url.read().unwrap().is_none() {
+                let mut ep = self.endpoint_url.write().unwrap();
+                *ep = Some(self.http_url.clone());
+            }
+
+            log::debug!("MCP Client: Native HTTP transport established for '{}'", self.server_name);
+
+            // Perform initialize handshake
+            let init_params = json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "tizenclaw-mcp-client", "version": "1.0.0"}
+            });
+
+            match self.send_request_sync("initialize", &init_params, 10000) {
+                Ok(resp) => {
+                    if resp.get("error").is_some() {
+                        log::error!("MCP Client: Handshake failed for '{}'", self.server_name);
+                        self.disconnect();
+                        return false;
+                    }
+                }
+                Err(e) => {
+                    log::error!("MCP Client: Init error for '{}': {}", self.server_name, e);
+                    self.disconnect();
+                    return false;
+                }
+            }
+
+            // Send notifications/initialized
+            let notif = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            });
+            let _ = self.send_rpc_message(&notif);
+
+            log::debug!("MCP Client: Handshake succeeded for HTTP server '{}'", self.server_name);
+            return true;
+        }
+
+        let mut cmd = Command::new(&self.command);
+        cmd.args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        {
+            .stderr(Stdio::piped());
+
+        if let Some(ref envs) = self.envs {
+            cmd.envs(envs);
+        }
+
+        let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
                 log::error!("MCP Client: Failed to spawn '{}': {}", self.command, e);
@@ -311,6 +507,7 @@ impl McpClient {
         let pid = child.id();
         let stdout = child.stdout.take().unwrap();
         let stdin = child.stdin.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
 
         self.reader = Some(Mutex::new(BufReader::new(stdout)));
         self.writer = Some(Mutex::new(stdin));
@@ -318,6 +515,30 @@ impl McpClient {
         self.connected = true;
 
         log::debug!("MCP Client: '{}' started (PID: {})", self.server_name, pid);
+
+        // Spawn a background thread to read stderr and look for links/prompts
+        let server_name_cloned = self.server_name.clone();
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                match line {
+                    Ok(l) => {
+                        let trimmed = l.trim();
+                        if !trimmed.is_empty() {
+                            log::info!("MCP Server [{}] stderr: {}", server_name_cloned, trimmed);
+                            if trimmed.contains("http://") || trimmed.contains("https://") {
+                                log::warn!("**************************************************");
+                                log::warn!("MCP Server [{}] AUTHENTICATION LINK DETECTED!", server_name_cloned);
+                                log::warn!("Please open this link in any browser to authenticate:");
+                                log::warn!("  {}", trimmed);
+                                log::warn!("**************************************************");
+                            }
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
 
         // Perform initialize handshake
         let init_params = json!({
@@ -356,6 +577,21 @@ impl McpClient {
         self.connected = false;
         self.reader = None;
         self.writer = None;
+
+        if self.is_http {
+            self.stop_signal.store(true, Ordering::SeqCst);
+            if let Some(handle) = self.sse_thread.take() {
+                let _ = handle.join();
+            }
+            self.http_client = None;
+            if let Ok(mut ep) = self.endpoint_url.write() {
+                *ep = None;
+            }
+            if let Ok(mut map) = self.received_responses.lock() {
+                map.clear();
+            }
+            return;
+        }
 
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
@@ -479,6 +715,32 @@ impl McpClient {
     }
 
     fn send_rpc_message(&self, message: &Value) -> Result<(), String> {
+        if self.is_http {
+            let client = self.http_client.as_ref().ok_or("No HTTP client")?;
+            let ep = self.endpoint_url.read().unwrap().clone().ok_or("No message endpoint URL")?;
+
+            let resp = client.post(&ep)
+                .json(message)
+                .send()
+                .map_err(|e| e.to_string())?;
+
+            if !resp.status().is_success() {
+                return Err(format!("HTTP POST failed: {}", resp.status()));
+            }
+
+            // Check if server returns synchronous response directly in body
+            if let Ok(v) = resp.json::<Value>() {
+                if v.get("jsonrpc").is_some() && (v.get("result").is_some() || v.get("error").is_some()) {
+                    if let Some(id) = v.get("id").and_then(|id_val| id_val.as_i64()) {
+                        if let Ok(mut map) = self.received_responses.lock() {
+                            map.insert(id as i32, v);
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+
         let writer = self.writer.as_ref().ok_or("No writer")?;
         let mut writer = writer.lock().map_err(|e| e.to_string())?;
         let data = format!("{}\n", message);
@@ -535,6 +797,21 @@ impl McpClient {
 
         let start = Instant::now();
         let timeout = Duration::from_millis(timeout_ms as u64);
+
+        if self.is_http {
+            loop {
+                if start.elapsed() >= timeout {
+                    return Err(format!("Timeout after {}ms waiting for HTTP response", timeout_ms));
+                }
+
+                if let Ok(mut map) = self.received_responses.lock() {
+                    if let Some(resp) = map.remove(&req_id) {
+                        return Ok(resp);
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
 
         loop {
             if start.elapsed() >= timeout {
@@ -626,14 +903,19 @@ impl McpClientManager {
                     .unwrap_or_default();
                 let timeout = s["timeout_ms"].as_u64().unwrap_or(30000);
 
+                let env_map: Option<std::collections::HashMap<String, String>> = s.get("env")
+                    .and_then(|v| v.as_object())
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    });
+
                 let mcp_type = s["type"].as_str().unwrap_or("stdio");
                 if mcp_type == "http" {
                     if let Some(url) = s["url"].as_str() {
-                        command = "npx".to_string();
-                        args = vec!["-y", "mcp-remote", url]
-                            .into_iter()
-                            .map(String::from)
-                            .collect();
+                        command = url.to_string();
+                        args.clear();
                     }
                 }
 
@@ -641,7 +923,7 @@ impl McpClientManager {
                     continue;
                 }
 
-                let mut client = McpClient::new(name, &command, &args, timeout);
+                let mut client = McpClient::new(name, &command, &args, timeout).with_env(env_map);
                 if client.connect() {
                     client.discover_tools();
                     connected_count += 1;
@@ -667,14 +949,19 @@ impl McpClientManager {
                     .unwrap_or_default();
                 let timeout = s["timeout_ms"].as_u64().unwrap_or(30000);
 
+                let env_map: Option<std::collections::HashMap<String, String>> = s.get("env")
+                    .and_then(|v| v.as_object())
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    });
+
                 let mcp_type = s["type"].as_str().unwrap_or("stdio");
                 if mcp_type == "http" {
                     if let Some(url) = s["url"].as_str() {
-                        command = "npx".to_string();
-                        args = vec!["-y", "mcp-remote", url]
-                            .into_iter()
-                            .map(String::from)
-                            .collect();
+                        command = url.to_string();
+                        args.clear();
                     }
                 }
 
@@ -682,7 +969,7 @@ impl McpClientManager {
                     continue;
                 }
 
-                let mut client = McpClient::new(&name, &command, &args, timeout);
+                let mut client = McpClient::new(&name, &command, &args, timeout).with_env(env_map);
                 if client.connect() {
                     client.discover_tools();
                     connected_count += 1;
