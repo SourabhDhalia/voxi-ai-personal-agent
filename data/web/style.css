@@ -1425,3 +1425,143 @@ body.modal-open {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
+
+/* ─── Markdown Rendering ───────────────────────────────────── */
+
+.markdown-body {
+    line-height: 1.6;
+}
+
+.markdown-body p {
+    margin-bottom: 0.85em;
+}
+
+.markdown-body p:last-child {
+    margin-bottom: 0;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+    margin-top: 1.25em;
+    margin-bottom: 0.6em;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.25;
+}
+
+.markdown-body h1 { font-size: 1.35rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+.markdown-body h2 { font-size: 1.15rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+.markdown-body h3 { font-size: 1.0rem; }
+.markdown-body h4 { font-size: 0.9rem; }
+
+.markdown-body ul,
+.markdown-body ol {
+    margin-bottom: 0.85em;
+    padding-left: 1.5em;
+}
+
+.markdown-body ul {
+    list-style-type: disc;
+}
+
+.markdown-body ol {
+    list-style-type: decimal;
+}
+
+.markdown-body li {
+    margin-top: 0.25em;
+}
+
+.markdown-body li > ul,
+.markdown-body li > ol {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+.markdown-body code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82em;
+    background: rgba(99, 102, 241, 0.08);
+    color: var(--accent);
+    padding: 2px 5px;
+    border-radius: var(--radius-xs);
+    font-weight: 500;
+}
+
+.markdown-body pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    border: 1px solid #313244;
+    border-radius: var(--radius-sm);
+    padding: 12px 15px;
+    overflow-x: auto;
+    margin-top: 10px;
+    margin-bottom: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+.markdown-body pre code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    font-size: inherit;
+    font-weight: normal;
+    border-radius: 0;
+}
+
+.markdown-body blockquote {
+    border-left: 3.5px solid var(--accent);
+    padding: 6px 14px;
+    color: var(--text-secondary);
+    background: var(--bg-hover);
+    margin: 12px 0;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.markdown-body blockquote p {
+    margin: 0;
+}
+
+.markdown-body table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    margin-bottom: 16px;
+    font-size: 0.82rem;
+}
+
+.markdown-body th,
+.markdown-body td {
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    text-align: left;
+}
+
+.markdown-body th {
+    background: var(--bg-hover);
+    font-weight: 600;
+}
+
+.markdown-body tr:nth-child(even) {
+    background: rgba(0, 0, 0, 0.01);
+}
+
+.markdown-body a {
+    color: var(--accent);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.markdown-body a:hover {
+    text-decoration: underline;
+}
+
+.chat-msg.assistant.markdown-body {
+    max-width: 85%; /* slightly wider to fit tables/code blocks comfortably */
+}

@@ -591,9 +591,11 @@
         const resp =
             await apiFetch('sessions/' + id);
         if (resp && resp.content) {
-            content.textContent = resp.content;
+            content.innerHTML = (typeof marked !== 'undefined' && typeof marked.parse === 'function')
+                ? marked.parse(resp.content)
+                : escHtml(resp.content);
         } else {
-            content.textContent =
+            content.innerHTML =
                 'Failed to load session.';
         }
     }
@@ -755,9 +757,11 @@
         const resp =
             await apiFetch('tasks/' + file);
         if (resp && resp.content) {
-            content.textContent = resp.content;
+            content.innerHTML = (typeof marked !== 'undefined' && typeof marked.parse === 'function')
+                ? marked.parse(resp.content)
+                : escHtml(resp.content);
         } else {
-            content.textContent =
+            content.innerHTML =
                 'Failed to load task.';
         }
     }
@@ -1159,8 +1163,12 @@
         if (welcome) welcome.remove();
 
         const el = document.createElement('div');
-        el.className = 'chat-msg ' + role;
-        el.textContent = text;
+        el.className = 'chat-msg ' + role + (role === 'assistant' ? ' markdown-body' : '');
+        if (role === 'assistant' && typeof marked !== 'undefined' && typeof marked.parse === 'function') {
+            el.innerHTML = marked.parse(text);
+        } else {
+            el.textContent = text;
+        }
         chatMessages.appendChild(el);
         chatMessages.scrollTop =
             chatMessages.scrollHeight;

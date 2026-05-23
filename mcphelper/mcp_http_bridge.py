@@ -12,6 +12,7 @@ if not ENDPOINT:
 
 # Optional initial MCP session id:
 # args: URL --session SESSION_ID
+# args: URL --mcp-session-id SESSION_ID
 # env : MCP_SESSION_ID=SESSION_ID
 SESSION_ID = os.environ.get("MCP_SESSION_ID", "").strip()
 
@@ -53,17 +54,48 @@ if not TOKEN:
     except FileNotFoundError:
         TOKEN = ""
 
+def log(msg: str):
+    sys.stderr.write(msg + "\n")
+    sys.stderr.flush()
+
 def get_session_header(headers):
-    return (
-        headers.get("mcp-session-id")
-        or headers.get("Mcp-Session-Id")
-        or headers.get("MCP-Session-Id")
-        or headers.get("Mcp-Session-ID")
-    )
+    # urllib headers are case-insensitive in normal use, but this is safer.
+    for key in headers.keys():
+        if key.lower() == "mcp-session-id":
+            value = headers.get(key)
+            if value:
+                return value.strip()
+    return None
+
+def parse_response_body(raw: str):
+    raw = raw.strip()
+    if not raw:
+        return None
+
+    # Normal JSON response
+    if raw.startswith("{") or raw.startswith("["):
+        return json.loads(raw)
+
+    # SSE response: collect data: lines.
+    if "data:" in raw:
+        data_lines = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if line.startswith("data:"):
+                data = line[5:].strip()
+                if data and data != "[DONE]":
+                    data_lines.append(data)
+
+        merged = "\n".join(data_lines).strip()
+        if merged:
+            return json.loads(merged)
+
+    raise RuntimeError(f"Unsupported response format: {raw[:500]}")
 
 def post_jsonrpc(payload: dict):
     global SESSION_ID
 
+    method = payload.get("method", "")
     body = json.dumps(payload).encode("utf-8")
 
     headers = {
@@ -79,6 +111,13 @@ def post_jsonrpc(payload: dict):
     if SESSION_ID:
         headers["Mcp-Session-Id"] = SESSION_ID
 
+    log(
+        f"MCP HTTP bridge request method={method or 'unknown'} "
+        f"session={'yes' if SESSION_ID else 'no'} "
+        f"token={'yes' if TOKEN else 'no'} "
+        f"endpoint={ENDPOINT}"
+    )
+
     req = urllib.request.Request(
         ENDPOINT,
         data=body,
@@ -91,8 +130,7 @@ def post_jsonrpc(payload: dict):
             new_session = get_session_header(resp.headers)
             if new_session:
                 SESSION_ID = new_session
-                sys.stderr.write(f"MCP session updated: {SESSION_ID}\n")
-                sys.stderr.flush()
+                log(f"MCP session updated: {SESSION_ID}")
 
             raw = resp.read().decode("utf-8", errors="replace").strip()
             status = getattr(resp, "status", 200)
@@ -100,30 +138,13 @@ def post_jsonrpc(payload: dict):
             if status == 202 or raw == "":
                 return None
 
-            if raw.startswith("{") or raw.startswith("["):
-                return json.loads(raw)
-
-            if "data:" in raw:
-                data_lines = []
-                for line in raw.splitlines():
-                    if line.startswith("data:"):
-                        data_lines.append(line[5:].strip())
-
-                merged = "\n".join(
-                    [x for x in data_lines if x and x != "[DONE]"]
-                ).strip()
-
-                if merged:
-                    return json.loads(merged)
-
-            raise RuntimeError(f"Unsupported response format: {raw[:500]}")
+            return parse_response_body(raw)
 
     except urllib.error.HTTPError as e:
         new_session = get_session_header(e.headers)
         if new_session:
             SESSION_ID = new_session
-            sys.stderr.write(f"MCP session updated from error response: {SESSION_ID}\n")
-            sys.stderr.flush()
+            log(f"MCP session updated from error response: {SESSION_ID}")
 
         try:
             err_body = e.read().decode("utf-8", errors="replace")
@@ -158,12 +179,13 @@ def main():
         try:
             msg = json.loads(line)
         except Exception as e:
-            sys.stderr.write(f"Invalid JSON from stdin: {e}\n")
-            sys.stderr.flush()
+            log(f"Invalid JSON from stdin: {e}")
             continue
 
         resp = post_jsonrpc(msg)
 
+        # JSON-RPC notifications often have no id.
+        # Do not emit anything unless server gave us a response.
         if resp is not None:
             sys.stdout.write(json.dumps(resp, separators=(",", ":")) + "\n")
             sys.stdout.flush()

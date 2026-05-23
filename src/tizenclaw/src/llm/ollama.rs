@@ -129,7 +129,7 @@ impl LlmBackend for OllamaBackend {
         }
 
         let url = format!("{}/api/chat", self.endpoint);
-        let http_resp = http_client::http_post(&url, &[], &req.to_string(), 1, 120).await;
+        let http_resp = http_client::http_post(&url, &[], &req.to_string(), 1, 300).await;
 
         let mut resp = LlmResponse::default();
         resp.http_status = http_resp.status_code;

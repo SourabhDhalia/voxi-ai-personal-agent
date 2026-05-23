@@ -191,3 +191,17 @@
 | MCP 2025-11-25 Upgrade | Supervisor Gate 5 | PASS | Review confirms latest protocol headers, explicit auth-required state, and no eager SSE boot loop. |
 | MCP 2025-11-25 Upgrade | 6. Commit | PASS | Changes prepared for file-based commit and push to `origin/main`. |
 | MCP 2025-11-25 Upgrade | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt` and avoids inline commit messages. |
+| Web Markdown Rendering | 1. Planning | PASS | Scope covers fetching marked.min.js and updating index.html/app.js to parse and render markdown in Chat, Sessions, and Tasks. |
+| Web Markdown Rendering | Supervisor Gate 1 | PASS | Design plan reviewed and submitted for user feedback. |
+| Web Markdown Rendering | 2. Design | PASS | Designed local script loading, DOM placeholders for markdown containers, and custom css styles under .markdown-body. |
+| Web Markdown Rendering | Supervisor Gate 2 | PASS | Architecture analyzed for offline targets; frontend style boundaries mapped. |
+| Web Markdown Rendering | 3. Development | PASS | Implemented local marked.min.js script import, converted viewer elements to divs, added marked parsing logic in app.js, and appended markdown CSS. |
+| Web Markdown Rendering | Supervisor Gate 3 | PASS | Frontend development completed; verified CSS sandboxing and offline compatibility. |
+| Web Markdown Rendering | 4. Build/Deploy | PASS | Validated deployment and GBS packaging scripts via dry-run on macOS. |
+| Web Markdown Rendering | Supervisor Gate 4 | PASS | Dry-run packaging for x86_64 complete with correct source file mapping in spec files. |
+| Web Markdown Rendering | 5. Test/Review | PASS | Verified git diff, ran git diff --check for whitespace alignment, and validated HTML/JS files conceptually. |
+| Web Markdown Rendering | Supervisor Gate 5 | PASS | Code structures, script load orders, and styles verified for Markdown parsing. |
+| Web Markdown Rendering | 6. Commit | PASS | Staged and committed changes locally with commit message file at `b138151d`. |
+| Web Markdown Rendering | Supervisor Gate 6 | PASS | Commit message formatting and stage validations checked; no inline git commit -m usage. |
+
+

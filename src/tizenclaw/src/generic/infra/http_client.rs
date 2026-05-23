@@ -26,7 +26,7 @@ pub struct HttpResponse {
 
 /// Retrieve or initialize the shared reqwest HTTP client, configured for Tizen TLS.
 pub fn default_client() -> Client {
-    AGENT.get_or_init(|| build_agent(120)).clone()
+    AGENT.get_or_init(|| build_agent(300)).clone()
 }
 
 /// Build a properly configured reqwest client with CA certificates.

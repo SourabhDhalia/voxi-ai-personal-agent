@@ -64,7 +64,13 @@ impl MemoryStore {
         let db = sqlite::open_database(db_path).map_err(|e| format!("DB open: {}", e))?;
 
         let mut embedding = OnDeviceEmbedding::new();
-        embedding.initialize(model_dir, None);
+        // Pass the parent data directory so the embedding engine can probe
+        // <data_dir>/lib/ for a bundled libonnxruntime.so (works on both
+        // Ubuntu x86_64 and Tizen armv7l).
+        let data_dir_parent = std::path::Path::new(base_dir)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string());
+        embedding.initialize(model_dir, data_dir_parent.as_deref());
 
         let store = MemoryStore {
             base_dir: base_path,

@@ -10,9 +10,19 @@ use super::wordpiece_tokenizer::WordPieceTokenizer;
 /// Embedding dimension for all-MiniLM-L6-v2.
 pub const EMBEDDING_DIM: usize = 384;
 
-/// Default path to ONNX Runtime shared library.
-/// Falls back to env-based path or standard Tizen location.
-const DEFAULT_ORT_LIB_PATH: &str = "/usr/lib/libonnxruntime.so";
+/// Candidate paths for ONNX Runtime shared library, probed in order.
+/// Covers Ubuntu x86_64 system paths and Tizen armv7l system paths.
+/// The app's data_dir/lib/ is prepended at runtime for bundled deployments.
+const SYSTEM_ORT_LIB_PATHS: &[&str] = &[
+    // Ubuntu / generic Linux x86_64
+    "/usr/lib/libonnxruntime.so",
+    "/usr/lib/x86_64-linux-gnu/libonnxruntime.so",
+    "/usr/local/lib/libonnxruntime.so",
+    // Tizen armv7l
+    "/usr/lib/libonnxruntime.so",
+    "/usr/lib/arm-linux-gnueabihf/libonnxruntime.so",
+    "/opt/usr/lib/libonnxruntime.so",
+];
 
 // ═══════════════════════════════════════════
 //  ORT C API types (minimal set for dlopen)
@@ -167,13 +177,71 @@ impl OnDeviceEmbedding {
 
     /// Initialize: load ONNX Runtime, model, and vocab.
     /// `model_dir` should contain `model.onnx` and `vocab.txt`.
-    pub fn initialize(&mut self, model_dir: &str, ort_lib_path: Option<&str>) -> bool {
-        let ort_path = ort_lib_path.unwrap_or(DEFAULT_ORT_LIB_PATH);
+    /// `data_dir` is the TizenClaw data directory; if provided, `<data_dir>/lib/`
+    /// is probed first for a bundled `libonnxruntime.so`.
+    pub fn initialize(&mut self, model_dir: &str, data_dir: Option<&str>) -> bool {
+        // Build ordered candidate list for libonnxruntime.so
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+
+        // 1. Explicit env override (highest priority)
+        if let Ok(p) = std::env::var("TIZENCLAW_ORT_LIB") {
+            candidates.push(std::path::PathBuf::from(p));
+        }
+
+        // 2. Bundled inside data_dir/lib/ (app-local cache)
+        if let Some(dd) = data_dir {
+            candidates.push(std::path::PathBuf::from(dd).join("lib").join("libonnxruntime.so"));
+        }
+
+        // 3. System paths (Ubuntu x86_64 + Tizen armv7l)
+        for p in SYSTEM_ORT_LIB_PATHS {
+            let path = std::path::PathBuf::from(p);
+            if !candidates.contains(&path) {
+                candidates.push(path);
+            }
+        }
+
+        // 4. LD_LIBRARY_PATH entries
+        if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
+            for dir in ld_path.split(':') {
+                if !dir.is_empty() {
+                    let path = std::path::PathBuf::from(dir).join("libonnxruntime.so");
+                    if !candidates.contains(&path) {
+                        candidates.push(path);
+                    }
+                }
+            }
+        }
+
+        // Probe candidates in order
+        let mut found_path: Option<String> = None;
+        for candidate in &candidates {
+            if candidate.exists() {
+                found_path = Some(candidate.to_string_lossy().to_string());
+                break;
+            }
+        }
+
+        let ort_path = match found_path {
+            Some(p) => p,
+            None => {
+                let searched: Vec<String> = candidates.iter()
+                    .map(|c| c.to_string_lossy().to_string())
+                    .collect();
+                log::warn!(
+                    "ONNX Runtime not found in any of: {} (on-device embedding disabled)",
+                    searched.join(", ")
+                );
+                return false;
+            }
+        };
+
+        log::info!("ONNX Runtime found at: {}", ort_path);
 
         // 1. Load ONNX Runtime via dlopen
         let lib = unsafe {
             libc::dlopen(
-                std::ffi::CString::new(ort_path).unwrap().as_ptr(),
+                std::ffi::CString::new(ort_path.as_str()).unwrap().as_ptr(),
                 libc::RTLD_LAZY,
             )
         };
@@ -187,8 +255,8 @@ impl OnDeviceEmbedding {
                 }
             };
             log::warn!(
-                "ONNX Runtime not found: {} (on-device embedding disabled)",
-                err
+                "ONNX Runtime dlopen failed for {}: {} (on-device embedding disabled)",
+                ort_path, err
             );
             return false;
         }

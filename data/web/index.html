@@ -252,7 +252,7 @@
             <button class="btn-outline btn-back" id="session-back">← Back</button>
             <span class="viewer-title" id="session-viewer-title"></span>
           </div>
-          <pre class="viewer-content" id="session-viewer-content"></pre>
+          <div class="viewer-content markdown-body" id="session-viewer-content"></div>
         </div>
       </section>
 
@@ -276,7 +276,7 @@
             <span class="viewer-title" id="task-viewer-title"></span>
             <button class="btn-outline btn-danger-outline" id="task-delete-current">Delete This Task</button>
           </div>
-          <pre class="viewer-content" id="task-viewer-content"></pre>
+          <div class="viewer-content markdown-body" id="task-viewer-content"></div>
         </div>
       </section>
 
@@ -438,6 +438,7 @@
   <!-- Toast container -->
   <div id="toast-container" class="toast-container"></div>
 
+  <script src="/marked.min.js"></script>
   <script src="/app.js?v=20260406b"></script>
 </body>
 
