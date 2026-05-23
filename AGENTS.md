@@ -16,8 +16,8 @@ document to develop TizenClaw.
 > [!IMPORTANT]
 > **Language Rule**: You must plan and report in the same language as the
 > user's input. (If asked in English, use English; if asked in Korean,
-> use Korean / 사용자의 입력과 같은 언어로 plan과 보고를 합니다.
-> 영어로 질의하면 영어로, 한국어로 질의하면 한국어로 답합니다).
+> use Korean).
+
 
 ## Project Overview
 
