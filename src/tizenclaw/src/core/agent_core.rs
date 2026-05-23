@@ -51,6 +51,8 @@ const MAX_OUTBOUND_DASHBOARD_MESSAGES: usize = 200;
 const MAX_TELEGRAM_OUTBOUND_CHARS: usize = 4000;
 const LLM_RESPONSE_CACHE_TTL_MS: u64 = 300_000;
 const LLM_RESPONSE_CACHE_MAX_ENTRIES: usize = 128;
+const LLM_RESPONSE_CACHE_VERSION: u64 = 2;
+const TOOL_FAILURE_LOOP_LIMIT: usize = 3;
 
 #[derive(Clone, Debug, Default)]
 struct SessionPromptProfile {
@@ -1488,7 +1490,7 @@ impl AgentCore {
     }
 
     fn llm_response_cache_key(
-        backend_name: &str,
+        backend_identity: &str,
         messages: &[LlmMessage],
         tools: &[crate::llm::backend::LlmToolDecl],
         system_prompt: &str,
@@ -1497,7 +1499,8 @@ impl AgentCore {
         use std::hash::{Hash, Hasher};
 
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        backend_name.hash(&mut h);
+        LLM_RESPONSE_CACHE_VERSION.hash(&mut h);
+        backend_identity.hash(&mut h);
         system_prompt.hash(&mut h);
         max_tokens.hash(&mut h);
 
@@ -1511,6 +1514,31 @@ impl AgentCore {
         h.finish()
     }
 
+    async fn llm_response_cache_backend_identity(&self) -> String {
+        let mut parts = Vec::new();
+        {
+            let be_guard = self.backend.read().await;
+            if let Some(be) = be_guard.as_ref() {
+                parts.push(format!("primary:{}", be.cache_identity()));
+            } else {
+                parts.push("primary:none".to_string());
+            }
+        }
+        {
+            let fbs_guard = self.fallback_backends.read().await;
+            for fb in fbs_guard.iter() {
+                parts.push(format!("fallback:{}", fb.cache_identity()));
+            }
+        }
+        parts.join("|")
+    }
+
+    fn is_cacheable_llm_response(response: &LlmResponse) -> bool {
+        response.success
+            && response.tool_calls.is_empty()
+            && FallbackParser::parse(&response.text).is_empty()
+    }
+
     fn zero_cached_response_usage(response: &mut LlmResponse) {
         response.prompt_tokens = 0;
         response.completion_tokens = 0;
@@ -1519,7 +1547,11 @@ impl AgentCore {
         response.cache_read_input_tokens = 0;
     }
 
-    fn get_cached_llm_response(&self, cache_key: u64) -> Option<LlmResponse> {
+    fn get_cached_llm_response(
+        &self,
+        cache_key: u64,
+        backend_identity: &str,
+    ) -> Option<LlmResponse> {
         let now = Self::now_ms();
         let Ok(mut cache) = self.llm_response_cache.write() else {
             return None;
@@ -1530,7 +1562,11 @@ impl AgentCore {
                 entry.last_used_ms = now;
                 let mut response = entry.response.clone();
                 Self::zero_cached_response_usage(&mut response);
-                log::info!("[LlmResponseCache] Cache HIT key={}", cache_key);
+                log::info!(
+                    "[LlmResponseCache] Cache HIT backend='{}' key={}",
+                    backend_identity,
+                    cache_key
+                );
                 return Some(response);
             }
             cache.remove(&cache_key);
@@ -1540,7 +1576,7 @@ impl AgentCore {
     }
 
     fn store_llm_response_cache(&self, cache_key: u64, response: &LlmResponse) {
-        if !response.success {
+        if !Self::is_cacheable_llm_response(response) {
             return;
         }
 
@@ -1610,6 +1646,139 @@ impl AgentCore {
                 "message": "Use one of the listed safe MCP tool names."
             }),
         }
+    }
+
+    fn normalize_tool_name(raw_name: &str) -> String {
+        let mut name = raw_name
+            .trim()
+            .trim_matches(|ch: char| {
+                ch == '`' || ch == '"' || ch == '\'' || ch == '<' || ch == '>' || ch.is_whitespace()
+            })
+            .to_string();
+
+        for prefix in [
+            "functions.",
+            "function.",
+            "tools.",
+            "tool.",
+            "call_tool:",
+            "tool:",
+        ] {
+            let lower = name.to_ascii_lowercase();
+            if lower.starts_with(prefix) {
+                name = name[prefix.len()..].trim().to_string();
+                break;
+            }
+        }
+
+        if let Some(stripped) = name.strip_suffix("()") {
+            name = stripped.trim().to_string();
+        }
+        name.trim_matches(|ch: char| ch == ',' || ch == ';' || ch == '.')
+            .trim()
+            .to_string()
+    }
+
+    fn normalize_tool_args(args: Value) -> Result<Value, String> {
+        match args {
+            Value::Object(_) => Ok(args),
+            Value::Null => Ok(json!({})),
+            Value::String(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    return Ok(json!({}));
+                }
+                match serde_json::from_str::<Value>(trimmed) {
+                    Ok(Value::Object(map)) => Ok(Value::Object(map)),
+                    Ok(other) => Err(format!(
+                        "Tool arguments must be a JSON object, got {}",
+                        other
+                    )),
+                    Err(err) => Err(format!("Malformed JSON tool arguments: {}", err)),
+                }
+            }
+            other => Err(format!(
+                "Tool arguments must be a JSON object, got {}",
+                other
+            )),
+        }
+    }
+
+    fn normalize_detected_tool_call(
+        tool_call: &backend::LlmToolCall,
+    ) -> Result<backend::LlmToolCall, String> {
+        let name = Self::normalize_tool_name(&tool_call.name);
+        if name.is_empty() {
+            return Err("Tool name is empty after normalization".to_string());
+        }
+
+        let args = Self::normalize_tool_args(tool_call.args.clone())?;
+        Ok(backend::LlmToolCall {
+            id: tool_call.id.clone(),
+            name,
+            args,
+        })
+    }
+
+    fn tool_failure_kind(result: &Value) -> Option<&'static str> {
+        if result
+            .get("requires_confirmation")
+            .and_then(|value| value.as_bool())
+            == Some(true)
+        {
+            return Some("requires_confirmation");
+        }
+
+        let error = result.get("error").and_then(|value| value.as_str())?;
+        if error.contains("Ambiguous MCP tool alias") {
+            Some("ambiguous_mcp")
+        } else if error.contains("MCP server for tool") || error.contains("Unknown tool:") {
+            Some("unresolved_tool")
+        } else if error.contains("Malformed JSON tool arguments")
+            || error.contains("Tool arguments must be a JSON object")
+        {
+            Some("malformed_tool_args")
+        } else {
+            None
+        }
+    }
+
+    fn tool_failure_signature(tool_name: &str, args: &Value, result: &Value) -> Option<String> {
+        let kind = Self::tool_failure_kind(result)?;
+        Some(format!("{}:{}:{}", kind, tool_name, args))
+    }
+
+    fn tool_failure_correction(tool_name: &str, args: &Value, result: &Value) -> String {
+        let kind = Self::tool_failure_kind(result).unwrap_or("tool_error");
+        if kind == "ambiguous_mcp" {
+            let choices = result
+                .get("tools")
+                .and_then(|value| value.as_array())
+                .map(|tools| {
+                    tools
+                        .iter()
+                        .filter_map(|tool| tool.get("name").and_then(|name| name.as_str()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            return format!(
+                "System Error: MCP tool alias '{}' is ambiguous. Retry using exactly one safe tool name from: {}. Use JSON object arguments only.",
+                tool_name, choices
+            );
+        }
+
+        if kind == "requires_confirmation" {
+            return format!(
+                "System Notice: Tool '{}' requires explicit latest-turn user confirmation. Show the final cart/order/booking and ask the user to confirm before retrying.",
+                tool_name
+            );
+        }
+
+        format!(
+            "System Error: Tool '{}' with arguments '{}' failed as '{}'. Do not repeat the same call. Use a valid safe tool name and JSON object arguments.",
+            tool_name, args, kind
+        )
     }
 
     fn now_ms() -> u64 {
@@ -1798,7 +1967,10 @@ impl AgentCore {
         }
 
         let mut mcp = self.mcp_client_manager.write().await;
-        mcp.load_config_and_connect(&mcp_config_path.to_string_lossy())
+        let connected = mcp.load_config_and_connect(&mcp_config_path.to_string_lossy());
+        drop(mcp);
+        self.clear_llm_response_cache();
+        connected
     }
 
     fn extract_session_id(input: &str) -> String {
@@ -1967,7 +2139,10 @@ impl AgentCore {
 
         let mcp_config_path = self.platform.paths.config_dir.join("mcp_servers.json");
         let mut mcp = self.mcp_client_manager.write().await;
-        mcp.load_config_and_connect(&mcp_config_path.to_string_lossy())
+        let connected = mcp.load_config_and_connect(&mcp_config_path.to_string_lossy());
+        drop(mcp);
+        self.clear_llm_response_cache();
+        connected
     }
 
     fn random_urlsafe_token(byte_len: usize) -> Result<String, String> {
@@ -2458,6 +2633,8 @@ impl AgentCore {
             let mcp_config_path = self.platform.paths.config_dir.join("mcp_servers.json");
             let mut mcp = self.mcp_client_manager.write().await;
             let connected = mcp.load_config_and_connect(&mcp_config_path.to_string_lossy());
+            drop(mcp);
+            self.clear_llm_response_cache();
             return Some(if connected {
                 format!(
                     "OAuth completed for MCP server '{}' and MCP tools were reloaded.",
@@ -3286,6 +3463,7 @@ impl AgentCore {
                                 json!({"error": "Missing key or value"})
                             } else {
                                 store.set(key, value, category);
+                                self.clear_llm_response_cache();
                                 json!({"status": "success", "message": format!("Remembered '{}'", key)})
                             }
                         } else {
@@ -3324,6 +3502,7 @@ impl AgentCore {
                     Ok(store_guard) => {
                         if let Some(store) = store_guard.as_ref() {
                             if store.delete(key) {
+                                self.clear_llm_response_cache();
                                 json!({"status": "success", "message": format!("Forgot '{}'", key)})
                             } else {
                                 json!({"error": "Key not found"})
@@ -3339,10 +3518,13 @@ impl AgentCore {
                 let mcp_config_path = self.platform.paths.config_dir.join("mcp_servers.json");
                 let mut mcp = self.mcp_client_manager.write().await;
                 if mcp.load_config_and_connect(&mcp_config_path.to_string_lossy()) {
+                    let tool_count = mcp.get_all_tools().len();
+                    drop(mcp);
+                    self.clear_llm_response_cache();
                     json!({
                         "status": "success",
                         "message": "MCP servers reloaded",
-                        "tool_count": mcp.get_all_tools().len(),
+                        "tool_count": tool_count,
                     })
                 } else {
                     json!({
@@ -3865,14 +4047,15 @@ impl AgentCore {
             Ok(guard) => (*guard).clone(),
             Err(p) => (*p.into_inner()).clone(),
         };
+        let backend_identity = self.llm_response_cache_backend_identity().await;
         let cache_key = Self::llm_response_cache_key(
-            &primary_backend_name,
+            &backend_identity,
             messages,
             tools,
             system_prompt,
             max_tokens,
         );
-        if let Some(cached) = self.get_cached_llm_response(cache_key) {
+        if let Some(cached) = self.get_cached_llm_response(cache_key, &backend_identity) {
             if let Some(on_chunk) = on_chunk {
                 if !cached.text.is_empty() {
                     on_chunk(&cached.text);
@@ -4758,6 +4941,8 @@ impl AgentCore {
         }
 
         // ── Phases 4–13: Main agentic loop ───────────────────────────────
+        let mut tool_failure_counts: HashMap<String, usize> = HashMap::new();
+        let mut malformed_tool_call_counts: HashMap<String, usize> = HashMap::new();
         loop {
             // ── Phase 4: DecisionMaking / LLM call ──────────────────────
             loop_state.transition(AgentPhase::DecisionMaking);
@@ -4933,6 +5118,57 @@ impl AgentCore {
                 }
             }
 
+            if !detected_tool_calls.is_empty() {
+                let mut normalized_tool_calls = Vec::new();
+                let mut malformed_tool_errors = Vec::new();
+                for tc in &detected_tool_calls {
+                    match Self::normalize_detected_tool_call(tc) {
+                        Ok(normalized) => normalized_tool_calls.push(normalized),
+                        Err(err) => {
+                            let signature =
+                                format!("malformed_tool_args:{}:{}", tc.name.trim(), tc.args);
+                            let count = malformed_tool_call_counts.entry(signature).or_insert(0);
+                            *count += 1;
+                            if *count >= TOOL_FAILURE_LOOP_LIMIT {
+                                let msg = format!(
+                                    "Error: Tool '{}' repeatedly used malformed arguments. Stopping to avoid an execution loop.",
+                                    tc.name
+                                );
+                                log::warn!("[AgentLoop] {}", msg);
+                                loop_state.transition(AgentPhase::ResultReporting);
+                                return msg;
+                            }
+                            malformed_tool_errors.push(format!("{}: {}", tc.name, err));
+                        }
+                    }
+                }
+
+                if !malformed_tool_errors.is_empty() {
+                    let error_text = format!(
+                        "System Error: One or more tool calls were malformed: {}. Retry with a valid tool name and JSON object arguments only.",
+                        malformed_tool_errors.join("; ")
+                    );
+                    log::warn!("[AgentLoop] {}", error_text);
+                    messages.push(LlmMessage {
+                        role: "system".into(),
+                        text: error_text,
+                        ..Default::default()
+                    });
+                    loop_state.round += 1;
+                    continue;
+                }
+
+                {
+                    let mcp = self.mcp_client_manager.read().await;
+                    for tc in &mut normalized_tool_calls {
+                        if let Ok(tool_info) = mcp.resolve_tool_alias(&tc.name) {
+                            tc.name = tool_info.safe_name;
+                        }
+                    }
+                }
+                detected_tool_calls = normalized_tool_calls;
+            }
+
             // Record token usage
             {
                 let be_name = self
@@ -5018,6 +5254,10 @@ impl AgentCore {
                                 .to_string(),
                         )
                     })
+                    .collect();
+                let canonical_tool_args: HashMap<String, Value> = detected_tool_calls
+                    .iter()
+                    .map(|tc| (tc.id.clone(), tc.args.clone()))
                     .collect();
                 if let Ok(ss) = self.session_store.lock() {
                     if let Some(store) = ss.as_ref() {
@@ -5570,10 +5810,13 @@ impl AgentCore {
                             let mcp_config_path = search_config_dir.join("mcp_servers.json");
                             let mut mcp = mcp_ref.write().await;
                             if mcp.load_config_and_connect(&mcp_config_path.to_string_lossy()) {
+                                let tool_count = mcp.get_all_tools().len();
+                                drop(mcp);
+                                self.clear_llm_response_cache();
                                 json!({
                                     "status": "success",
                                     "message": "MCP servers reloaded",
-                                    "tool_count": mcp.get_all_tools().len(),
+                                    "tool_count": tool_count,
                                 })
                             } else {
                                 json!({
@@ -5634,6 +5877,7 @@ impl AgentCore {
                                 let category = tc_args.get("category").and_then(|v| v.as_str()).unwrap_or("general");
                                 if !key.is_empty() && !value.is_empty() {
                                     store.set(key, value, category);
+                                    self.clear_llm_response_cache();
                                     serde_json::json!({"status": "success", "message": format!("Remembered '{}'", key)})
                                 } else {
                                     serde_json::json!({"error": "Missing key or value"})
@@ -5656,6 +5900,7 @@ impl AgentCore {
                             if let Some(store) = ms_clone {
                                 let key = tc_args.get("key").and_then(|v| v.as_str()).unwrap_or("");
                                 if store.delete(key) {
+                                    self.clear_llm_response_cache();
                                     serde_json::json!({"status": "success", "message": format!("Forgot '{}'", key)})
                                 } else {
                                     serde_json::json!({"error": "Key not found"})
@@ -5746,6 +5991,47 @@ impl AgentCore {
                             );
                         }
                     }
+                }
+
+                let mut corrective_message = None;
+                for result in &results {
+                    let args = canonical_tool_args
+                        .get(&result.tool_call_id)
+                        .unwrap_or(&Value::Null);
+                    if let Some(signature) =
+                        Self::tool_failure_signature(&result.tool_name, args, &result.tool_result)
+                    {
+                        let count = tool_failure_counts.entry(signature).or_insert(0);
+                        *count += 1;
+                        if *count >= TOOL_FAILURE_LOOP_LIMIT {
+                            let msg = format!(
+                                "Error: Tool '{}' repeatedly failed with the same arguments. Stopping to avoid an execution loop.",
+                                result.tool_name
+                            );
+                            log::warn!("[AgentLoop] {}", msg);
+                            loop_state.transition(AgentPhase::ResultReporting);
+                            return msg;
+                        }
+                        if *count >= 2 {
+                            corrective_message = Some(Self::tool_failure_correction(
+                                &result.tool_name,
+                                args,
+                                &result.tool_result,
+                            ));
+                        }
+                    }
+                }
+
+                if let Some(correction) = corrective_message {
+                    messages.extend(results.clone());
+                    messages.push(LlmMessage {
+                        role: "system".into(),
+                        text: correction,
+                        ..Default::default()
+                    });
+                    loop_state.round += 1;
+                    loop_state.transition(AgentPhase::RePlanning);
+                    continue;
                 }
 
                 let mut clarification_question = None;
@@ -6036,6 +6322,7 @@ impl AgentCore {
         let mut doc = llm_config_store::load(&self.platform.paths.config_dir)?;
         llm_config_store::set_value(&mut doc, path, value)?;
         llm_config_store::save(&self.platform.paths.config_dir, &doc)?;
+        self.clear_llm_response_cache();
 
         if Self::llm_config_path_affects_backends(path) {
             self.reload_backends().await;
@@ -6048,6 +6335,7 @@ impl AgentCore {
         let mut doc = llm_config_store::load(&self.platform.paths.config_dir)?;
         let removed = llm_config_store::unset_value(&mut doc, path)?;
         llm_config_store::save(&self.platform.paths.config_dir, &doc)?;
+        self.clear_llm_response_cache();
 
         if Self::llm_config_path_affects_backends(path) {
             self.reload_backends().await;
@@ -6090,6 +6378,7 @@ impl AgentCore {
     }
 
     pub async fn reload_tools(&self) {
+        self.clear_llm_response_cache();
         {
             let mut td = self.tool_dispatcher.write().await;
             *td = ToolDispatcher::new();
@@ -6256,6 +6545,7 @@ If there is nothing new to remember, output exactly: []";
                     }
                 }
                 if count > 0 {
+                    self.clear_llm_response_cache();
                     log::debug!(
                         "[MemoryExtractor] Successfully saved {} extracted memories.",
                         count

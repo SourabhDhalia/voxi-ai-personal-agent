@@ -144,15 +144,16 @@ impl LlmBackend for OllamaBackend {
                 if let Some(tcs) = msg["tool_calls"].as_array() {
                     for tc in tcs {
                         let args = match tc["function"]["arguments"].clone() {
-                            Value::String(s) => serde_json::from_str(&s).unwrap_or(json!({})),
-                            obj @ Value::Object(_) => obj,
-                            _ => json!({}),
+                            Value::String(s) => {
+                                serde_json::from_str(&s).unwrap_or(Value::String(s))
+                            }
+                            value => value,
                         };
                         resp.tool_calls.push(LlmToolCall {
                             id: tc["id"].as_str().map(|s| s.to_string()).unwrap_or_else(|| {
                                 format!("call_ol_{}", &uuid::Uuid::new_v4().to_string()[..8])
                             }),
-                            name: tc["function"]["name"].as_str().unwrap_or("").into(),
+                            name: tc["function"]["name"].as_str().unwrap_or("").trim().into(),
                             args,
                         });
                     }
@@ -172,5 +173,9 @@ impl LlmBackend for OllamaBackend {
 
     fn get_name(&self) -> &str {
         "ollama"
+    }
+
+    fn cache_identity(&self) -> String {
+        format!("ollama:model={}:endpoint={}", self.model, self.endpoint)
     }
 }

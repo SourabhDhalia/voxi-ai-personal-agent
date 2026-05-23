@@ -4,6 +4,8 @@ use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
 const DEFAULT_EMBEDDING_MODEL: &str = "all-MiniLM-L6-v2";
+const EMBEDDING_SCAN_LIMIT: usize = 512;
+const EMBEDDING_TOP_K_LIMIT: usize = 8;
 
 pub struct EmbeddingStore {
     conn: Option<Connection>,
@@ -40,6 +42,7 @@ impl EmbeddingStore {
                     );
                     CREATE INDEX IF NOT EXISTS idx_emb_source ON embeddings(source);",
                 );
+                let _ = Self::ensure_column(&conn, "embedding", "BLOB");
                 let _ = Self::ensure_column(&conn, "embedding_dim", "INTEGER DEFAULT 0");
                 let _ = Self::ensure_column(&conn, "embedding_model", "TEXT DEFAULT ''");
                 let _ = Self::ensure_column(&conn, "content_hash", "TEXT DEFAULT ''");
@@ -186,6 +189,7 @@ impl EmbeddingStore {
         if query_embedding.is_empty() {
             return vec![];
         }
+        let effective_top_k = top_k.min(EMBEDDING_TOP_K_LIMIT);
 
         let conn = match &self.conn {
             Some(c) => c,
@@ -204,28 +208,35 @@ impl EmbeddingStore {
 
         let mut sql_parts = vec![
             "SELECT source, chunk_text, embedding, embedding_dim FROM embeddings \
-             WHERE embedding IS NOT NULL AND embedding_dim = ?1"
+             WHERE embedding IS NOT NULL AND embedding_dim = ?1 AND embedding_model = ?2"
                 .to_string(),
         ];
         for alias in &attached_aliases {
             sql_parts.push(format!(
                 "SELECT source, chunk_text, embedding, embedding_dim FROM {}.embeddings \
-                 WHERE embedding IS NOT NULL AND embedding_dim = ?1",
+                 WHERE embedding IS NOT NULL AND embedding_dim = ?1 AND embedding_model = ?2",
                 alias
             ));
         }
 
-        let full_sql = sql_parts.join(" UNION ALL ");
+        let full_sql = format!("{} LIMIT ?3", sql_parts.join(" UNION ALL "));
         let mut scored = Vec::new();
         if let Ok(mut stmt) = conn.prepare(&full_sql) {
-            if let Ok(rows) = stmt.query_map(params![query_embedding.len() as i64], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Vec<u8>>(2)?,
-                    row.get::<_, i64>(3)?,
-                ))
-            }) {
+            if let Ok(rows) = stmt.query_map(
+                params![
+                    query_embedding.len() as i64,
+                    DEFAULT_EMBEDDING_MODEL,
+                    EMBEDDING_SCAN_LIMIT as i64
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            ) {
                 for row in rows.filter_map(|row| row.ok()) {
                     let (source, text, blob, dim) = row;
                     let Some(embedding) = Self::decode_embedding_blob(&blob, dim as usize) else {
@@ -250,7 +261,7 @@ impl EmbeddingStore {
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         scored
             .into_iter()
-            .take(top_k)
+            .take(effective_top_k)
             .map(|(score, source, text)| {
                 json!({
                     "source": source,
@@ -262,6 +273,7 @@ impl EmbeddingStore {
     }
 
     pub fn search(&self, query: &str, top_k: usize) -> Vec<Value> {
+        let effective_top_k = top_k.min(EMBEDDING_TOP_K_LIMIT);
         let conn = match &self.conn {
             Some(c) => c,
             None => return vec![],
@@ -298,7 +310,7 @@ impl EmbeddingStore {
         let full_sql = format!("{} LIMIT ?2", sql_parts.join(" UNION ALL "));
 
         let results = if let Ok(mut stmt) = conn.prepare(&full_sql) {
-            stmt.query_map(params![pattern, top_k as i64], |row| {
+            stmt.query_map(params![pattern, effective_top_k as i64], |row| {
                 Ok(json!({
                     "source": row.get::<_, String>(0).unwrap_or_default(),
                     "text": row.get::<_, String>(1).unwrap_or_default(),

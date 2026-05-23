@@ -123,6 +123,9 @@ pub trait LlmBackend: Send + Sync {
         max_tokens: Option<u32>,
     ) -> LlmResponse;
     fn get_name(&self) -> &str;
+    fn cache_identity(&self) -> String {
+        self.get_name().to_string()
+    }
     fn shutdown(&mut self) {}
 
     /// Optionally pre-cache the system prompt server-side before the first

@@ -11,6 +11,9 @@ use super::sqlite;
 use crate::core::on_device_embedding::OnDeviceEmbedding;
 
 const MEMORY_EMBEDDING_MODEL: &str = "all-MiniLM-L6-v2";
+const MEMORY_VECTOR_SCAN_LIMIT: usize = 256;
+const MEMORY_VECTOR_BACKFILL_LIMIT: usize = 24;
+const MEMORY_VECTOR_TOP_K_LIMIT: usize = 8;
 
 /// Sanitizes a string for use as a filename
 fn sanitize_filename(s: &str) -> String {
@@ -285,20 +288,31 @@ impl MemoryStore {
             .prepare(
                 "SELECT key, value, category, updated_at, embedding, embedding_dim
                  FROM memories
-                 WHERE embedding IS NOT NULL AND embedding_dim = ?1",
+                 WHERE embedding IS NOT NULL
+                   AND embedding_dim = ?1
+                   AND embedding_model = ?2
+                 ORDER BY updated_at DESC
+                 LIMIT ?3",
             )
             .ok()?;
         let rows = stmt
-            .query_map(params![prompt_emb.len() as i64], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, Vec<u8>>(4)?,
-                    row.get::<_, i64>(5)?,
-                ))
-            })
+            .query_map(
+                params![
+                    prompt_emb.len() as i64,
+                    MEMORY_EMBEDDING_MODEL,
+                    MEMORY_VECTOR_SCAN_LIMIT as i64
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Vec<u8>>(4)?,
+                        row.get::<_, i64>(5)?,
+                    ))
+                },
+            )
             .ok()?;
 
         let mut saw_vector = false;
@@ -329,6 +343,90 @@ impl MemoryStore {
 
         scored_memories.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         Some(self.build_relevant_memory_context(scored_memories, top_k))
+    }
+
+    fn backfill_missing_embeddings(&self, limit: usize) -> usize {
+        let candidates = {
+            let Ok(conn) = self.db.lock() else {
+                return 0;
+            };
+            let Ok(mut stmt) = conn.prepare(
+                "SELECT key, value
+                 FROM memories
+                 WHERE embedding IS NULL
+                    OR embedding_dim <= 0
+                    OR embedding_model IS NULL
+                    OR embedding_model != ?1
+                 ORDER BY updated_at DESC
+                 LIMIT ?2",
+            ) else {
+                return 0;
+            };
+            stmt.query_map(params![MEMORY_EMBEDDING_MODEL, limit as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .ok()
+            .map(|rows| rows.filter_map(|row| row.ok()).collect::<Vec<_>>())
+            .unwrap_or_default()
+        };
+
+        if candidates.is_empty() {
+            return 0;
+        }
+
+        let mut encoded = Vec::new();
+        {
+            let Ok(engine_guard) = self.embedding_engine.lock() else {
+                return 0;
+            };
+            if !engine_guard.is_available() {
+                return 0;
+            }
+            for (key, value) in candidates {
+                let text = format!("{} {}", key, value);
+                let embedding = engine_guard.encode(&text);
+                if embedding.is_empty() {
+                    continue;
+                }
+                encoded.push((
+                    key,
+                    Self::encode_embedding_blob(&embedding),
+                    embedding.len() as i64,
+                    Self::content_hash(&text),
+                ));
+            }
+        }
+
+        if encoded.is_empty() {
+            return 0;
+        }
+
+        let Ok(conn) = self.db.lock() else {
+            return 0;
+        };
+        let mut updated = 0usize;
+        for (key, blob, dim, content_hash) in encoded {
+            if conn
+                .execute(
+                    "UPDATE memories
+                     SET embedding = ?1,
+                         embedding_dim = ?2,
+                         embedding_model = ?3,
+                         content_hash = ?4
+                     WHERE key = ?5",
+                    params![blob, dim, MEMORY_EMBEDDING_MODEL, content_hash, key],
+                )
+                .map(|rows| rows > 0)
+                .unwrap_or(false)
+            {
+                updated += 1;
+            }
+        }
+
+        if updated > 0 {
+            log::debug!("MemoryStore: backfilled {} memory embeddings", updated);
+        }
+        updated
     }
 
     /// Set a memory. Updates SQLite and exports to Markdown.
@@ -474,6 +572,7 @@ impl MemoryStore {
 
     /// Loads subset of memory files by semantics using RAG OnDeviceEmbedding
     pub fn load_relevant_for_prompt(&self, prompt: &str, top_k: usize, threshold: f32) -> String {
+        let effective_top_k = top_k.min(MEMORY_VECTOR_TOP_K_LIMIT);
         let engine_guard = self.embedding_engine.lock().unwrap();
         if !engine_guard.is_available() {
             // Fallback: load everything
@@ -483,12 +582,23 @@ impl MemoryStore {
         if prompt_emb.is_empty() {
             return self.load_for_prompt();
         }
+        drop(engine_guard);
         if let Some(context) =
-            self.load_relevant_from_stored_embeddings(&prompt_emb, top_k, threshold)
+            self.load_relevant_from_stored_embeddings(&prompt_emb, effective_top_k, threshold)
         {
             return context;
         }
+        if self.backfill_missing_embeddings(MEMORY_VECTOR_BACKFILL_LIMIT) > 0 {
+            if let Some(context) =
+                self.load_relevant_from_stored_embeddings(&prompt_emb, effective_top_k, threshold)
+            {
+                return context;
+            }
+        }
 
+        let Ok(engine_guard) = self.embedding_engine.lock() else {
+            return self.load_for_prompt();
+        };
         let _g = self.file_lock.read().unwrap();
 
         let mut scored_memories = Vec::new();
@@ -530,7 +640,7 @@ impl MemoryStore {
 
         scored_memories.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        self.build_relevant_memory_context(scored_memories, top_k)
+        self.build_relevant_memory_context(scored_memories, effective_top_k)
     }
 
     /// Loads all markdown files recursively and concatenates them for LLM injection.
