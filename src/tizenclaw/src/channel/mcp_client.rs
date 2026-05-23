@@ -16,6 +16,9 @@ use std::time::{Duration, Instant};
 
 use crate::llm::backend::LlmToolDecl;
 
+const STREAMABLE_HTTP_PROTOCOL_VERSION: &str = "2025-06-18";
+const STDIO_PROTOCOL_VERSION: &str = "2024-11-05";
+
 #[derive(Clone, Debug)]
 pub struct McpToolInfo {
     pub server_name: String,
@@ -258,6 +261,8 @@ pub struct McpClient {
     is_http: bool,
     http_url: String,
     http_client: Option<reqwest::blocking::Client>,
+    http_headers: std::collections::HashMap<String, String>,
+    mcp_session_id: Arc<RwLock<Option<String>>>,
     endpoint_url: Arc<RwLock<Option<String>>>,
     received_responses: Arc<Mutex<std::collections::HashMap<i32, Value>>>,
     stop_signal: Arc<AtomicBool>,
@@ -273,23 +278,14 @@ fn run_sse_listener(
     stop_signal: Arc<AtomicBool>,
 ) {
     while !stop_signal.load(Ordering::SeqCst) {
-        let mut target_url = url.clone();
-        if let Some(ref sid) = session_id {
-            if !target_url.contains("session=") && !target_url.contains("session_id=") {
-                let separator = if target_url.contains('?') { "&" } else { "?" };
-                target_url = format!("{}{}session={}", target_url, separator, sid);
-            }
-        }
+        let target_url = url.clone();
 
-        let mut req = client.get(&target_url)
+        let mut req = client
+            .get(&target_url)
             .header("Accept", "text/event-stream");
 
         if let Some(ref sid) = session_id {
-            req = req.header("x-session-id", sid)
-                     .header("x-mcp-session-id", sid)
-                     .header("mcp-session-id", sid)
-                     .header("Authorization", format!("Bearer {}", sid))
-                     .header("Cookie", format!("session_id={}; session={}", sid, sid));
+            req = req.header("Mcp-Session-Id", sid);
         }
 
         let mut resp = match req.send() {
@@ -345,16 +341,17 @@ fn run_sse_listener(
 
                         if current_event == "endpoint" {
                             let mut ep = endpoint_url.write().unwrap();
-                            let resolved = if data.starts_with("http://") || data.starts_with("https://") {
-                                data
-                            } else {
-                                let base = url.trim_end_matches('/');
-                                if data.starts_with('/') {
-                                    format!("{}{}", base, data)
+                            let resolved =
+                                if data.starts_with("http://") || data.starts_with("https://") {
+                                    data
                                 } else {
-                                    format!("{}/{}", base, data)
-                                }
-                            };
+                                    let base = url.trim_end_matches('/');
+                                    if data.starts_with('/') {
+                                        format!("{}{}", base, data)
+                                    } else {
+                                        format!("{}/{}", base, data)
+                                    }
+                                };
                             *ep = Some(resolved);
                         } else if current_event == "message" || current_event.is_empty() {
                             if let Ok(v) = serde_json::from_str::<Value>(&data) {
@@ -380,7 +377,11 @@ fn run_sse_listener(
 impl McpClient {
     pub fn new(server_name: &str, command: &str, args: &[String], timeout_ms: u64) -> Self {
         let is_http = command.starts_with("http://") || command.starts_with("https://");
-        let http_url = if is_http { command.to_string() } else { String::new() };
+        let http_url = if is_http {
+            command.to_string()
+        } else {
+            String::new()
+        };
 
         McpClient {
             server_name: server_name.into(),
@@ -400,6 +401,8 @@ impl McpClient {
             is_http,
             http_url,
             http_client: None,
+            http_headers: std::collections::HashMap::new(),
+            mcp_session_id: Arc::new(RwLock::new(None)),
             endpoint_url: Arc::new(RwLock::new(None)),
             received_responses: Arc::new(Mutex::new(std::collections::HashMap::new())),
             stop_signal: Arc::new(AtomicBool::new(false)),
@@ -409,6 +412,14 @@ impl McpClient {
 
     pub fn with_env(mut self, envs: Option<std::collections::HashMap<String, String>>) -> Self {
         self.envs = envs;
+        self
+    }
+
+    pub fn with_http_headers(
+        mut self,
+        headers: Option<std::collections::HashMap<String, String>>,
+    ) -> Self {
+        self.http_headers = headers.unwrap_or_default();
         self
     }
 
@@ -427,17 +438,50 @@ impl McpClient {
         self.last_used_ms
     }
 
-    fn find_session_id(&self) -> Option<String> {
-        let token_flags = vec!["--session", "--mcp-session-id", "oauth_token", "--token", "token"];
-        
-        // 1. Look for standard flag-value pairs or inline parameters in args
+    fn normalized_server_env_key(&self) -> String {
+        self.server_name
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_uppercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect()
+    }
+
+    fn read_secret_token(path: &std::path::Path) -> Option<String> {
+        let content = std::fs::read_to_string(path).ok()?;
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if trimmed.starts_with('{') {
+            if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+                for key in ["access_token", "token", "bearer_token"] {
+                    if let Some(token) = value.get(key).and_then(|v| v.as_str()) {
+                        let token = token.trim();
+                        if !token.is_empty() {
+                            return Some(token.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        Some(trimmed.to_string())
+    }
+
+    fn find_arg_value(&self, flags: &[&str]) -> Option<String> {
         let mut i = 0;
         while i < self.args.len() {
             if let Some(arg) = self.args.get(i) {
-                if token_flags.contains(&arg.as_str()) && i + 1 < self.args.len() {
+                if flags.contains(&arg.as_str()) && i + 1 < self.args.len() {
                     return self.args.get(i + 1).cloned();
                 }
-                for flag in &token_flags {
+                for flag in flags {
                     let prefix = format!("{}=", flag);
                     if arg.starts_with(&prefix) {
                         return Some(arg[prefix.len()..].to_string());
@@ -446,36 +490,87 @@ impl McpClient {
             }
             i += 1;
         }
+        None
+    }
 
-        // 2. Look for raw direct token in args
+    fn find_mcp_session_id(&self) -> Option<String> {
+        let configured = self.find_arg_value(&["--mcp-session-id", "mcp_session_id"]);
+        if configured.is_some() {
+            return configured;
+        }
+
+        if let Some(ref envs) = self.envs {
+            let server_key = self.normalized_server_env_key();
+            let keys = [
+                "MCP_SESSION_ID".to_string(),
+                "SESSION_ID".to_string(),
+                format!("{}_MCP_SESSION_ID", server_key),
+                format!("{}_SESSION", server_key),
+            ];
+            for key in keys {
+                if let Some(val) = envs.get(&key) {
+                    let val = val.trim();
+                    if !val.is_empty() {
+                        return Some(val.to_string());
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn find_access_token(&self) -> Option<String> {
+        let token_flags = [
+            "--access-token",
+            "--bearer-token",
+            "--token",
+            "access_token",
+            "oauth_token",
+            "bearer_token",
+            "token",
+        ];
+
+        if let Some(token) = self.find_arg_value(&token_flags) {
+            return Some(token);
+        }
+
+        // 2. Look for raw direct token in args for backwards compatibility.
         // If there's an argument that is alphanumeric, length >= 6, doesn't start with '-',
         // and is not a known flag, a URL (starts with http), or a file path (contains / or \),
         // we treat it as a direct token.
         for arg in &self.args {
             let trimmed = arg.trim();
-            if trimmed.len() >= 6 
-                && !trimmed.starts_with('-') 
-                && !trimmed.starts_with("http://") 
-                && !trimmed.starts_with("https://") 
-                && !trimmed.contains('/') 
-                && !trimmed.contains('\\') 
+            if trimmed.len() >= 6
+                && !trimmed.starts_with('-')
+                && !trimmed.starts_with("http://")
+                && !trimmed.starts_with("https://")
+                && !trimmed.contains('/')
+                && !trimmed.contains('\\')
                 && !token_flags.contains(&trimmed)
             {
                 return Some(trimmed.to_string());
             }
         }
 
-        // 3. Look in env variables
+        // 3. Look in env variables.
         if let Some(ref envs) = self.envs {
-            let env_session_key = format!("{}_SESSION", self.server_name.to_ascii_uppercase());
-            let keys = vec![
-                "SESSION_ID",
-                "MCP_SESSION_ID",
-                env_session_key.as_str(),
+            let server_key = self.normalized_server_env_key();
+            let keys = [
+                "MCP_ACCESS_TOKEN".to_string(),
+                "ACCESS_TOKEN".to_string(),
+                "OAUTH_ACCESS_TOKEN".to_string(),
+                "BEARER_TOKEN".to_string(),
+                "SWIGGY_MCP_TOKEN".to_string(),
+                format!("{}_ACCESS_TOKEN", server_key),
+                format!("{}_TOKEN", server_key),
             ];
             for key in keys {
-                if let Some(val) = envs.get(key) {
-                    return Some(val.clone());
+                if let Some(val) = envs.get(&key) {
+                    let val = val.trim();
+                    if !val.is_empty() {
+                        return Some(val.to_string());
+                    }
                 }
             }
         }
@@ -491,178 +586,136 @@ impl McpClient {
 
         let secrets_dir = data_dir.join("secrets");
         let name_lower = self.server_name.to_ascii_lowercase();
-        let name_upper = self.server_name.to_ascii_uppercase();
+        let name_safe = name_lower.replace('-', "_");
 
         let mut variants = vec![
+            format!("{}_access_token", name_lower),
+            format!("{}_access_token", name_safe),
             format!("{}_token", name_lower),
-            format!("{}_token", name_lower.replace('-', "_")),
+            format!("{}_token", name_safe),
             format!("{}_token", name_lower.replace('_', "-")),
-            format!("{}_token", name_upper),
-            format!("{}_token", name_upper.replace('-', "_")),
-            format!("{}_token", name_upper.replace('_', "-")),
+            format!("oauth_{}.json", name_lower),
+            format!("oauth_{}.json", name_safe),
         ];
 
-        // Fallback to "swiggy_food_token" if it's any swiggy server
         if name_lower.contains("swiggy") {
+            variants.push("swiggy_access_token".to_string());
+            variants.push("swiggy_token".to_string());
             variants.push("swiggy_food_token".to_string());
         }
 
         for var in variants {
             let file_path = secrets_dir.join(&var);
             if file_path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&file_path) {
-                    let trimmed = content.trim().to_string();
-                    if !trimmed.is_empty() {
-                        log::info!("MCP Client: Loaded session token for '{}' from secrets file '{}'", self.server_name, var);
-                        return Some(trimmed);
-                    }
+                if let Some(token) = Self::read_secret_token(&file_path) {
+                    log::info!(
+                        "MCP Client: Loaded access token for '{}' from secrets file '{}'",
+                        self.server_name,
+                        var
+                    );
+                    return Some(token);
                 }
             }
         }
         None
     }
 
-    fn extract_and_save_session_from_headers(&self, resp: &reqwest::blocking::Response) {
-        // Only run this if we have --session, --mcp-session-id, or if this is zepto
-        let has_session_indicator = self.args.iter().any(|arg| arg == "--session" || arg == "--mcp-session-id") 
-            || self.server_name.contains("zepto");
-            
-        if !has_session_indicator {
-            return;
-        }
-
-        let mut new_session_id = None;
-
-        // Try extracting from Cookie headers
-        if let Some(cookie) = resp.headers().get("set-cookie").and_then(|v| v.to_str().ok()) {
-            for cookie_part in cookie.split(';') {
-                let cookie_part = cookie_part.trim();
-                if let Some(pos) = cookie_part.find('=') {
-                    let key = cookie_part[..pos].trim().to_ascii_lowercase();
-                    let val = cookie_part[pos + 1..].trim();
-                    if key == "session_id" || key == "session" || key == "token" || key == "oauth_token" || key == "mcp_session_id" || key == "mcp-session-id" {
-                        new_session_id = Some(val.to_string());
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Try extracting from other custom headers
-        if new_session_id.is_none() {
-            let header_names = vec![
-                "x-session-id",
-                "x-mcp-session-id",
-                "session-id",
-                "mcp-session-id",
-                "session_id",
-                "session",
-                "token",
-                "authorization"
-            ];
-            for name in header_names {
-                if let Some(val) = resp.headers().get(name).and_then(|v| v.to_str().ok()) {
-                    let val = val.trim();
-                    let token_val = if name == "authorization" && val.to_ascii_lowercase().starts_with("bearer ") {
-                        val["bearer ".len()..].trim().to_string()
-                    } else {
-                        val.to_string()
-                    };
-                    if !token_val.is_empty() {
-                        new_session_id = Some(token_val);
-                        break;
-                    }
-                }
-            }
-        }
-
-        if let Some(sid) = new_session_id {
-            let current = self.find_session_id();
-            if current.as_ref() != Some(&sid) {
-                log::warn!("Auto-detected updated session token from HTTP headers for server '{}': {}", self.server_name, sid);
-                let data_dir = std::env::var("TIZENCLAW_DATA_DIR")
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|_| {
-                        std::env::var("HOME")
-                            .map(|h| std::path::PathBuf::from(h).join(".tizenclaw"))
-                            .unwrap_or_else(|_| std::path::PathBuf::from("/opt/usr/share/tizenclaw"))
-                    });
-                let config_path = data_dir.join("config").join("mcp_servers.json");
-                if config_path.exists() {
-                    if let Ok(content) = std::fs::read_to_string(&config_path) {
-                        if let Ok(mut json_val) = serde_json::from_str::<Value>(&content) {
-                            if let Some(servers) = json_val.get_mut("mcpServers").and_then(|v| v.as_object_mut()) {
-                                if let Some(server) = servers.get_mut(&self.server_name) {
-                                    let mut updated = false;
-                                    
-                                    let token_flags = vec!["--session", "--mcp-session-id", "oauth_token", "--token", "token"];
-                                    let mut target_flag = None;
-                                    if let Some(args_arr) = server.get("args").and_then(|v| v.as_array()) {
-                                        for flag in &token_flags {
-                                            if args_arr.iter().any(|arg| arg.as_str() == Some(*flag)) {
-                                                target_flag = Some(flag.to_string());
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    let target_flag = target_flag.unwrap_or_else(|| {
-                                        if self.server_name.contains("zepto") {
-                                            "--session".to_string()
-                                        } else {
-                                            "--mcp-session-id".to_string()
-                                        }
-                                    });
-
-                                    if let Some(args_arr) = server.get_mut("args").and_then(|v| v.as_array_mut()) {
-                                        let mut i = 0;
-                                        while i < args_arr.len() {
-                                            if let Some(arg_str) = args_arr[i].as_str() {
-                                                if arg_str == target_flag && i + 1 < args_arr.len() {
-                                                    args_arr[i + 1] = serde_json::json!(sid);
-                                                    updated = true;
-                                                    break;
-                                                }
-                                            }
-                                            i += 1;
-                                        }
-                                        if !updated {
-                                            if args_arr.len() == 1 && !args_arr[0].as_str().unwrap_or("").starts_with('-') {
-                                                args_arr[0] = serde_json::json!(sid);
-                                            } else {
-                                                args_arr.push(serde_json::json!(target_flag));
-                                                args_arr.push(serde_json::json!(sid));
-                                            }
-                                        }
-                                    } else {
-                                        let mut arr = Vec::new();
-                                        arr.push(serde_json::json!(target_flag));
-                                        arr.push(serde_json::json!(sid));
-                                        server.as_object_mut().unwrap().insert("args".to_string(), Value::Array(arr));
-                                    }
-                                    
-                                    let env_key = format!("{}_SESSION", self.server_name.to_ascii_uppercase());
-                                    if let Some(env_obj) = server.get_mut("env").and_then(|v| v.as_object_mut()) {
-                                        env_obj.insert(env_key, serde_json::json!(sid));
-                                        env_obj.insert("SESSION_ID".to_string(), serde_json::json!(sid));
-                                        env_obj.insert("MCP_SESSION_ID".to_string(), serde_json::json!(sid));
-                                    } else {
-                                        let mut env_map = serde_json::Map::new();
-                                        env_map.insert(env_key, serde_json::json!(sid));
-                                        env_map.insert("SESSION_ID".to_string(), serde_json::json!(sid));
-                                        env_map.insert("MCP_SESSION_ID".to_string(), serde_json::json!(sid));
-                                        server.as_object_mut().unwrap().insert("env".to_string(), Value::Object(env_map));
-                                    }
-                                    
-                                    if let Ok(new_content) = serde_json::to_string_pretty(&json_val) {
-                                        let _ = std::fs::write(&config_path, new_content);
-                                    }
-                                }
-                            }
+    fn capture_mcp_session_id_from_headers(&self, resp: &reqwest::blocking::Response) {
+        for name in ["mcp-session-id", "Mcp-Session-Id", "MCP-Session-Id"] {
+            if let Some(value) = resp.headers().get(name).and_then(|v| v.to_str().ok()) {
+                let value = value.trim();
+                if !value.is_empty() {
+                    if let Ok(mut session) = self.mcp_session_id.write() {
+                        if session.as_deref() != Some(value) {
+                            log::debug!(
+                                "MCP Client: captured Mcp-Session-Id for '{}'",
+                                self.server_name
+                            );
+                            *session = Some(value.to_string());
                         }
                     }
+                    break;
                 }
             }
         }
+    }
+
+    fn parse_http_rpc_body(body: &str) -> Result<Option<Value>, String> {
+        let raw = body.trim();
+        if raw.is_empty() {
+            return Ok(None);
+        }
+
+        if raw.starts_with('{') || raw.starts_with('[') {
+            return serde_json::from_str::<Value>(raw)
+                .map(Some)
+                .map_err(|e| e.to_string());
+        }
+
+        if raw.contains("data:") {
+            let mut data_lines = Vec::new();
+            for line in raw.lines() {
+                let line = line.trim();
+                if let Some(data) = line.strip_prefix("data:") {
+                    let data = data.trim();
+                    if !data.is_empty() && data != "[DONE]" {
+                        data_lines.push(data.to_string());
+                    }
+                }
+            }
+            let merged = data_lines.join("\n");
+            if !merged.trim().is_empty() {
+                return serde_json::from_str::<Value>(&merged)
+                    .map(Some)
+                    .map_err(|e| e.to_string());
+            }
+        }
+        Err(format!(
+            "Unsupported HTTP MCP response format: {}",
+            &raw[..raw.len().min(500)]
+        ))
+    }
+
+    fn remember_http_response(&self, value: Value) {
+        if value.get("jsonrpc").is_some()
+            && (value.get("result").is_some() || value.get("error").is_some())
+        {
+            if let Some(id) = value.get("id").and_then(|id_val| id_val.as_i64()) {
+                if let Ok(mut map) = self.received_responses.lock() {
+                    map.insert(id as i32, value);
+                }
+            }
+        } else if let Some(items) = value.as_array() {
+            for item in items {
+                self.remember_http_response(item.clone());
+            }
+        }
+    }
+
+    fn apply_configured_http_headers(
+        &self,
+        mut req: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
+        for (name, value) in &self.http_headers {
+            let Ok(header_name) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) else {
+                log::warn!(
+                    "MCP Client: ignoring invalid configured HTTP header '{}' for '{}'",
+                    name,
+                    self.server_name
+                );
+                continue;
+            };
+            let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) else {
+                log::warn!(
+                    "MCP Client: ignoring invalid configured HTTP header value for '{}' on '{}'",
+                    name,
+                    self.server_name
+                );
+                continue;
+            };
+            req = req.header(header_name, header_value);
+        }
+        req
     }
 
     /// Spawn the server process or start the HTTP client and perform the MCP handshake.
@@ -688,41 +741,25 @@ impl McpClient {
                 }
             };
 
-            self.http_client = Some(client.clone());
+            self.http_client = Some(client);
             self.stop_signal.store(false, Ordering::SeqCst);
 
-            let url = self.http_url.clone();
-            let session_id = self.find_session_id();
-            let endpoint_url = self.endpoint_url.clone();
-            let received_responses = self.received_responses.clone();
-            let stop_signal = self.stop_signal.clone();
-
-            let handle = std::thread::spawn(move || {
-                run_sse_listener(client, url, session_id, endpoint_url, received_responses, stop_signal);
-            });
-            self.sse_thread = Some(handle);
-            self.connected = true;
-
-            // Wait up to 5s for endpoint to resolve via SSE
-            let start = Instant::now();
-            while start.elapsed() < Duration::from_secs(5) {
-                if self.endpoint_url.read().unwrap().is_some() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-
-            // Fallback if no SSE endpoint was resolved
-            if self.endpoint_url.read().unwrap().is_none() {
-                let mut ep = self.endpoint_url.write().unwrap();
+            if let Ok(mut ep) = self.endpoint_url.write() {
                 *ep = Some(self.http_url.clone());
             }
+            if let Ok(mut session) = self.mcp_session_id.write() {
+                *session = self.find_mcp_session_id();
+            }
+            self.connected = true;
 
-            log::debug!("MCP Client: Native HTTP transport established for '{}'", self.server_name);
+            log::debug!(
+                "MCP Client: Streamable HTTP transport prepared for '{}'",
+                self.server_name
+            );
 
             // Perform initialize handshake
             let init_params = json!({
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": STREAMABLE_HTTP_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": {"name": "tizenclaw-mcp-client", "version": "1.0.0"}
             });
@@ -749,7 +786,10 @@ impl McpClient {
             });
             let _ = self.send_rpc_message(&notif);
 
-            log::debug!("MCP Client: Handshake succeeded for HTTP server '{}'", self.server_name);
+            log::debug!(
+                "MCP Client: Handshake succeeded for HTTP server '{}'",
+                self.server_name
+            );
             return true;
         }
 
@@ -797,7 +837,10 @@ impl McpClient {
                                 && !trimmed.contains("registry.npmjs.org")
                             {
                                 log::warn!("**************************************************");
-                                log::warn!("MCP Server [{}] AUTHENTICATION LINK DETECTED!", server_name_cloned);
+                                log::warn!(
+                                    "MCP Server [{}] AUTHENTICATION LINK DETECTED!",
+                                    server_name_cloned
+                                );
                                 log::warn!("Please open this link in any browser to authenticate:");
                                 log::warn!("  {}", trimmed);
                                 log::warn!("**************************************************");
@@ -811,7 +854,7 @@ impl McpClient {
 
         // Perform initialize handshake
         let init_params = json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": STDIO_PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": {"name": "tizenclaw-mcp-client", "version": "1.0.0"}
         });
@@ -986,45 +1029,77 @@ impl McpClient {
     fn send_rpc_message(&self, message: &Value) -> Result<(), String> {
         if self.is_http {
             let client = self.http_client.as_ref().ok_or("No HTTP client")?;
-            let ep = self.endpoint_url.read().unwrap().clone().ok_or("No message endpoint URL")?;
+            let ep = self
+                .endpoint_url
+                .read()
+                .unwrap()
+                .clone()
+                .ok_or("No message endpoint URL")?;
 
-            let session_id = self.find_session_id();
-            let mut target_ep = ep;
-            if let Some(ref sid) = session_id {
-                if !target_ep.contains("session=") && !target_ep.contains("session_id=") {
-                    let separator = if target_ep.contains('?') { "&" } else { "?" };
-                    target_ep = format!("{}{}session={}", target_ep, separator, sid);
-                }
+            let mut req = client
+                .post(&ep)
+                .header(
+                    reqwest::header::ACCEPT,
+                    "application/json, text/event-stream",
+                )
+                .header("MCP-Protocol-Version", STREAMABLE_HTTP_PROTOCOL_VERSION);
+            req = self.apply_configured_http_headers(req);
+
+            if let Some(access_token) = self.find_access_token() {
+                req = req.header(
+                    reqwest::header::AUTHORIZATION,
+                    format!("Bearer {}", access_token),
+                );
             }
 
-            let mut req = client.post(&target_ep);
-            if let Some(ref sid) = session_id {
-                req = req.header("x-session-id", sid)
-                         .header("x-mcp-session-id", sid)
-                         .header("mcp-session-id", sid)
-                         .header("Authorization", format!("Bearer {}", sid))
-                         .header("Cookie", format!("session_id={}; session={}", sid, sid));
+            let current_session = self
+                .mcp_session_id
+                .read()
+                .ok()
+                .and_then(|session| session.clone())
+                .or_else(|| self.find_mcp_session_id());
+            if let Some(ref sid) = current_session {
+                req = req.header("Mcp-Session-Id", sid);
             }
 
-            let resp = req.json(message)
-                .send()
-                .map_err(|e| e.to_string())?;
+            let resp = req.json(message).send().map_err(|e| e.to_string())?;
 
-            if !resp.status().is_success() {
-                return Err(format!("HTTP POST failed: {}", resp.status()));
+            let status = resp.status();
+            let auth_challenge = resp
+                .headers()
+                .get(reqwest::header::WWW_AUTHENTICATE)
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.trim().to_string())
+                .unwrap_or_default();
+            self.capture_mcp_session_id_from_headers(&resp);
+            let body = resp.text().map_err(|e| e.to_string())?;
+
+            if !status.is_success() {
+                let auth_hint = if auth_challenge.is_empty() {
+                    String::new()
+                } else {
+                    format!("; WWW-Authenticate: {}", auth_challenge)
+                };
+                let body_hint = if body.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "; body: {}",
+                        body.trim().chars().take(500).collect::<String>()
+                    )
+                };
+                return Err(format!(
+                    "HTTP POST failed: {}{}{}",
+                    status, auth_hint, body_hint
+                ));
             }
 
-            self.extract_and_save_session_from_headers(&resp);
+            if status == reqwest::StatusCode::ACCEPTED || body.trim().is_empty() {
+                return Ok(());
+            }
 
-            // Check if server returns synchronous response directly in body
-            if let Ok(v) = resp.json::<Value>() {
-                if v.get("jsonrpc").is_some() && (v.get("result").is_some() || v.get("error").is_some()) {
-                    if let Some(id) = v.get("id").and_then(|id_val| id_val.as_i64()) {
-                        if let Ok(mut map) = self.received_responses.lock() {
-                            map.insert(id as i32, v);
-                        }
-                    }
-                }
+            if let Some(value) = Self::parse_http_rpc_body(&body)? {
+                self.remember_http_response(value);
             }
             return Ok(());
         }
@@ -1089,7 +1164,10 @@ impl McpClient {
         if self.is_http {
             loop {
                 if start.elapsed() >= timeout {
-                    return Err(format!("Timeout after {}ms waiting for HTTP response", timeout_ms));
+                    return Err(format!(
+                        "Timeout after {}ms waiting for HTTP response",
+                        timeout_ms
+                    ));
                 }
 
                 if let Ok(mut map) = self.received_responses.lock() {
@@ -1191,9 +1269,14 @@ impl McpClientManager {
                     .unwrap_or_default();
                 let timeout = s["timeout_ms"].as_u64().unwrap_or(30000);
 
-                let env_map: Option<std::collections::HashMap<String, String>> = s.get("env")
-                    .and_then(|v| v.as_object())
-                    .map(|obj| {
+                let env_map: Option<std::collections::HashMap<String, String>> =
+                    s.get("env").and_then(|v| v.as_object()).map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    });
+                let header_map: Option<std::collections::HashMap<String, String>> =
+                    s.get("headers").and_then(|v| v.as_object()).map(|obj| {
                         obj.iter()
                             .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                             .collect()
@@ -1210,7 +1293,9 @@ impl McpClientManager {
                     continue;
                 }
 
-                let mut client = McpClient::new(name, &command, &args, timeout).with_env(env_map);
+                let mut client = McpClient::new(name, &command, &args, timeout)
+                    .with_env(env_map)
+                    .with_http_headers(header_map);
                 if client.connect() {
                     client.discover_tools();
                     connected_count += 1;
@@ -1236,9 +1321,14 @@ impl McpClientManager {
                     .unwrap_or_default();
                 let timeout = s["timeout_ms"].as_u64().unwrap_or(30000);
 
-                let env_map: Option<std::collections::HashMap<String, String>> = s.get("env")
-                    .and_then(|v| v.as_object())
-                    .map(|obj| {
+                let env_map: Option<std::collections::HashMap<String, String>> =
+                    s.get("env").and_then(|v| v.as_object()).map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    });
+                let header_map: Option<std::collections::HashMap<String, String>> =
+                    s.get("headers").and_then(|v| v.as_object()).map(|obj| {
                         obj.iter()
                             .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                             .collect()
@@ -1255,7 +1345,9 @@ impl McpClientManager {
                     continue;
                 }
 
-                let mut client = McpClient::new(&name, &command, &args, timeout).with_env(env_map);
+                let mut client = McpClient::new(&name, &command, &args, timeout)
+                    .with_env(env_map)
+                    .with_http_headers(header_map);
                 if client.connect() {
                     client.discover_tools();
                     connected_count += 1;
@@ -1352,24 +1444,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_find_session_id() {
+    fn test_find_access_token() {
         // Test with flag-value pair
         let client_flag = McpClient::new(
             "zepto",
             "https://mcp.zepto.co.in/mcp",
-            &["--session".to_string(), "my_test_session_token_123".to_string()],
+            &[
+                "--access-token".to_string(),
+                "my_test_session_token_123".to_string(),
+            ],
             30000,
         );
-        assert_eq!(client_flag.find_session_id(), Some("my_test_session_token_123".to_string()));
+        assert_eq!(
+            client_flag.find_access_token(),
+            Some("my_test_session_token_123".to_string())
+        );
 
         // Test with inline flag parameter
         let client_inline = McpClient::new(
             "zepto",
             "https://mcp.zepto.co.in/mcp",
-            &["--session=my_inline_session_token_456".to_string()],
+            &["--access-token=my_inline_session_token_456".to_string()],
             30000,
         );
-        assert_eq!(client_inline.find_session_id(), Some("my_inline_session_token_456".to_string()));
+        assert_eq!(
+            client_inline.find_access_token(),
+            Some("my_inline_session_token_456".to_string())
+        );
 
         // Test with direct token argument
         let client_direct = McpClient::new(
@@ -1378,47 +1479,49 @@ mod tests {
             &["my_raw_direct_token_value_789".to_string()],
             30000,
         );
-        assert_eq!(client_direct.find_session_id(), Some("my_raw_direct_token_value_789".to_string()));
+        assert_eq!(
+            client_direct.find_access_token(),
+            Some("my_raw_direct_token_value_789".to_string())
+        );
 
         // Test with direct token argument when URL is also in args
         let client_direct_with_url = McpClient::new(
             "zepto",
             "https://mcp.zepto.co.in/mcp",
-            &["https://mcp.zepto.co.in/mcp".to_string(), "token_directly_appended_abc".to_string()],
+            &[
+                "https://mcp.zepto.co.in/mcp".to_string(),
+                "token_directly_appended_abc".to_string(),
+            ],
             30000,
         );
-        assert_eq!(client_direct_with_url.find_session_id(), Some("token_directly_appended_abc".to_string()));
+        assert_eq!(
+            client_direct_with_url.find_access_token(),
+            Some("token_directly_appended_abc".to_string())
+        );
 
         // Test with no token
-        let client_empty = McpClient::new(
-            "zepto",
-            "https://mcp.zepto.co.in/mcp",
-            &[],
-            30000,
-        );
-        assert_eq!(client_empty.find_session_id(), None);
+        let client_empty = McpClient::new("zepto", "https://mcp.zepto.co.in/mcp", &[], 30000);
+        assert_eq!(client_empty.find_access_token(), None);
     }
 
     #[test]
-    fn test_find_session_id_secrets() {
+    fn test_find_access_token_secrets() {
         let temp_dir = tempfile::tempdir().unwrap();
         let secrets_dir = temp_dir.path().join("secrets");
         std::fs::create_dir_all(&secrets_dir).unwrap();
-        
+
         let token_file = secrets_dir.join("swiggy_food_token");
         std::fs::write(&token_file, "secret_swiggy_token_val").unwrap();
-        
+
         std::env::set_var("TIZENCLAW_DATA_DIR", temp_dir.path());
-        
-        let client = McpClient::new(
-            "swiggy-instamart",
-            "https://mcp.swiggy.com/im",
-            &[],
-            30000,
+
+        let client = McpClient::new("swiggy-instamart", "https://mcp.swiggy.com/im", &[], 30000);
+
+        assert_eq!(
+            client.find_access_token(),
+            Some("secret_swiggy_token_val".to_string())
         );
-        
-        assert_eq!(client.find_session_id(), Some("secret_swiggy_token_val".to_string()));
-        
+
         std::env::remove_var("TIZENCLAW_DATA_DIR");
     }
 }

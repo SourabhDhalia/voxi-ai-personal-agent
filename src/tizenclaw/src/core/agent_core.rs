@@ -13,10 +13,12 @@
 //! Thread-safety: uses fine-grained internal locking so callers can
 //! share `Arc<AgentCore>` without an outer Mutex.
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use futures_util::future::join_all;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
@@ -1387,6 +1389,21 @@ struct PendingMcpConfirmation {
     created_ms: u64,
 }
 
+#[derive(Clone, Debug, Default)]
+struct McpOAuthEndpoints {
+    authorization_endpoint: String,
+    token_endpoint: String,
+    registration_endpoint: Option<String>,
+    scope: Option<String>,
+    resource: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct McpOAuthClient {
+    client_id: String,
+    client_secret: Option<String>,
+}
+
 /// Thread-safe AgentCore with fine-grained internal locking.
 ///
 /// Callers share `Arc<AgentCore>` — no outer Mutex needed.
@@ -1503,10 +1520,16 @@ impl AgentCore {
     }
 
     pub async fn register_mcp_session(&self, server_name: &str, session_id: &str) -> bool {
-        self.register_mcp_session_with_flag(server_name, session_id, None).await
+        self.register_mcp_session_with_flag(server_name, session_id, None)
+            .await
     }
 
-    pub async fn register_mcp_session_with_flag(&self, server_name: &str, session_id: &str, custom_flag: Option<&str>) -> bool {
+    pub async fn register_mcp_session_with_flag(
+        &self,
+        server_name: &str,
+        session_id: &str,
+        custom_flag: Option<&str>,
+    ) -> bool {
         let mcp_config_path = self.platform.paths.config_dir.join("mcp_servers.json");
 
         let content = match std::fs::read_to_string(&mcp_config_path) {
@@ -1530,7 +1553,13 @@ impl AgentCore {
         };
 
         // Scan existing arguments to determine the session ID flag
-        let token_flags = vec!["--session", "--mcp-session-id", "oauth_token", "--token", "token"];
+        let token_flags = vec![
+            "--session",
+            "--mcp-session-id",
+            "oauth_token",
+            "--token",
+            "token",
+        ];
         let mut target_flag = custom_flag.map(|f| f.to_string());
         let mut has_flag = false;
 
@@ -1599,7 +1628,10 @@ impl AgentCore {
                 arr.push(serde_json::json!(default_flag));
                 arr.push(serde_json::json!(session_id));
             }
-            server_config.as_object_mut().unwrap().insert("args".to_string(), Value::Array(arr));
+            server_config
+                .as_object_mut()
+                .unwrap()
+                .insert("args".to_string(), Value::Array(arr));
         }
 
         let env_key = format!("{}_SESSION", server_name.to_ascii_uppercase());
@@ -1612,7 +1644,10 @@ impl AgentCore {
             env_map.insert(env_key, serde_json::json!(session_id));
             env_map.insert("SESSION_ID".to_string(), serde_json::json!(session_id));
             env_map.insert("MCP_SESSION_ID".to_string(), serde_json::json!(session_id));
-            server_config.as_object_mut().unwrap().insert("env".to_string(), Value::Object(env_map));
+            server_config
+                .as_object_mut()
+                .unwrap()
+                .insert("env".to_string(), Value::Object(env_map));
         }
 
         let new_content = match serde_json::to_string_pretty(&config) {
@@ -1633,7 +1668,12 @@ impl AgentCore {
         if input_trimmed.starts_with("http://") || input_trimmed.starts_with("https://") {
             if let Ok(url) = reqwest::Url::parse(input_trimmed) {
                 for (key, val) in url.query_pairs() {
-                    if key == "code" || key == "session" || key == "token" || key == "session_id" || key == "accessToken" {
+                    if key == "code"
+                        || key == "session"
+                        || key == "token"
+                        || key == "session_id"
+                        || key == "accessToken"
+                    {
                         return val.to_string();
                     }
                 }
@@ -1642,7 +1682,10 @@ impl AgentCore {
 
         for line in input_trimmed.lines() {
             let line_lower = line.to_ascii_lowercase();
-            if line_lower.contains("cookie:") || line_lower.contains("authorization:") || line_lower.contains("session") {
+            if line_lower.contains("cookie:")
+                || line_lower.contains("authorization:")
+                || line_lower.contains("session")
+            {
                 if let Some(pos) = line.find(':') {
                     let val = line[pos + 1..].trim();
                     if line_lower.contains("cookie:") {
@@ -1662,6 +1705,616 @@ impl AgentCore {
         }
 
         input_trimmed.to_string()
+    }
+
+    fn secret_safe_server_name(server_name: &str) -> String {
+        server_name
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+            .trim_matches('_')
+            .to_string()
+    }
+
+    fn extract_access_token(input: &str) -> String {
+        let raw = input.trim();
+        if raw.to_ascii_lowercase().starts_with("authorization:") {
+            let value = raw
+                .split_once(':')
+                .map(|(_, value)| value.trim())
+                .unwrap_or(raw);
+            return value
+                .strip_prefix("Bearer ")
+                .or_else(|| value.strip_prefix("bearer "))
+                .unwrap_or(value)
+                .trim()
+                .to_string();
+        }
+
+        if raw.starts_with("http://") || raw.starts_with("https://") {
+            if let Ok(url) = reqwest::Url::parse(raw) {
+                for (key, val) in url.query_pairs() {
+                    if key == "access_token" || key == "token" || key == "id_token" {
+                        return val.to_string();
+                    }
+                }
+                if let Some(fragment) = url.fragment() {
+                    for pair in fragment.split('&') {
+                        if let Some((key, val)) = pair.split_once('=') {
+                            if key == "access_token" || key == "token" || key == "id_token" {
+                                return val.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        raw.to_string()
+    }
+
+    fn secrets_dir(&self) -> PathBuf {
+        self.platform.paths.data_dir.join("secrets")
+    }
+
+    fn write_secret_file(path: &Path, content: &str) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|err| err.to_string())?;
+        file.write_all(content.as_bytes())
+            .map_err(|err| err.to_string())?;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        Ok(())
+    }
+
+    fn mcp_server_config(&self, server_name: &str) -> Result<Value, String> {
+        let mcp_config_path = self.platform.paths.config_dir.join("mcp_servers.json");
+        let content = std::fs::read_to_string(&mcp_config_path)
+            .map_err(|err| format!("Failed to read MCP config: {}", err))?;
+        let config: Value = serde_json::from_str(&content)
+            .map_err(|err| format!("Failed to parse MCP config: {}", err))?;
+        let servers = config
+            .get("mcpServers")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| "MCP config has no mcpServers object".to_string())?;
+        servers
+            .get(server_name)
+            .cloned()
+            .ok_or_else(|| format!("Unknown MCP server '{}'", server_name))
+    }
+
+    fn mcp_server_url(server_config: &Value) -> Option<String> {
+        server_config
+            .get("url")
+            .and_then(|v| v.as_str())
+            .or_else(|| server_config.get("command").and_then(|v| v.as_str()))
+            .filter(|value| value.starts_with("http://") || value.starts_with("https://"))
+            .map(|value| value.to_string())
+    }
+
+    async fn register_mcp_access_token(&self, server_name: &str, raw_token: &str) -> bool {
+        let token = Self::extract_access_token(raw_token);
+        if token.trim().is_empty() || token.contains("code=") {
+            return false;
+        }
+
+        let safe = Self::secret_safe_server_name(server_name);
+        let token_path = self.secrets_dir().join(format!("{}_access_token", safe));
+        if Self::write_secret_file(&token_path, token.trim()).is_err() {
+            return false;
+        }
+
+        let oauth_path = self.secrets_dir().join(format!("oauth_{}.json", safe));
+        let oauth_doc = json!({
+            "access_token": token.trim(),
+            "token_type": "Bearer",
+            "updated_at_ms": Self::now_ms(),
+        });
+        if let Ok(content) = serde_json::to_string_pretty(&oauth_doc) {
+            let _ = Self::write_secret_file(&oauth_path, &content);
+        }
+
+        let mcp_config_path = self.platform.paths.config_dir.join("mcp_servers.json");
+        let mut mcp = self.mcp_client_manager.write().await;
+        mcp.load_config_and_connect(&mcp_config_path.to_string_lossy())
+    }
+
+    fn random_urlsafe_token(byte_len: usize) -> Result<String, String> {
+        let mut bytes = vec![0u8; byte_len.max(16)];
+        openssl::rand::rand_bytes(&mut bytes).map_err(|err| err.to_string())?;
+        Ok(URL_SAFE_NO_PAD.encode(bytes))
+    }
+
+    fn pkce_challenge(verifier: &str) -> String {
+        URL_SAFE_NO_PAD.encode(openssl::sha::sha256(verifier.as_bytes()))
+    }
+
+    fn parse_www_authenticate_param(header: &str, key: &str) -> Option<String> {
+        let needle = format!("{}=", key);
+        let start = header.find(&needle)? + needle.len();
+        let rest = &header[start..];
+        if let Some(stripped) = rest.strip_prefix('"') {
+            let end = stripped.find('"')?;
+            Some(stripped[..end].to_string())
+        } else {
+            let end = rest.find(',').unwrap_or(rest.len());
+            Some(rest[..end].trim().to_string())
+        }
+    }
+
+    fn auth_value(server_config: &Value, key: &str) -> Option<String> {
+        server_config
+            .get("auth")
+            .and_then(|auth| auth.get(key))
+            .and_then(|v| v.as_str())
+            .or_else(|| server_config.get(key).and_then(|v| v.as_str()))
+            .map(|value| value.to_string())
+    }
+
+    fn discover_oauth_from_config(server_config: &Value) -> Option<McpOAuthEndpoints> {
+        let authorization_endpoint = Self::auth_value(server_config, "authorization_endpoint")
+            .or_else(|| Self::auth_value(server_config, "authorization_url"))?;
+        let token_endpoint = Self::auth_value(server_config, "token_endpoint")
+            .or_else(|| Self::auth_value(server_config, "token_url"))?;
+        Some(McpOAuthEndpoints {
+            authorization_endpoint,
+            token_endpoint,
+            registration_endpoint: Self::auth_value(server_config, "registration_endpoint"),
+            scope: Self::auth_value(server_config, "scope"),
+            resource: Self::mcp_server_url(server_config),
+        })
+    }
+
+    fn metadata_candidates_for_issuer(issuer: &str) -> Vec<String> {
+        let Ok(url) = reqwest::Url::parse(issuer) else {
+            return Vec::new();
+        };
+        let origin = match url.port() {
+            Some(port) => format!(
+                "{}://{}:{}",
+                url.scheme(),
+                url.host_str().unwrap_or(""),
+                port
+            ),
+            None => format!("{}://{}", url.scheme(), url.host_str().unwrap_or("")),
+        };
+        let path = url.path().trim_matches('/');
+        if path.is_empty() {
+            vec![
+                format!("{}/.well-known/oauth-authorization-server", origin),
+                format!("{}/.well-known/openid-configuration", origin),
+            ]
+        } else {
+            vec![
+                format!("{}/.well-known/oauth-authorization-server/{}", origin, path),
+                format!("{}/.well-known/openid-configuration/{}", origin, path),
+                format!(
+                    "{}/.well-known/openid-configuration",
+                    issuer.trim_end_matches('/')
+                ),
+            ]
+        }
+    }
+
+    fn protected_resource_candidates(resource: &str) -> Vec<String> {
+        let Ok(url) = reqwest::Url::parse(resource) else {
+            return Vec::new();
+        };
+        let origin = match url.port() {
+            Some(port) => format!(
+                "{}://{}:{}",
+                url.scheme(),
+                url.host_str().unwrap_or(""),
+                port
+            ),
+            None => format!("{}://{}", url.scheme(), url.host_str().unwrap_or("")),
+        };
+        let path = url.path().trim_matches('/');
+        let mut candidates = Vec::new();
+        if !path.is_empty() {
+            candidates.push(format!(
+                "{}/.well-known/oauth-protected-resource/{}",
+                origin, path
+            ));
+        }
+        candidates.push(format!("{}/.well-known/oauth-protected-resource", origin));
+        candidates
+    }
+
+    fn fetch_json(client: &reqwest::blocking::Client, url: &str) -> Result<Value, String> {
+        let resp = client.get(url).send().map_err(|err| err.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!("{} returned {}", url, resp.status()));
+        }
+        resp.json::<Value>().map_err(|err| err.to_string())
+    }
+
+    fn discover_oauth_endpoints(
+        server_url: &str,
+        server_config: &Value,
+    ) -> Result<McpOAuthEndpoints, String> {
+        if let Some(endpoints) = Self::discover_oauth_from_config(server_config) {
+            return Ok(endpoints);
+        }
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+            .map_err(|err| err.to_string())?;
+        let initialize = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "tizenclaw-mcp-client", "version": "1.0.0"}
+            }
+        });
+        let mut resource_metadata = None;
+        let mut challenged_scope = None;
+        if let Ok(resp) = client
+            .post(server_url)
+            .header(
+                reqwest::header::ACCEPT,
+                "application/json, text/event-stream",
+            )
+            .json(&initialize)
+            .send()
+        {
+            if let Some(header) = resp
+                .headers()
+                .get(reqwest::header::WWW_AUTHENTICATE)
+                .and_then(|v| v.to_str().ok())
+            {
+                resource_metadata = Self::parse_www_authenticate_param(header, "resource_metadata");
+                challenged_scope = Self::parse_www_authenticate_param(header, "scope");
+            }
+        }
+
+        let protected_doc = if let Some(url) = resource_metadata {
+            Self::fetch_json(&client, &url).ok()
+        } else {
+            Self::protected_resource_candidates(server_url)
+                .into_iter()
+                .find_map(|candidate| Self::fetch_json(&client, &candidate).ok())
+        }
+        .ok_or_else(|| {
+            "OAuth metadata was not discoverable. Add auth.authorization_endpoint, \
+             auth.token_endpoint, and optionally auth.client_id to this MCP server config."
+                .to_string()
+        })?;
+
+        let auth_server = protected_doc
+            .get("authorization_servers")
+            .and_then(|v| v.as_array())
+            .and_then(|items| items.first())
+            .and_then(|v| v.as_str())
+            .or_else(|| {
+                protected_doc
+                    .get("authorization_server")
+                    .and_then(|v| v.as_str())
+            })
+            .ok_or_else(|| {
+                "Protected resource metadata did not include authorization_servers".to_string()
+            })?;
+
+        let auth_metadata = Self::metadata_candidates_for_issuer(auth_server)
+            .into_iter()
+            .find_map(|candidate| Self::fetch_json(&client, &candidate).ok())
+            .ok_or_else(|| "Authorization server metadata was not discoverable".to_string())?;
+
+        let authorization_endpoint = auth_metadata
+            .get("authorization_endpoint")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Authorization metadata has no authorization_endpoint".to_string())?
+            .to_string();
+        let token_endpoint = auth_metadata
+            .get("token_endpoint")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Authorization metadata has no token_endpoint".to_string())?
+            .to_string();
+        let registration_endpoint = auth_metadata
+            .get("registration_endpoint")
+            .and_then(|v| v.as_str())
+            .map(|value| value.to_string());
+        let scope = Self::auth_value(server_config, "scope")
+            .or(challenged_scope)
+            .or_else(|| {
+                auth_metadata
+                    .get("scopes_supported")
+                    .and_then(|v| v.as_array())
+                    .map(|scopes| {
+                        scopes
+                            .iter()
+                            .filter_map(|scope| scope.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .filter(|scope| !scope.trim().is_empty())
+            });
+
+        Ok(McpOAuthEndpoints {
+            authorization_endpoint,
+            token_endpoint,
+            registration_endpoint,
+            scope,
+            resource: Some(server_url.to_string()),
+        })
+    }
+
+    fn load_oauth_client(&self, server_name: &str) -> Option<McpOAuthClient> {
+        let safe = Self::secret_safe_server_name(server_name);
+        let path = self
+            .secrets_dir()
+            .join(format!("oauth_client_{}.json", safe));
+        let content = std::fs::read_to_string(path).ok()?;
+        let doc: Value = serde_json::from_str(&content).ok()?;
+        let client_id = doc.get("client_id").and_then(|v| v.as_str())?.to_string();
+        let client_secret = doc
+            .get("client_secret")
+            .and_then(|v| v.as_str())
+            .map(|value| value.to_string());
+        Some(McpOAuthClient {
+            client_id,
+            client_secret,
+        })
+    }
+
+    fn save_oauth_client(&self, server_name: &str, client: &McpOAuthClient) -> Result<(), String> {
+        let safe = Self::secret_safe_server_name(server_name);
+        let path = self
+            .secrets_dir()
+            .join(format!("oauth_client_{}.json", safe));
+        let doc = json!({
+            "client_id": client.client_id,
+            "client_secret": client.client_secret,
+            "updated_at_ms": Self::now_ms(),
+        });
+        Self::write_secret_file(
+            &path,
+            &serde_json::to_string_pretty(&doc).map_err(|err| err.to_string())?,
+        )
+    }
+
+    fn register_oauth_client(
+        &self,
+        server_name: &str,
+        endpoints: &McpOAuthEndpoints,
+        redirect_uri: &str,
+    ) -> Result<McpOAuthClient, String> {
+        let Some(registration_endpoint) = endpoints.registration_endpoint.as_deref() else {
+            return Err(
+                "OAuth client_id is not configured and the authorization server did not \
+                 advertise dynamic registration."
+                    .to_string(),
+            );
+        };
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+            .map_err(|err| err.to_string())?;
+        let body = json!({
+            "client_name": "TizenClaw",
+            "redirect_uris": [redirect_uri],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+            "application_type": "native"
+        });
+        let resp = client
+            .post(registration_endpoint)
+            .json(&body)
+            .send()
+            .map_err(|err| err.to_string())?;
+        if !resp.status().is_success() {
+            return Err(format!(
+                "Dynamic client registration failed with HTTP {}",
+                resp.status()
+            ));
+        }
+        let doc: Value = resp.json().map_err(|err| err.to_string())?;
+        let client_id = doc
+            .get("client_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Dynamic registration response had no client_id".to_string())?
+            .to_string();
+        let client_secret = doc
+            .get("client_secret")
+            .and_then(|v| v.as_str())
+            .map(|value| value.to_string());
+        let oauth_client = McpOAuthClient {
+            client_id,
+            client_secret,
+        };
+        let _ = self.save_oauth_client(server_name, &oauth_client);
+        Ok(oauth_client)
+    }
+
+    fn build_mcp_oauth_login_url(&self, server_name: &str) -> Result<String, String> {
+        let server_config = self.mcp_server_config(server_name)?;
+        let server_url = Self::mcp_server_url(&server_config)
+            .ok_or_else(|| format!("MCP server '{}' is not an HTTP endpoint", server_name))?;
+        let endpoints = Self::discover_oauth_endpoints(&server_url, &server_config)?;
+        let redirect_uri = Self::auth_value(&server_config, "redirect_uri")
+            .unwrap_or_else(|| "http://127.0.0.1:39137/oauth/callback".to_string());
+        let configured_client =
+            Self::auth_value(&server_config, "client_id").map(|client_id| McpOAuthClient {
+                client_id,
+                client_secret: Self::auth_value(&server_config, "client_secret"),
+            });
+        let oauth_client = configured_client
+            .or_else(|| self.load_oauth_client(server_name))
+            .map(Ok)
+            .unwrap_or_else(|| {
+                self.register_oauth_client(server_name, &endpoints, &redirect_uri)
+            })?;
+
+        let state = Self::random_urlsafe_token(24)?;
+        let code_verifier = Self::random_urlsafe_token(48)?;
+        let code_challenge = Self::pkce_challenge(&code_verifier);
+        let mut url = reqwest::Url::parse(&endpoints.authorization_endpoint)
+            .map_err(|err| err.to_string())?;
+        {
+            let mut query = url.query_pairs_mut();
+            query
+                .append_pair("response_type", "code")
+                .append_pair("client_id", &oauth_client.client_id)
+                .append_pair("redirect_uri", &redirect_uri)
+                .append_pair("state", &state)
+                .append_pair("code_challenge", &code_challenge)
+                .append_pair("code_challenge_method", "S256")
+                .append_pair(
+                    "resource",
+                    endpoints.resource.as_deref().unwrap_or(&server_url),
+                );
+            if let Some(scope) = endpoints.scope.as_deref() {
+                query.append_pair("scope", scope);
+            }
+        }
+
+        let safe = Self::secret_safe_server_name(server_name);
+        let pending_path = self
+            .secrets_dir()
+            .join(format!("oauth_pending_{}.json", safe));
+        let pending = json!({
+            "server_name": server_name,
+            "state": state,
+            "code_verifier": code_verifier,
+            "redirect_uri": redirect_uri,
+            "token_endpoint": endpoints.token_endpoint,
+            "client_id": oauth_client.client_id,
+            "client_secret": oauth_client.client_secret,
+            "resource": endpoints.resource.unwrap_or(server_url),
+            "created_at_ms": Self::now_ms(),
+        });
+        Self::write_secret_file(
+            &pending_path,
+            &serde_json::to_string_pretty(&pending).map_err(|err| err.to_string())?,
+        )?;
+
+        Ok(format!(
+            "Open this login URL in any browser, complete login, then paste the final callback URL here:\n{}",
+            url.as_str()
+        ))
+    }
+
+    async fn complete_mcp_oauth_callback(&self, callback_url: &str) -> Option<String> {
+        let url = reqwest::Url::parse(callback_url).ok()?;
+        let code = url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "code").then_some(value.to_string()))?;
+        let state = url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "state").then_some(value.to_string()))?;
+        let entries = std::fs::read_dir(self.secrets_dir()).ok()?;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            if !file_name.starts_with("oauth_pending_") || !file_name.ends_with(".json") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path).ok()?;
+            let pending: Value = serde_json::from_str(&content).ok()?;
+            if pending.get("state").and_then(|v| v.as_str()) != Some(state.as_str()) {
+                continue;
+            }
+
+            let server_name = pending
+                .get("server_name")
+                .and_then(|v| v.as_str())?
+                .to_string();
+            let token_endpoint = pending
+                .get("token_endpoint")
+                .and_then(|v| v.as_str())?
+                .to_string();
+            let redirect_uri = pending
+                .get("redirect_uri")
+                .and_then(|v| v.as_str())?
+                .to_string();
+            let code_verifier = pending
+                .get("code_verifier")
+                .and_then(|v| v.as_str())?
+                .to_string();
+            let client_id = pending
+                .get("client_id")
+                .and_then(|v| v.as_str())?
+                .to_string();
+            let mut form = vec![
+                ("grant_type".to_string(), "authorization_code".to_string()),
+                ("code".to_string(), code.clone()),
+                ("redirect_uri".to_string(), redirect_uri),
+                ("client_id".to_string(), client_id),
+                ("code_verifier".to_string(), code_verifier),
+            ];
+            if let Some(resource) = pending.get("resource").and_then(|v| v.as_str()) {
+                form.push(("resource".to_string(), resource.to_string()));
+            }
+            if let Some(secret) = pending.get("client_secret").and_then(|v| v.as_str()) {
+                form.push(("client_secret".to_string(), secret.to_string()));
+            }
+
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .ok()?;
+            let resp = client.post(&token_endpoint).form(&form).send().ok()?;
+            if !resp.status().is_success() {
+                return Some(format!(
+                    "OAuth token exchange failed for MCP server '{}' with HTTP {}.",
+                    server_name,
+                    resp.status()
+                ));
+            }
+            let tokens: Value = resp.json().ok()?;
+            let access_token = tokens.get("access_token").and_then(|v| v.as_str())?;
+            let safe = Self::secret_safe_server_name(&server_name);
+            let token_path = self.secrets_dir().join(format!("{}_access_token", safe));
+            if Self::write_secret_file(&token_path, access_token).is_err() {
+                return Some(format!(
+                    "OAuth succeeded for '{}', but saving the access token failed.",
+                    server_name
+                ));
+            }
+            let oauth_path = self.secrets_dir().join(format!("oauth_{}.json", safe));
+            if let Ok(content) = serde_json::to_string_pretty(&tokens) {
+                let _ = Self::write_secret_file(&oauth_path, &content);
+            }
+            let _ = std::fs::remove_file(path);
+            let mcp_config_path = self.platform.paths.config_dir.join("mcp_servers.json");
+            let mut mcp = self.mcp_client_manager.write().await;
+            let connected = mcp.load_config_and_connect(&mcp_config_path.to_string_lossy());
+            return Some(if connected {
+                format!(
+                    "OAuth completed for MCP server '{}' and MCP tools were reloaded.",
+                    server_name
+                )
+            } else {
+                format!(
+                    "OAuth token saved for MCP server '{}', but no MCP servers connected after reload.",
+                    server_name
+                )
+            });
+        }
+
+        None
     }
 
     fn try_confirm_pending_mcp_action(
@@ -3231,7 +3884,60 @@ impl AgentCore {
     ) -> String {
         let prompt_trimmed = prompt.trim();
 
-        if prompt_trimmed.starts_with("/mcp session") || prompt_trimmed.starts_with("/mcp login") {
+        if prompt_trimmed == "/mcp" || prompt_trimmed == "/mcp help" {
+            return "MCP setup commands:\n\
+                    `/mcp login <server>` starts OAuth when the provider exposes OAuth metadata.\n\
+                    `/mcp token <server> <access_token_or_authorization_header>` stores a bearer token securely and reloads tools.\n\
+                    `/mcp session <server> <mcp_session_id>` stores a manual MCP session id for legacy servers.\n\
+                    After `/mcp login`, paste the final callback URL here to finish token exchange."
+                .to_string();
+        }
+
+        if prompt_trimmed.starts_with("/mcp token") {
+            let parts: Vec<&str> = prompt_trimmed.split_whitespace().collect();
+            if parts.len() >= 4 {
+                let server_name = parts[2];
+                let token = parts[3..].join(" ");
+                if self.register_mcp_access_token(server_name, &token).await {
+                    return format!(
+                        "Stored OAuth bearer token for MCP server '{}' and reloaded MCP tools.",
+                        server_name
+                    );
+                }
+                return format!(
+                    "Failed to store OAuth bearer token for MCP server '{}'. \
+                     Make sure you pasted an access token, not an authorization code.",
+                    server_name
+                );
+            }
+            return "Usage: `/mcp token <server_name> <access_token_or_authorization_header>`"
+                .to_string();
+        }
+
+        if prompt_trimmed.starts_with("/mcp login") {
+            let parts: Vec<&str> = prompt_trimmed.split_whitespace().collect();
+            if parts.len() >= 3 {
+                let server_name = parts[2];
+                return match self.build_mcp_oauth_login_url(server_name) {
+                    Ok(message) => message,
+                    Err(err) => format!(
+                        "Failed to start OAuth for MCP server '{}': {}",
+                        server_name, err
+                    ),
+                };
+            }
+            return "Usage: `/mcp login <server_name>`".to_string();
+        }
+
+        if (prompt_trimmed.starts_with("http://") || prompt_trimmed.starts_with("https://"))
+            && prompt_trimmed.contains("code=")
+        {
+            if let Some(message) = self.complete_mcp_oauth_callback(prompt_trimmed).await {
+                return message;
+            }
+        }
+
+        if prompt_trimmed.starts_with("/mcp session") {
             let parts: Vec<&str> = prompt_trimmed.split_whitespace().collect();
             if parts.len() >= 4 {
                 let server_name = parts[2];
@@ -3241,13 +3947,16 @@ impl AgentCore {
                     flag = Some(parts[3]);
                     token_start_idx = 4;
                 }
-                
+
                 if parts.len() > token_start_idx {
                     let raw_token = parts[token_start_idx..].join(" ");
                     let session_id = Self::extract_session_id(&raw_token);
-                    if self.register_mcp_session_with_flag(server_name, &session_id, flag).await {
+                    if self
+                        .register_mcp_session_with_flag(server_name, &session_id, flag)
+                        .await
+                    {
                         return format!(
-                            "Successfully registered session ID with flag '{}' for MCP server '{}' and reloaded configuration.",
+                            "Successfully registered manual MCP session ID with flag '{}' for MCP server '{}' and reloaded configuration.",
                             flag.unwrap_or("auto"),
                             server_name
                         );
@@ -3260,7 +3969,7 @@ impl AgentCore {
         }
 
         if (prompt_trimmed.starts_with("http://") || prompt_trimmed.starts_with("https://"))
-            && (prompt_trimmed.contains("code=") || prompt_trimmed.contains("session=") || prompt_trimmed.contains("token="))
+            && (prompt_trimmed.contains("session=") || prompt_trimmed.contains("token="))
         {
             let server_name = if prompt_trimmed.contains("zepto") {
                 "zepto"
@@ -3280,7 +3989,9 @@ impl AgentCore {
             }
         }
 
-        if prompt_trimmed.contains("session_id=") || prompt_trimmed.to_lowercase().contains("set-cookie:") {
+        if prompt_trimmed.contains("session_id=")
+            || prompt_trimmed.to_lowercase().contains("set-cookie:")
+        {
             let server_name = if prompt_trimmed.contains("zepto") {
                 "zepto"
             } else if prompt_trimmed.contains("swiggy") {
