@@ -409,25 +409,37 @@ fn deduplicate_after_compacted(
     if compacted.is_empty() {
         return today.to_vec();
     }
+    if today.is_empty() {
+        return vec![];
+    }
 
-    let compacted_set: std::collections::HashSet<(String, String)> = compacted
-        .iter()
-        .map(|msg| {
-            (
-                msg.role.clone(),
-                msg.text.chars().take(100).collect::<String>(),
-            )
-        })
-        .collect();
+    let mut best_end_idx = 0;
+    let mut max_overlap = 0;
 
-    today
-        .iter()
-        .filter(|msg| {
-            let preview = msg.text.chars().take(100).collect::<String>();
-            !compacted_set.contains(&(msg.role.clone(), preview))
-        })
-        .cloned()
-        .collect()
+    for end_idx in 1..=today.len() {
+        let max_len = std::cmp::min(compacted.len(), end_idx);
+        for len in 1..=max_len {
+            let compacted_suffix = &compacted[compacted.len() - len..];
+            let today_sub = &today[end_idx - len..end_idx];
+
+            let mut matches = true;
+            for i in 0..len {
+                if compacted_suffix[i].role != today_sub[i].role
+                    || compacted_suffix[i].text != today_sub[i].text
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if matches && len > max_overlap {
+                max_overlap = len;
+                best_end_idx = end_idx;
+            }
+        }
+    }
+
+    today[best_end_idx..].to_vec()
 }
 
 fn load_session_messages(session_dir: &std::path::Path) -> Vec<DashboardSessionMessage> {

@@ -681,9 +681,11 @@ fn parse_session_markdown(content: &str) -> Vec<SessionMessage> {
 /// Return only messages from `today` that are NOT already represented in
 /// `compacted` — prevents re-adding messages already in the snapshot.
 ///
-/// Strategy: scan today's messages from the end; drop any that exactly match
-/// any message in compacted (role + text). This is a simple deduplication
-/// heuristic suitable for append-only session files.
+/// Strategy: Find the longest matching chronological overlap between a suffix
+/// of the `compacted` history and any contiguous substring of `today`'s logs. 
+/// This supports the critical edge case where early messages from today were
+/// pruned from `compacted` during a size-based compaction, but still exist
+/// in today's active log file.
 fn deduplicate_after_compacted(
     compacted: &[SessionMessage],
     today: &[SessionMessage],
@@ -691,23 +693,37 @@ fn deduplicate_after_compacted(
     if compacted.is_empty() {
         return today.to_vec();
     }
-    // Build a set of (role, first-100-chars) from compacted for fast lookup
-    let compacted_set: std::collections::HashSet<(String, String)> = compacted
-        .iter()
-        .map(|m| {
-            let preview = m.text.chars().take(100).collect::<String>();
-            (m.role.clone(), preview)
-        })
-        .collect();
+    if today.is_empty() {
+        return vec![];
+    }
 
-    today
-        .iter()
-        .filter(|msg| {
-            let preview = msg.text.chars().take(100).collect::<String>();
-            !compacted_set.contains(&(msg.role.clone(), preview))
-        })
-        .cloned()
-        .collect()
+    let mut best_end_idx = 0;
+    let mut max_overlap = 0;
+
+    for end_idx in 1..=today.len() {
+        let max_len = std::cmp::min(compacted.len(), end_idx);
+        for len in 1..=max_len {
+            let compacted_suffix = &compacted[compacted.len() - len..];
+            let today_sub = &today[end_idx - len..end_idx];
+
+            let mut matches = true;
+            for i in 0..len {
+                if compacted_suffix[i].role != today_sub[i].role
+                    || compacted_suffix[i].text != today_sub[i].text
+                {
+                    matches = false;
+                    break;
+                }
+            }
+
+            if matches && len > max_overlap {
+                max_overlap = len;
+                best_end_idx = end_idx;
+            }
+        }
+    }
+
+    today[best_end_idx..].to_vec()
 }
 
 fn get_timestamp() -> String {
@@ -1058,4 +1074,45 @@ mod tests {
         assert_eq!(diff.total_cache_read_input_tokens, 15);
         assert_eq!(diff.total_requests, 2);
     }
+
+    #[test]
+    fn test_deduplicate_after_compacted_alignment() {
+        let msg = |r: &str, t: &str| SessionMessage {
+            role: r.to_string(),
+            text: t.to_string(),
+            timestamp: String::new(),
+        };
+
+        // Case 1: Simple overlap
+        let compacted = vec![msg("user", "A"), msg("assistant", "B")];
+        let today = vec![msg("assistant", "B"), msg("user", "C")];
+        let res = deduplicate_after_compacted(&compacted, &today);
+        assert_eq!(res, vec![msg("user", "C")]);
+
+        // Case 2: Full overlap
+        let compacted = vec![msg("user", "A"), msg("assistant", "B")];
+        let today = vec![msg("user", "A"), msg("assistant", "B")];
+        let res = deduplicate_after_compacted(&compacted, &today);
+        assert!(res.is_empty());
+
+        // Case 3: No overlap
+        let compacted = vec![msg("user", "A")];
+        let today = vec![msg("user", "B")];
+        let res = deduplicate_after_compacted(&compacted, &today);
+        assert_eq!(res, today);
+
+        // Case 4: Overlap with repeating identical messages (Crucial test)
+        let compacted = vec![msg("user", "A"), msg("user", "yes")];
+        let today = vec![msg("user", "yes"), msg("assistant", "B"), msg("user", "yes")];
+        let res = deduplicate_after_compacted(&compacted, &today);
+        // Should only deduplicate the first "yes", preserving the second one!
+        assert_eq!(res, vec![msg("assistant", "B"), msg("user", "yes")]);
+
+        // Case 5: Overlap where early today messages were pruned during compaction
+        let compacted = vec![msg("user", "C"), msg("assistant", "D")];
+        let today = vec![msg("user", "A"), msg("assistant", "B"), msg("user", "C"), msg("assistant", "D"), msg("user", "E")];
+        let res = deduplicate_after_compacted(&compacted, &today);
+        assert_eq!(res, vec![msg("user", "E")]);
+    }
 }
+
