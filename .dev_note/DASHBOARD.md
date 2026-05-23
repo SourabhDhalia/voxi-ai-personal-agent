@@ -250,5 +250,5 @@
 | Safety Interception & Robustness | Supervisor Gate 4 | PASS | Stage 4 bypassed for remote host compilation. |
 | Safety Interception & Robustness | 5. Test/Review | PASS | git diff --check, whitespace, formatting, and structural checks passed. |
 | Safety Interception & Robustness | Supervisor Gate 5 | PASS | Code reviews confirm robust safety loop avoidance. |
-| Safety Interception & Robustness | 6. Commit | PASS | Committed at `fe96495b` and pushed to origin/main. |
+| Safety Interception & Robustness | 6. Commit | PASS | Committed safety block interception at `fe96495b` and refined verification filters at `870787c7`; pushed to origin/main. |
 | Safety Interception & Robustness | Supervisor Gate 6 | PASS | Commit used .tmp/commit_msg.txt; pushed to origin/main. |
