@@ -104,7 +104,6 @@ journal.txt
 .claude/
 
 # Dev notes
-/.dev_note/
 docs/
 !docs/
 docs/*
