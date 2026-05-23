@@ -10,33 +10,18 @@ if not ENDPOINT:
     print("Missing MCP HTTP endpoint", file=sys.stderr)
     sys.exit(1)
 
-# Optional initial MCP session id:
-# args: URL --session SESSION_ID
-# env : MCP_SESSION_ID=SESSION_ID
-SESSION_ID = os.environ.get("MCP_SESSION_ID", "").strip()
-
-args = sys.argv[2:]
-for i, arg in enumerate(args):
-    if arg in ("--session", "--mcp-session-id", "--mcp-session", "mcp-session-id"):
-        if i + 1 < len(args):
-            SESSION_ID = args[i + 1].strip()
-
 TOKEN = (
     os.environ.get("MCP_ACCESS_TOKEN", "")
     or os.environ.get("MCP_BEARER_TOKEN", "")
     or os.environ.get("SWIGGY_MCP_TOKEN", "")
-    or os.environ.get("ZEPTO_MCP_TOKEN", "")
 ).strip()
-
 if not TOKEN:
     token_file = os.environ.get("MCP_ACCESS_TOKEN_FILE", "").strip()
     if not token_file:
-        token_file = (
-            os.environ.get("SWIGGY_MCP_TOKEN_FILE", "").strip()
-            or os.environ.get("ZEPTO_MCP_TOKEN_FILE", "").strip()
-            or "/root/.tizenclaw/secrets/swiggy_food_token"
+        token_file = os.environ.get(
+            "SWIGGY_MCP_TOKEN_FILE",
+            "/root/.tizenclaw/secrets/swiggy_food_token",
         )
-
     try:
         with open(token_file, "r", encoding="utf-8") as f:
             raw_token = f.read().strip()
@@ -53,19 +38,12 @@ if not TOKEN:
     except FileNotFoundError:
         TOKEN = ""
 
-def get_session_header(headers):
-    return (
-        headers.get("mcp-session-id")
-        or headers.get("Mcp-Session-Id")
-        or headers.get("MCP-Session-Id")
-        or headers.get("Mcp-Session-ID")
-    )
+SESSION_ID = None
 
 def post_jsonrpc(payload: dict):
     global SESSION_ID
 
     body = json.dumps(payload).encode("utf-8")
-
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
@@ -75,7 +53,6 @@ def post_jsonrpc(payload: dict):
 
     if TOKEN:
         headers["Authorization"] = f"Bearer {TOKEN}"
-
     if SESSION_ID:
         headers["Mcp-Session-Id"] = SESSION_ID
 
@@ -88,11 +65,9 @@ def post_jsonrpc(payload: dict):
 
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
-            new_session = get_session_header(resp.headers)
+            new_session = resp.headers.get("Mcp-Session-Id") or resp.headers.get("MCP-Session-Id")
             if new_session:
                 SESSION_ID = new_session
-                sys.stderr.write(f"MCP session updated: {SESSION_ID}\n")
-                sys.stderr.flush()
 
             raw = resp.read().decode("utf-8", errors="replace").strip()
             status = getattr(resp, "status", 200)
@@ -100,37 +75,27 @@ def post_jsonrpc(payload: dict):
             if status == 202 or raw == "":
                 return None
 
+            # Basic JSON response
             if raw.startswith("{") or raw.startswith("["):
                 return json.loads(raw)
 
+            # Minimal SSE fallback: extract first data: JSON block
             if "data:" in raw:
                 data_lines = []
                 for line in raw.splitlines():
                     if line.startswith("data:"):
                         data_lines.append(line[5:].strip())
-
-                merged = "\n".join(
-                    [x for x in data_lines if x and x != "[DONE]"]
-                ).strip()
-
+                merged = "\n".join([x for x in data_lines if x and x != "[DONE]"]).strip()
                 if merged:
                     return json.loads(merged)
 
             raise RuntimeError(f"Unsupported response format: {raw[:500]}")
-
     except urllib.error.HTTPError as e:
-        new_session = get_session_header(e.headers)
-        if new_session:
-            SESSION_ID = new_session
-            sys.stderr.write(f"MCP session updated from error response: {SESSION_ID}\n")
-            sys.stderr.flush()
-
         try:
             err_body = e.read().decode("utf-8", errors="replace")
         except Exception:
             err_body = ""
-
-        return {
+        err = {
             "jsonrpc": "2.0",
             "id": payload.get("id"),
             "error": {
@@ -138,9 +103,9 @@ def post_jsonrpc(payload: dict):
                 "message": f"HTTP {e.code}: {err_body[:1000]}".strip()
             }
         }
-
+        return err
     except Exception as e:
-        return {
+        err = {
             "jsonrpc": "2.0",
             "id": payload.get("id"),
             "error": {
@@ -148,6 +113,7 @@ def post_jsonrpc(payload: dict):
                 "message": str(e)
             }
         }
+        return err
 
 def main():
     for line in sys.stdin:
@@ -164,6 +130,7 @@ def main():
 
         resp = post_jsonrpc(msg)
 
+        # JSON-RPC notifications often have no id; don't emit anything unless server gave us a response
         if resp is not None:
             sys.stdout.write(json.dumps(resp, separators=(",", ":")) + "\n")
             sys.stdout.flush()
