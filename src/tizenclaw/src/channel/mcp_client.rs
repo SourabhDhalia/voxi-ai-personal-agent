@@ -608,6 +608,7 @@ impl McpClient {
                 }
             }
         }
+    }
 
     /// Spawn the server process or start the HTTP client and perform the MCP handshake.
     pub fn connect(&mut self) -> bool {
