@@ -102,6 +102,7 @@ fn default_dashboard_base_url() -> String {
 
 const ALLOWED_CONFIGS: &[&str] = &[
     "llm_config.json",
+    "mcp_servers.json",
     "telegram_config.json",
     "slack_config.json",
     "discord_config.json",

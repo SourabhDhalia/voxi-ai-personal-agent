@@ -262,10 +262,10 @@
           <h2 class="page-title">Scheduled Tasks</h2>
         </div>
         <div class="chat-bulk-actions">
-          <button id="task-select-all" class="btn-outline">전체 선택</button>
-          <button id="task-delete-selected" class="btn-outline btn-danger-outline">선택 삭제</button>
+          <button id="task-select-all" class="btn-outline">Select All</button>
+          <button id="task-delete-selected" class="btn-outline btn-danger-outline">Delete Selected</button>
         </div>
-        <div class="chat-selection-meta" id="task-selection-meta">선택된 작업 없음</div>
+        <div class="chat-selection-meta" id="task-selection-meta">No tasks selected</div>
         <div class="date-nav" id="task-date-nav"></div>
         <div class="card-list" id="task-list">
           <p class="empty-state">Loading...</p>
@@ -274,7 +274,7 @@
           <div class="viewer-header">
             <button class="btn-outline btn-back" id="task-back">← Back</button>
             <span class="viewer-title" id="task-viewer-title"></span>
-            <button class="btn-outline btn-danger-outline" id="task-delete-current">이 작업 삭제</button>
+            <button class="btn-outline btn-danger-outline" id="task-delete-current">Delete This Task</button>
           </div>
           <pre class="viewer-content" id="task-viewer-content"></pre>
         </div>
@@ -301,28 +301,28 @@
             <div class="chat-sidebar-header">
               <button id="chat-new-session" class="btn-primary btn-full">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                새 대화
+                New Chat
               </button>
             </div>
             <div class="chat-bulk-actions">
-              <button id="chat-select-all" class="btn-outline">전체 선택</button>
-              <button id="chat-delete-selected" class="btn-outline btn-danger-outline">선택 삭제</button>
+              <button id="chat-select-all" class="btn-outline">Select All</button>
+              <button id="chat-delete-selected" class="btn-outline btn-danger-outline">Delete Selected</button>
             </div>
-            <div class="chat-selection-meta" id="chat-selection-meta">선택된 세션 없음</div>
+            <div class="chat-selection-meta" id="chat-selection-meta">No session selected</div>
             <div class="chat-session-list" id="chat-session-list">
               <p class="empty-state">Loading...</p>
             </div>
           </aside>
           <div class="chat-main">
-            <div class="chat-session-meta" id="chat-session-meta">새 대화를 시작해 보세요.</div>
+            <div class="chat-session-meta" id="chat-session-meta">Start a new chat.</div>
             <div class="chat-messages" id="chat-messages">
               <div class="chat-welcome">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="36" height="36"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M8 12h.01M12 12h.01M16 12h.01"/></svg>
-                <p>TizenClaw에게 메시지를 보내보세요.</p>
+                <p>Send a message to TizenClaw.</p>
               </div>
             </div>
             <div class="chat-input-area">
-              <textarea id="chat-input" placeholder="메시지를 입력하세요..." rows="2"></textarea>
+              <textarea id="chat-input" placeholder="Type your message..." rows="2"></textarea>
               <button id="chat-send" class="btn-send">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="17" height="17"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
               </button>
@@ -428,7 +428,7 @@
           <span class="ota-status" id="ota-status"></span>
         </div>
         <div class="card-list" id="ota-list">
-          <p class="empty-state">"Check for Updates"를 클릭하여 사용 가능한 스킬 업데이트를 확인하세요.</p>
+          <p class="empty-state">Click "Check for Updates" to view available skill updates.</p>
         </div>
       </section>
 
@@ -438,7 +438,7 @@
   <!-- Toast container -->
   <div id="toast-container" class="toast-container"></div>
 
-  <script src="/app.js?v=20260406a"></script>
+  <script src="/app.js?v=20260406b"></script>
 </body>
 
 </html>

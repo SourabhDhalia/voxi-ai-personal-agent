@@ -17,7 +17,7 @@
       "condition": {"level": {"$lt": 5}},
       "cooldown_minutes": 10,
       "action": "direct",
-      "direct_prompt": "배터리가 5% 미만입니다. 즉시 충전이 필요합니다. 사용자에게 경고하고 불필요한 프로세스를 종료할 방법을 제안해주세요."
+      "direct_prompt": "Battery is below 5%. Immediate charging is required. Warn the user and suggest how to stop unnecessary processes."
     },
     {
       "name": "network_lost",
@@ -32,7 +32,7 @@
       "condition": {"level": {"$eq": "critical"}},
       "cooldown_minutes": 10,
       "action": "direct",
-      "direct_prompt": "시스템 메모리가 위험 수준입니다. 메모리 사용량을 분석하고 불필요한 프로세스를 종료하는 방법을 제안해주세요."
+      "direct_prompt": "System memory is at a critical level. Analyze memory usage and suggest ways to stop unnecessary processes."
     },
     {
       "name": "perception_warning",
@@ -47,7 +47,7 @@
       "condition": {"level": {"$gte": 3}},
       "cooldown_minutes": 5,
       "action": "direct",
-      "direct_prompt": "Perception Engine이 디바이스 위험 상태를 감지했습니다. 현재 복합적 위험 요인을 분석하고, 사용자에게 구체적인 해결 방법을 제안해주세요."
+      "direct_prompt": "The Perception Engine detected a device risk state. Analyze the current combined risk factors and suggest specific actions for the user."
     },
     {
       "name": "storage_low",
@@ -69,7 +69,7 @@
       "condition": {"temperature": {"$gt": 45}},
       "cooldown_minutes": 15,
       "action": "direct",
-      "direct_prompt": "디바이스 온도가 높습니다. CPU 부하를 분석하고 불필요한 작업을 줄이는 방법을 제안해주세요."
+      "direct_prompt": "Device temperature is high. Analyze CPU load and suggest ways to reduce unnecessary tasks."
     },
     {
       "name": "remote_oven_preheated",
@@ -77,7 +77,7 @@
       "condition": {},
       "cooldown_minutes": 1,
       "action": "direct",
-      "direct_prompt": " Swarm 네트워크를 통해 스마트 오븐의 예열이 완료되었다는 이벤트를 수신했습니다! 거실 TV 에이전트로서 사용자 화면에 친절하게 이 사실을 알려주는 메시지를 생성해주세요."
+      "direct_prompt": " Received an event via the Swarm network that the smart oven has finished preheating! As the living room TV agent, generate a friendly on-screen message to inform the user."
     }
   ]
 }

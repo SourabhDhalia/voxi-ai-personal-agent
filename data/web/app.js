@@ -766,8 +766,8 @@
         if (!taskSelectionMeta) return;
         const count = selectedTaskIds.size;
         taskSelectionMeta.textContent = count
-            ? ('선택된 작업 ' + count + '개')
-            : '선택된 작업 없음';
+            ? ('Selected tasks: ' + count)
+            : 'No tasks selected';
     }
 
     async function deleteTasks(ids) {
@@ -775,7 +775,7 @@
             .filter(Boolean);
         if (!filteredIds.length) return;
         if (!window.confirm(
-            '선택한 작업을 삭제할까요?')) {
+            'Delete selected tasks?')) {
             return;
         }
 
@@ -792,7 +792,7 @@
         }
 
         if (!resp || !resp.deleted_ids) {
-            window.alert('작업 삭제에 실패했습니다.');
+            window.alert('Failed to delete tasks.');
             return;
         }
 
@@ -935,12 +935,12 @@
         if (!chatSessionMeta) return;
         if (!currentChatSessionId) {
             chatSessionMeta.textContent =
-                '새 대화 중입니다. 첫 메시지를 보내면 세션이 생성됩니다.';
+                'Starting a new chat. Send the first message to create a session.';
             return;
         }
         chatSessionMeta.textContent =
-            '세션 ' + currentChatSessionId +
-            ' 대화를 이어가는 중입니다.';
+            'Session ' + currentChatSessionId +
+            ' is active; continuing conversation.';
     }
 
     function resetChatMessages() {
@@ -956,11 +956,11 @@
         const count = selectedChatSessionIds.size;
         if (count === 0) {
             chatSelectionMeta.textContent =
-                '선택된 세션 없음';
+                'No session selected';
             return;
         }
         chatSelectionMeta.textContent =
-            count + '개 세션 선택됨';
+            count + ' sessions selected';
     }
 
     function selectChatSession(sessionId) {
@@ -1025,7 +1025,7 @@
                     '<button class="chat-session-delete" ' +
                     'data-chat-delete="' +
                     escHtml(session.id) + '">' +
-                    '삭제</button></div>';
+                    'Delete</button></div>';
             }).join('');
 
         chatSessionList.querySelectorAll(
@@ -1103,7 +1103,7 @@
             .filter(Boolean);
         if (!filteredIds.length) return;
         if (!window.confirm(
-            '선택한 세션 기록을 삭제할까요?')) {
+            'Delete selected session history?')) {
             return;
         }
 
@@ -1120,7 +1120,7 @@
         }
 
         if (!resp || !resp.deleted_ids) {
-            window.alert('세션 삭제에 실패했습니다.');
+            window.alert('Failed to delete sessions.');
             return;
         }
 
@@ -1267,6 +1267,7 @@
 
     const CONFIG_LABELS = {
         'llm_config.json': 'LLM Configuration',
+        'mcp_servers.json': 'MCP Servers',
         'telegram_config.json': 'Telegram Bot',
         'slack_config.json': 'Slack Integration',
         'discord_config.json': 'Discord Bot',
@@ -1278,6 +1279,7 @@
     };
     const CONFIG_DESCRIPTIONS = {
         'llm_config.json': 'Manage model backends, token limits, and sampling options.',
+        'mcp_servers.json': 'Configure MCP server commands, HTTP endpoints, and tool discovery.',
         'telegram_config.json': 'Configure the Telegram bot token and channel bindings.',
         'slack_config.json': 'Configure Slack app tokens, bot tokens, and channel bindings.',
         'discord_config.json': 'Adjust Discord bot credentials and connection settings.',
