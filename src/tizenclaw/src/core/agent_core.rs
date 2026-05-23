@@ -5551,6 +5551,16 @@ impl AgentCore {
                 }
 
                 let mut clarification_question = None;
+                for result in &results {
+                    if let Some(obj) = result.tool_result.as_object() {
+                        if obj.get("requires_confirmation").and_then(|v| v.as_bool()) == Some(true) {
+                            if let Some(msg) = obj.get("message").and_then(|v| v.as_str()) {
+                                clarification_question = Some(msg.to_string());
+                            }
+                        }
+                    }
+                }
+
                 for tc in &detected_tool_calls {
                     if tc.name == "request_user_clarification" {
                         if let Some(q) = tc.args.get("question").and_then(|v| v.as_str()) {
