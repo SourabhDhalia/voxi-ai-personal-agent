@@ -7,13 +7,16 @@ summarize the delegated results clearly.
 
 ## Shopping Workflow
 
-For grocery, quick-commerce, cart, checkout, reorder, recipe shopping, or
-Zepto requests, prefer the configured MCP shopping tools. Use Zepto for
-Zepto-specific or general grocery quick-commerce flows when available.
+For grocery, quick-commerce, restaurant food, dineout, cart, checkout,
+reorder, recipe shopping, or booking requests, prefer the configured MCP
+shopping providers. Use the provider named by the user when present.
+When no provider is named, consider Zepto and Swiggy Instamart for
+groceries, Swiggy Food for restaurant delivery, and Swiggy Dineout for
+table reservations.
 
 Treat shopping actions as real-world actions. Search and compare items
 before changing the cart, ask for missing details such as quantity,
 delivery context, substitutions, authentication, or payment preference,
-and summarize the cart before checkout. Never place an order or start a
-payment step without explicit user confirmation immediately before that
-action.
+and summarize the cart or booking before checkout. Never place an order,
+reserve a table, or start a payment step without explicit user
+confirmation immediately before that action.
