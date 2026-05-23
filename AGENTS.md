@@ -36,12 +36,12 @@ The fundamental development principles are as follows:
   do not execute `cargo build` locally. All builds target the constrained
   Tizen device (emulator) via `./deploy.sh` (GBS Build), maximizing
   release performance optimizations.
-- **Single Architecture Focus (x86_64)**: For rapid development and
-  verification, builds for **x86_64 architecture** are mandatory.
-- **[DISABLED] armv7l Multi-Architecture Build**: armv7l (ARM)
-  architecture verification is currently disabled to prioritize execution
-  speed but can be re-enabled for final cross-architecture validation
-  if required.
+- **Target Runtime Policy**: Actual production usage targets **Tizen DTV
+  armv7l**. Ubuntu **x86_64** is used as the host-side test and iteration
+  environment.
+- **Architecture Validation Priority**: Validate Ubuntu x86_64 behavior
+  during development, then verify armv7l on the Tizen DTV/device path for
+  real usage before considering release work complete.
 - **Execution Centric**: Do not stop at just writing documents;
   physically execute the actual terminal commands (e.g., `./deploy.sh`,
   `git commit`).
@@ -114,11 +114,9 @@ prohibited.** Development must follow a rigid, step-by-step process.
 > its execution behavior using `./deploy.sh` is an imperative baseline.
 > Code not proven by device testing must be rejected.
 
-- **Prerequisite**: You **must perform builds across both x86_64 and
-  armv7l architectures**.
-- **[DISABLED]**: armv7l (ARM) architecture verification is currently
-  disabled to prioritize execution speed but can be re-enabled if
-  required.
+- **Prerequisite**: You **must validate Ubuntu x86_64 for host testing**
+  and **armv7l for actual Tizen DTV usage** whenever the environment
+  provides the required GBS/sdb targets.
 - **Artifact**: Update stage status in `.dev_note/DASHBOARD.md`
 - **Skill Usage**:
   [`.agent/skills/building-deploying/SKILL.md`](.agent/skills/building-deploying/SKILL.md)

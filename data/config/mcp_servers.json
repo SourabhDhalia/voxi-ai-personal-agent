@@ -6,7 +6,8 @@
     },
     "zepto": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://mcp.zepto.co.in/mcp"]
+      "args": ["-y", "mcp-remote", "https://mcp.zepto.co.in/mcp"],
+      "timeout_ms": 60000
     },
     "swiggy-instamart": {
       "type": "http",

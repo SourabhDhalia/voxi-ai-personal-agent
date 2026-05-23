@@ -2818,6 +2818,25 @@ impl AgentCore {
         {
             keywords.extend(["task", "sched", "alarm", "time", "date"].map(String::from));
         }
+        if p.contains("zepto")
+            || p.contains("shopping")
+            || p.contains("grocery")
+            || p.contains("groceries")
+            || p.contains("cart")
+            || p.contains("checkout")
+            || p.contains("order")
+            || p.contains("reorder")
+            || p.contains("payment")
+            || p.contains("milk")
+            || p.contains("eggs")
+        {
+            keywords.extend(
+                [
+                    "zepto", "shopping", "cart", "order", "product", "checkout", "payment",
+                ]
+                .map(String::from),
+            );
+        }
         if p.contains("system")
             || p.contains("info")
             || p.contains("status")
