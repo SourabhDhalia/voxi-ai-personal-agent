@@ -1866,19 +1866,30 @@ impl McpClientManager {
     }
 
     pub fn requires_confirmation(&self, full_name: &str, keywords: &[String]) -> bool {
-        let fallback = full_name.to_ascii_lowercase();
-        let searchable = self
+        let name_lower = full_name.to_ascii_lowercase();
+        let matches_name = keywords.iter().any(|keyword| {
+            let keyword = keyword.trim().to_ascii_lowercase();
+            !keyword.is_empty() && name_lower.contains(&keyword)
+        });
+        if matches_name {
+            return true;
+        }
+
+        let original_name = self
             .clients
             .iter()
             .flat_map(|client| client.get_tool_infos())
             .find(|tool| tool.safe_name == full_name || tool.legacy_name == full_name)
-            .map(|tool| tool.searchable_text.to_ascii_lowercase())
-            .unwrap_or(fallback);
+            .map(|tool| tool.original_name.to_ascii_lowercase());
 
-        keywords.iter().any(|keyword| {
-            let keyword = keyword.trim().to_ascii_lowercase();
-            !keyword.is_empty() && searchable.contains(&keyword)
-        })
+        if let Some(orig) = original_name {
+            return keywords.iter().any(|keyword| {
+                let keyword = keyword.trim().to_ascii_lowercase();
+                !keyword.is_empty() && orig.contains(&keyword)
+            });
+        }
+
+        false
     }
 
     /// Route a tool call to the appropriate client.
