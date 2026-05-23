@@ -620,7 +620,6 @@ impl McpClient {
 
         if self.is_http {
             let client = match reqwest::blocking::Client::builder()
-                .cookie_store(true)
                 .timeout(Duration::from_millis(self.timeout_ms))
                 .build()
             {
