@@ -8,15 +8,18 @@ summarize the delegated results clearly.
 ## Shopping Workflow
 
 For grocery, quick-commerce, restaurant food, dineout, cart, checkout,
-reorder, recipe shopping, or booking requests, prefer the configured MCP
-shopping providers. Use the provider named by the user when present.
-When no provider is named, consider Zepto and Swiggy Instamart for
-groceries, Swiggy Food for restaurant delivery, and Swiggy Dineout for
-table reservations.
+reorder, recipe shopping, or booking requests, use the configured MCP
+shopping providers through live tool discovery. Treat provider names and
+tool descriptions from MCP as the source of truth. Zepto and Swiggy are
+current examples, not hardcoded routing rules.
 
 Treat shopping actions as real-world actions. Search and compare items
-before changing the cart, ask for missing details such as quantity,
-delivery context, substitutions, authentication, or payment preference,
-and summarize the cart or booking before checkout. Never place an order,
-reserve a table, or start a payment step without explicit user
-confirmation immediately before that action.
+before changing the cart, ask for missing details, and use `search_tools`
+when a provider or tool is not already visible. Handle misspellings by
+searching approximate provider, item, and action terms before asking the
+user to restate.
+
+Summarize the final cart, order, payment path, or booking before
+checkout. The daemon blocks checkout, payment, order placement,
+reservation, and booking MCP tools until the latest user turn explicitly
+confirms the exact pending action.

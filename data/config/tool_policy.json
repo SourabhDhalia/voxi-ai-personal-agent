@@ -2,6 +2,26 @@
     "max_repeat_count": 3,
     "blocked_skills": [],
     "risk_overrides": {},
+    "mcp_confirmation": {
+        "timeout_ms": 300000,
+        "keywords": [
+            "checkout",
+            "payment",
+            "pay",
+            "place order",
+            "place_order",
+            "book",
+            "booking",
+            "reserve",
+            "reservation",
+            "confirm",
+            "cod",
+            "upi",
+            "card",
+            "wallet",
+            "cash"
+        ]
+    },
     "max_iterations": 5,
     "routing_strategy": {
         "enabled": true,

@@ -7,6 +7,7 @@
 //! - Calls remote tools via `tools/call`
 
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -14,6 +15,228 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::llm::backend::LlmToolDecl;
+
+#[derive(Clone, Debug)]
+pub struct McpToolInfo {
+    pub server_name: String,
+    pub original_name: String,
+    pub safe_name: String,
+    pub legacy_name: String,
+    pub description: String,
+    pub parameters: Value,
+    searchable_text: String,
+}
+
+impl McpToolInfo {
+    pub fn declaration(&self) -> LlmToolDecl {
+        let description = if self.description.trim().is_empty() {
+            format!(
+                "MCP provider '{}' tool '{}'. Inspect this tool's schema before use.",
+                self.server_name, self.original_name
+            )
+        } else {
+            format!(
+                "MCP provider '{}' tool '{}'. {}",
+                self.server_name,
+                self.original_name,
+                self.description.trim()
+            )
+        };
+
+        LlmToolDecl {
+            name: self.safe_name.clone(),
+            description,
+            parameters: self.parameters.clone(),
+        }
+    }
+
+    pub fn to_search_json(&self, score: usize) -> Value {
+        json!({
+            "name": self.safe_name.clone(),
+            "legacy_name": self.legacy_name.clone(),
+            "provider": self.server_name.clone(),
+            "remote_tool": self.original_name.clone(),
+            "description": self.description.clone(),
+            "parameters": self.parameters.clone(),
+            "score": score,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct McpToolSearchResult {
+    pub score: usize,
+    pub tool: McpToolInfo,
+}
+
+impl McpToolSearchResult {
+    pub fn to_json(&self) -> Value {
+        self.tool.to_search_json(self.score)
+    }
+}
+
+fn sanitize_tool_fragment(input: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_underscore = false;
+
+    for ch in input.chars() {
+        let next = if ch.is_ascii_alphanumeric() {
+            last_was_underscore = false;
+            Some(ch.to_ascii_lowercase())
+        } else if !last_was_underscore {
+            last_was_underscore = true;
+            Some('_')
+        } else {
+            None
+        };
+
+        if let Some(ch) = next {
+            out.push(ch);
+        }
+    }
+
+    let trimmed = out.trim_matches('_');
+    let mut sanitized = if trimmed.is_empty() {
+        "tool".to_string()
+    } else {
+        trimmed.to_string()
+    };
+
+    if sanitized
+        .chars()
+        .next()
+        .map(|ch| ch.is_ascii_digit())
+        .unwrap_or(false)
+    {
+        sanitized.insert_str(0, "x_");
+    }
+
+    sanitized
+}
+
+fn safe_mcp_tool_name(server_name: &str, tool_name: &str) -> String {
+    format!(
+        "mcp_{}_{}",
+        sanitize_tool_fragment(server_name),
+        sanitize_tool_fragment(tool_name)
+    )
+}
+
+fn legacy_mcp_tool_name(server_name: &str, tool_name: &str) -> String {
+    format!("mcp_{}_{}", server_name, tool_name)
+}
+
+fn tokenize(text: &str) -> Vec<String> {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter_map(|token| {
+            let token = token.trim().to_ascii_lowercase();
+            (token.len() >= 2).then_some(token)
+        })
+        .collect()
+}
+
+fn expanded_query_tokens(query: &str) -> Vec<String> {
+    let mut tokens = tokenize(query);
+    let mut extras = Vec::new();
+
+    for token in &tokens {
+        match token.as_str() {
+            "buy" | "bought" | "purchase" | "shop" | "shopping" | "get" | "need" => {
+                extras.extend([
+                    "shopping",
+                    "grocery",
+                    "groceries",
+                    "product",
+                    "cart",
+                    "order",
+                    "checkout",
+                ]);
+            }
+            "order" | "reorder" => {
+                extras.extend([
+                    "order",
+                    "cart",
+                    "checkout",
+                    "food",
+                    "restaurant",
+                    "grocery",
+                    "product",
+                ]);
+            }
+            "table" | "reserve" | "reservation" | "book" | "booking" => {
+                extras.extend(["booking", "reservation", "restaurant", "table", "dine"]);
+            }
+            "eat" | "meal" | "lunch" | "dinner" | "breakfast" | "snack" => {
+                extras.extend(["food", "restaurant", "menu", "order"]);
+            }
+            _ => {}
+        }
+    }
+
+    tokens.extend(extras.into_iter().map(String::from));
+    tokens.sort();
+    tokens.dedup();
+    tokens
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let left_chars = left.chars().collect::<Vec<_>>();
+    let right_chars = right.chars().collect::<Vec<_>>();
+    let mut prev = (0..=right_chars.len()).collect::<Vec<_>>();
+    let mut curr = vec![0; right_chars.len() + 1];
+
+    for (i, left_ch) in left_chars.iter().enumerate() {
+        curr[0] = i + 1;
+        for (j, right_ch) in right_chars.iter().enumerate() {
+            let cost = usize::from(left_ch != right_ch);
+            curr[j + 1] = (curr[j] + 1).min(prev[j + 1] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[right_chars.len()]
+}
+
+fn fuzzy_score(query: &str, target: &str) -> usize {
+    let query_tokens = expanded_query_tokens(query);
+    if query_tokens.is_empty() {
+        return 0;
+    }
+
+    let target_lower = target.to_ascii_lowercase();
+    let target_tokens = tokenize(target);
+    let mut score = 0usize;
+
+    for query_token in query_tokens {
+        if target_lower.contains(&query_token) {
+            score += 20 + query_token.len();
+            continue;
+        }
+
+        let typo_match = target_tokens.iter().any(|target_token| {
+            let max_distance = (query_token.len().max(target_token.len()) / 3).clamp(1, 2);
+            edit_distance(&query_token, target_token) <= max_distance
+        });
+        if typo_match {
+            score += 8 + query_token.len();
+        }
+    }
+
+    score
+}
+
+fn build_searchable_text(
+    server_name: &str,
+    original_name: &str,
+    safe_name: &str,
+    description: &str,
+    parameters: &Value,
+) -> String {
+    format!(
+        "{} {} {} {} {}",
+        server_name, original_name, safe_name, description, parameters
+    )
+}
 
 /// A single MCP client connected to a server process.
 pub struct McpClient {
@@ -26,6 +249,7 @@ pub struct McpClient {
     writer: Option<Mutex<std::process::ChildStdin>>,
     connected: bool,
     tools: Vec<LlmToolDecl>,
+    tool_infos: Vec<McpToolInfo>,
     next_req_id: AtomicI32,
     last_used_ms: u64,
 }
@@ -42,6 +266,7 @@ impl McpClient {
             writer: None,
             connected: false,
             tools: Vec::new(),
+            tool_infos: Vec::new(),
             next_req_id: AtomicI32::new(1),
             last_used_ms: Self::now_ms(),
         }
@@ -151,19 +376,49 @@ impl McpClient {
                     .and_then(|r| r.get("tools"))
                     .and_then(|t| t.as_array())
                 {
-                    self.tools = tools_arr
+                    let mut used_names = HashSet::new();
+                    self.tool_infos = tools_arr
                         .iter()
                         .filter_map(|t| {
-                            let name = t["name"].as_str()?;
-                            Some(LlmToolDecl {
-                                name: format!("mcp_{}_{}", self.server_name, name),
-                                description: t["description"].as_str().unwrap_or("").to_string(),
-                                parameters: t
-                                    .get("inputSchema")
-                                    .cloned()
-                                    .unwrap_or_else(|| json!({"type": "object"})),
+                            let original_name = t["name"].as_str()?.to_string();
+                            let description = t["description"].as_str().unwrap_or("").to_string();
+                            let parameters = t
+                                .get("inputSchema")
+                                .cloned()
+                                .unwrap_or_else(|| json!({"type": "object"}));
+                            let base_safe_name =
+                                safe_mcp_tool_name(&self.server_name, &original_name);
+                            let mut safe_name = base_safe_name.clone();
+                            let mut suffix = 2usize;
+                            while !used_names.insert(safe_name.clone()) {
+                                safe_name = format!("{}_{}", base_safe_name, suffix);
+                                suffix += 1;
+                            }
+
+                            let legacy_name =
+                                legacy_mcp_tool_name(&self.server_name, &original_name);
+                            let searchable_text = build_searchable_text(
+                                &self.server_name,
+                                &original_name,
+                                &safe_name,
+                                &description,
+                                &parameters,
+                            );
+                            Some(McpToolInfo {
+                                server_name: self.server_name.clone(),
+                                original_name,
+                                safe_name,
+                                legacy_name,
+                                description,
+                                parameters,
+                                searchable_text,
                             })
                         })
+                        .collect();
+                    self.tools = self
+                        .tool_infos
+                        .iter()
+                        .map(McpToolInfo::declaration)
                         .collect();
                 }
             }
@@ -182,8 +437,23 @@ impl McpClient {
         &self.tools
     }
 
+    pub fn get_tool_infos(&self) -> &[McpToolInfo] {
+        &self.tool_infos
+    }
+
     pub fn is_connected(&self) -> bool {
         self.connected
+    }
+
+    fn resolve_remote_tool_name(&self, full_name: &str) -> Option<&str> {
+        self.tool_infos
+            .iter()
+            .find(|tool| tool.safe_name == full_name || tool.legacy_name == full_name)
+            .map(|tool| tool.original_name.as_str())
+            .or_else(|| {
+                let prefix = format!("mcp_{}_", self.server_name);
+                full_name.strip_prefix(&prefix)
+            })
     }
 
     /// Call a tool on the remote server.
@@ -317,6 +587,13 @@ impl McpClientManager {
         }
     }
 
+    fn disconnect_all(&mut self) {
+        for client in &mut self.clients {
+            client.disconnect();
+        }
+        self.clients.clear();
+    }
+
     /// Load MCP server configs from JSON and connect.
     ///
     /// Config format:
@@ -332,6 +609,9 @@ impl McpClientManager {
             Ok(v) => v,
             Err(_) => return false,
         };
+
+        self.disconnect_all();
+        let mut connected_count = 0usize;
 
         if let Some(servers_map) = config["mcpServers"].as_object() {
             for (name, s) in servers_map {
@@ -350,7 +630,10 @@ impl McpClientManager {
                 if mcp_type == "http" {
                     if let Some(url) = s["url"].as_str() {
                         command = "npx".to_string();
-                        args = vec!["-y", "mcp-remote", url].into_iter().map(String::from).collect();
+                        args = vec!["-y", "mcp-remote", url]
+                            .into_iter()
+                            .map(String::from)
+                            .collect();
                     }
                 }
 
@@ -361,6 +644,7 @@ impl McpClientManager {
                 let mut client = McpClient::new(name, &command, &args, timeout);
                 if client.connect() {
                     client.discover_tools();
+                    connected_count += 1;
                     log::debug!(
                         "MCP Client: '{}' connected ({} tools)",
                         name,
@@ -387,7 +671,10 @@ impl McpClientManager {
                 if mcp_type == "http" {
                     if let Some(url) = s["url"].as_str() {
                         command = "npx".to_string();
-                        args = vec!["-y", "mcp-remote", url].into_iter().map(String::from).collect();
+                        args = vec!["-y", "mcp-remote", url]
+                            .into_iter()
+                            .map(String::from)
+                            .collect();
                     }
                 }
 
@@ -398,6 +685,7 @@ impl McpClientManager {
                 let mut client = McpClient::new(&name, &command, &args, timeout);
                 if client.connect() {
                     client.discover_tools();
+                    connected_count += 1;
                     log::debug!(
                         "MCP Client: '{}' connected ({} tools)",
                         name,
@@ -408,7 +696,7 @@ impl McpClientManager {
             }
         }
 
-        !self.clients.is_empty()
+        connected_count > 0
     }
 
     /// Get all tools from all connected clients.
@@ -419,12 +707,67 @@ impl McpClientManager {
             .collect()
     }
 
+    pub fn get_all_tool_infos(&self) -> Vec<McpToolInfo> {
+        self.clients
+            .iter()
+            .flat_map(|client| client.get_tool_infos().to_vec())
+            .collect()
+    }
+
+    pub fn search_tools(&self, query: &str, limit: usize) -> Vec<McpToolSearchResult> {
+        let query = query.trim();
+        let include_all = query.is_empty() || query.eq_ignore_ascii_case("ALL");
+        let mut results = self
+            .clients
+            .iter()
+            .flat_map(|client| client.get_tool_infos())
+            .filter_map(|tool| {
+                let score = if include_all {
+                    1
+                } else {
+                    fuzzy_score(query, &tool.searchable_text)
+                };
+                (score > 0).then_some(McpToolSearchResult {
+                    score,
+                    tool: tool.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        results.sort_by(|left, right| {
+            right
+                .score
+                .cmp(&left.score)
+                .then_with(|| left.tool.safe_name.cmp(&right.tool.safe_name))
+        });
+        results.truncate(limit.max(1));
+        results
+    }
+
+    pub fn requires_confirmation(&self, full_name: &str, keywords: &[String]) -> bool {
+        let fallback = full_name.to_ascii_lowercase();
+        let searchable = self
+            .clients
+            .iter()
+            .flat_map(|client| client.get_tool_infos())
+            .find(|tool| tool.safe_name == full_name || tool.legacy_name == full_name)
+            .map(|tool| tool.searchable_text.to_ascii_lowercase())
+            .unwrap_or(fallback);
+
+        keywords.iter().any(|keyword| {
+            let keyword = keyword.trim().to_ascii_lowercase();
+            !keyword.is_empty() && searchable.contains(&keyword)
+        })
+    }
+
     /// Route a tool call to the appropriate client.
     pub fn call_tool(&mut self, full_name: &str, args: &Value) -> Option<Value> {
         for client in &mut self.clients {
-            let prefix = format!("mcp_{}_", client.server_name);
-            if let Some(tool_name) = full_name.strip_prefix(&prefix) {
-                return Some(client.call_tool(tool_name, args));
+            if let Some(tool_name) = client
+                .resolve_remote_tool_name(full_name)
+                .map(|name| name.to_string())
+            {
+                return Some(client.call_tool(&tool_name, args));
             }
         }
         None

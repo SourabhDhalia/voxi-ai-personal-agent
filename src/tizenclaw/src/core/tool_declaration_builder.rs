@@ -1,7 +1,7 @@
 //! Tool declaration builder — generates LLM function declarations for all tools.
 
 use crate::llm::backend::LlmToolDecl;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashSet;
 
 pub struct ToolDeclarationBuilder;
@@ -110,6 +110,11 @@ impl ToolDeclarationBuilder {
                 },
                 "required": ["question"]
             }),
+        });
+        tools.push(LlmToolDecl {
+            name: "reload_mcp_servers".into(),
+            description: "Reload configured MCP servers from mcp_servers.json and rediscover their tool metadata without restarting the daemon.".into(),
+            parameters: json!({"type": "object", "properties": {}, "required": []}),
         });
         tools.push(LlmToolDecl {
             name: "list_agents".into(),

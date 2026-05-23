@@ -14,7 +14,7 @@
 //! share `Arc<AgentCore>` without an outer Mutex.
 
 use futures_util::future::join_all;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -23,10 +23,11 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock};
 static THINK_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?s)<think>(.*?)</think>").unwrap());
 
+use crate::channel::mcp_client::McpClientManager;
 use crate::core::agent_loop_state::{AgentLoopState, AgentPhase, EvalVerdict};
 use crate::core::agent_role::{AgentRole, AgentRoleRegistry};
 use crate::core::context_engine::{
-    ContextEngine, DEFAULT_TOOL_RESULT_BUDGET_CHARS, SizedContextEngine,
+    ContextEngine, SizedContextEngine, DEFAULT_TOOL_RESULT_BUDGET_CHARS,
 };
 use crate::core::fallback_parser::FallbackParser;
 use crate::core::feature_tools;
@@ -38,7 +39,6 @@ use crate::core::tool_dispatcher::ToolDispatcher;
 use crate::infra::key_store::KeyStore;
 use crate::llm::backend::{self, LlmBackend, LlmMessage, LlmResponse};
 use crate::storage::session_store::SessionStore;
-use crate::channel::mcp_client::McpClientManager;
 
 const MAX_CONTEXT_MESSAGES: usize = 100;
 const CONTEXT_TOKEN_BUDGET: usize = 256_000;
@@ -1380,6 +1380,13 @@ struct BackendCandidate {
     priority: i64,
 }
 
+#[derive(Clone, Debug)]
+struct PendingMcpConfirmation {
+    tool_name: String,
+    args: Value,
+    created_ms: u64,
+}
+
 /// Thread-safe AgentCore with fine-grained internal locking.
 ///
 /// Callers share `Arc<AgentCore>` — no outer Mutex needed.
@@ -1410,6 +1417,7 @@ pub struct AgentCore {
     /// cached content can be refreshed (e.g. Gemini CachedContent API).
     prompt_hash: tokio::sync::RwLock<u64>,
     mcp_client_manager: tokio::sync::RwLock<McpClientManager>,
+    pending_mcp_confirmations: Mutex<HashMap<String, PendingMcpConfirmation>>,
 }
 
 impl AgentCore {
@@ -1436,6 +1444,7 @@ impl AgentCore {
             session_profiles: Mutex::new(HashMap::new()),
             prompt_hash: tokio::sync::RwLock::new(0),
             mcp_client_manager: tokio::sync::RwLock::new(McpClientManager::new()),
+            pending_mcp_confirmations: Mutex::new(HashMap::new()),
         }
     }
 
@@ -1446,6 +1455,99 @@ impl AgentCore {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         s.hash(&mut h);
         h.finish()
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64
+    }
+
+    fn is_explicit_mcp_confirmation(prompt: &str) -> bool {
+        let lower = prompt.to_ascii_lowercase();
+        let negative_or_change = [
+            "no", "cancel", "stop", "wait", "hold", "change", "modify", "edit", "remove",
+            "instead", "not now",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle));
+        if negative_or_change {
+            return false;
+        }
+
+        [
+            "yes",
+            "confirm",
+            "confirmed",
+            "go ahead",
+            "proceed",
+            "place order",
+            "checkout",
+            "book it",
+            "reserve it",
+            "pay now",
+            "do it",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    }
+
+    fn clear_pending_mcp_confirmation_if_needed(&self, session_id: &str, prompt: &str) {
+        if Self::is_explicit_mcp_confirmation(prompt) {
+            return;
+        }
+        if let Ok(mut pending) = self.pending_mcp_confirmations.lock() {
+            pending.remove(session_id);
+        }
+    }
+
+    fn try_confirm_pending_mcp_action(
+        pending_map: &Mutex<HashMap<String, PendingMcpConfirmation>>,
+        session_id: &str,
+        latest_user_prompt: &str,
+        tool_name: &str,
+        args: &Value,
+        timeout_ms: u64,
+    ) -> bool {
+        if !Self::is_explicit_mcp_confirmation(latest_user_prompt) {
+            return false;
+        }
+
+        let now = Self::now_ms();
+        let Ok(mut pending) = pending_map.lock() else {
+            return false;
+        };
+
+        let Some(entry) = pending.get(session_id) else {
+            return false;
+        };
+        let still_fresh = now.saturating_sub(entry.created_ms) <= timeout_ms;
+        let matches = entry.tool_name == tool_name && entry.args == args.clone();
+        if still_fresh && matches {
+            pending.remove(session_id);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn store_pending_mcp_action(
+        pending_map: &Mutex<HashMap<String, PendingMcpConfirmation>>,
+        session_id: &str,
+        tool_name: &str,
+        args: &Value,
+    ) {
+        if let Ok(mut pending) = pending_map.lock() {
+            pending.insert(
+                session_id.to_string(),
+                PendingMcpConfirmation {
+                    tool_name: tool_name.to_string(),
+                    args: args.clone(),
+                    created_ms: Self::now_ms(),
+                },
+            );
+        }
     }
 
     fn role_file_path(&self) -> PathBuf {
@@ -1506,6 +1608,7 @@ impl AgentCore {
             "remember",
             "recall",
             "forget",
+            "reload_mcp_servers",
             "web_search",
             "validate_web_search",
         ];
@@ -2144,7 +2247,7 @@ impl AgentCore {
                 });
                 let _ = self.send_outbound_message(&outbound_args, None).await;
                 json!({"status": "success", "message": "Clarification request sent to user"})
-            },
+            }
             "validate_web_search" => {
                 let engine = args.get("engine").and_then(|value| value.as_str());
                 feature_tools::validate_web_search(&self.platform.paths.config_dir, engine)
@@ -2238,6 +2341,23 @@ impl AgentCore {
                     Err(_) => json!({"error": "MemoryStore lock failed"}),
                 }
             }
+            "reload_mcp_servers" => {
+                let mcp_config_path = self.platform.paths.config_dir.join("mcp_servers.json");
+                let mut mcp = self.mcp_client_manager.write().await;
+                if mcp.load_config_and_connect(&mcp_config_path.to_string_lossy()) {
+                    json!({
+                        "status": "success",
+                        "message": "MCP servers reloaded",
+                        "tool_count": mcp.get_all_tools().len(),
+                    })
+                } else {
+                    json!({
+                        "status": "warning",
+                        "message": "MCP config reloaded but no servers connected",
+                        "tool_count": 0,
+                    })
+                }
+            }
             _ if tool_name.starts_with("action_") => match self.action_bridge.lock() {
                 Ok(bridge) => {
                     let action_id = tool_name.strip_prefix("action_").unwrap_or(tool_name);
@@ -2247,9 +2367,24 @@ impl AgentCore {
             },
             _ if tool_name.starts_with("mcp_") => {
                 let mut mcp = self.mcp_client_manager.write().await;
+                let confirmation_keywords = if let Ok(policy) = self.tool_policy.lock() {
+                    policy.mcp_confirmation_keywords()
+                } else {
+                    crate::core::tool_policy::ToolPolicy::new().mcp_confirmation_keywords()
+                };
+                if mcp.requires_confirmation(tool_name, &confirmation_keywords) {
+                    return json!({
+                        "requires_confirmation": true,
+                        "tool": tool_name,
+                        "arguments": args,
+                        "message": "Risky MCP shopping actions cannot run through the bridge API. Ask the agent to show the final cart/order/booking and confirm in the latest chat turn."
+                    });
+                }
                 match mcp.call_tool(tool_name, args) {
                     Some(res) => res,
-                    None => serde_json::json!({"error": format!("MCP server for tool {} not found or disconnected", tool_name)}),
+                    None => {
+                        serde_json::json!({"error": format!("MCP server for tool {} not found or disconnected", tool_name)})
+                    }
                 }
             }
             _ => {
@@ -2818,10 +2953,9 @@ impl AgentCore {
         {
             keywords.extend(["task", "sched", "alarm", "time", "date"].map(String::from));
         }
-        if p.contains("zepto")
-            || p.contains("swiggy")
-            || p.contains("instamart")
-            || p.contains("dineout")
+        if p.contains("buy")
+            || p.contains("purchase")
+            || p.contains("shop")
             || p.contains("shopping")
             || p.contains("grocery")
             || p.contains("groceries")
@@ -2835,15 +2969,23 @@ impl AgentCore {
             || p.contains("reservation")
             || p.contains("table")
             || p.contains("payment")
-            || p.contains("milk")
-            || p.contains("eggs")
-            || p.contains("biryani")
+            || p.contains("reserve")
         {
             keywords.extend(
                 [
-                    "zepto", "swiggy", "instamart", "dineout", "shopping", "grocery",
-                    "groceries", "restaurant", "food", "cart", "order", "product",
-                    "checkout", "booking", "reservation", "payment",
+                    "shopping",
+                    "grocery",
+                    "groceries",
+                    "restaurant",
+                    "food",
+                    "cart",
+                    "order",
+                    "product",
+                    "checkout",
+                    "booking",
+                    "reservation",
+                    "payment",
+                    "purchase",
                 ]
                 .map(String::from),
             );
@@ -2984,6 +3126,7 @@ impl AgentCore {
                 store.add_structured_user_message(session_id, prompt);
             }
         }
+        self.clear_pending_mcp_confirmation_if_needed(session_id, prompt);
 
         // Build conversation history — compaction-aware load
         let history = {
@@ -3078,21 +3221,18 @@ impl AgentCore {
             .get_tool_declarations_filtered(&intent_keywords);
         {
             let mcp = self.mcp_client_manager.read().await;
-            let mcp_tools = mcp.get_all_tools();
-            if intent_keywords.is_empty() {
-                tools.extend(mcp_tools);
+            let mcp_query = if intent_keywords.iter().any(|keyword| keyword == "ALL") {
+                "ALL".to_string()
+            } else if intent_keywords.is_empty() {
+                prompt.to_string()
             } else {
-                for t in mcp_tools {
-                    let name_lower = t.name.to_lowercase();
-                    let desc_lower = t.description.to_lowercase();
-                    if intent_keywords.iter().any(|k| {
-                        let kl = k.to_lowercase();
-                        name_lower.contains(&kl) || desc_lower.contains(&kl)
-                    }) {
-                        tools.push(t);
-                    }
-                }
-            }
+                format!("{} {}", prompt, intent_keywords.join(" "))
+            };
+            tools.extend(
+                mcp.search_tools(&mcp_query, 8)
+                    .into_iter()
+                    .map(|result| result.tool.declaration()),
+            );
         }
         crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(
             &mut tools, prompt,
@@ -3166,11 +3306,12 @@ impl AgentCore {
             // Add search_tools meta-tool for Two-Tier router
             tools.push(crate::llm::backend::LlmToolDecl {
                 name: "search_tools".into(),
-                description: "Search available tools across all categories or within a specific category. Use this whenever the required capability is not already present in context.".into(),
+                description: "Search available local and MCP tools by capability, provider, action, or approximate/misspelled terms. Use this whenever the required capability is not already present in context.".into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Keyword to search tools, or 'ALL'."}
+                        "query": {"type": "string", "description": "Capability, provider, action, item, or 'ALL'."},
+                        "limit": {"type": "integer", "description": "Maximum results to return", "minimum": 1, "maximum": 50}
                     },
                     "required": ["query"]
                 })
@@ -3703,6 +3844,21 @@ impl AgentCore {
                 let llm_doc = llm_config_store::load(&self.platform.paths.config_dir)
                     .unwrap_or_else(|_| llm_config_store::default_document());
                 let search_config_dir = self.platform.paths.config_dir.clone();
+                let latest_user_prompt = prompt.to_string();
+                let (mcp_confirmation_keywords, mcp_confirmation_timeout_ms) = if let Ok(policy) =
+                    self.tool_policy.lock()
+                {
+                    (
+                        policy.mcp_confirmation_keywords(),
+                        policy.mcp_confirmation_timeout_ms(),
+                    )
+                } else {
+                    (
+                        crate::core::tool_policy::ToolPolicy::new().mcp_confirmation_keywords(),
+                        crate::core::tool_policy::ToolPolicy::new().mcp_confirmation_timeout_ms(),
+                    )
+                };
+                let pending_mcp_confirmations = &self.pending_mcp_confirmations;
 
                 for tc in detected_tool_calls.iter() {
                     let skills_dir = self.platform.paths.skills_dir.clone();
@@ -3718,6 +3874,8 @@ impl AgentCore {
                     let llm_doc = llm_doc.clone();
                     let search_config_dir = search_config_dir.clone();
                     let mcp_ref = &self.mcp_client_manager;
+                    let latest_user_prompt = latest_user_prompt.clone();
+                    let mcp_confirmation_keywords = mcp_confirmation_keywords.clone();
 
                     // ── Phase 11: SafetyCheck per tool ───────────────────
                     let block_reason = if let Ok(tp) = self.tool_policy.lock() {
@@ -3744,6 +3902,11 @@ impl AgentCore {
                             }
                         } else if tc_name == "search_tools" {
                             let query = tc_args.get("query").and_then(|v| v.as_str()).unwrap_or("ALL");
+                            let limit = tc_args
+                                .get("limit")
+                                .and_then(|v| v.as_u64())
+                                .map(|value| value as usize)
+                                .unwrap_or(12);
 
                             let mut all_tools = td_guard_ref.get_tool_declarations();
                             crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(&mut all_tools, "ALL");
@@ -3752,15 +3915,27 @@ impl AgentCore {
                             }
 
                             let mut results = Vec::new();
+                            {
+                                let mcp = mcp_ref.read().await;
+                                for result in mcp.search_tools(query, limit) {
+                                    let mut item = result.to_json();
+                                    if let Some(obj) = item.as_object_mut() {
+                                        obj.insert("source".into(), serde_json::json!("mcp"));
+                                    }
+                                    results.push(item);
+                                }
+                            }
                             for t in all_tools {
                                 if query == "ALL" || t.name.to_lowercase().contains(&query.to_lowercase()) || t.description.to_lowercase().contains(&query.to_lowercase()) {
                                     results.push(serde_json::json!({
+                                        "source": "local",
                                         "name": t.name,
                                         "description": t.description,
                                         "parameters": t.parameters,
                                     }));
                                 }
                             }
+                            results.truncate(limit.max(1));
                             if results.is_empty() {
                                 serde_json::json!({"error": format!("No tools found matching '{}'", query)})
                             } else {
@@ -4196,6 +4371,22 @@ impl AgentCore {
                             });
                             let _ = self.send_outbound_message(&outbound_args, Some(session_id)).await;
                             json!({"status": "success", "message": "Clarification request sent to user"})
+                        } else if tc_name == "reload_mcp_servers" {
+                            let mcp_config_path = search_config_dir.join("mcp_servers.json");
+                            let mut mcp = mcp_ref.write().await;
+                            if mcp.load_config_and_connect(&mcp_config_path.to_string_lossy()) {
+                                json!({
+                                    "status": "success",
+                                    "message": "MCP servers reloaded",
+                                    "tool_count": mcp.get_all_tools().len(),
+                                })
+                            } else {
+                                json!({
+                                    "status": "warning",
+                                    "message": "MCP config reloaded but no servers connected",
+                                    "tool_count": 0,
+                                })
+                            }
                         } else if tc_name == "generate_web_app" {
                             self.generate_web_app(&tc_args).await
                         } else if tc_name == "extract_document_text" {
@@ -4279,6 +4470,34 @@ impl AgentCore {
                             }
                         } else if tc_name.starts_with("mcp_") {
                             let mut mcp = mcp_ref.write().await;
+                            if mcp.requires_confirmation(&tc_name, &mcp_confirmation_keywords) {
+                                let confirmed = Self::try_confirm_pending_mcp_action(
+                                    pending_mcp_confirmations,
+                                    session_id,
+                                    &latest_user_prompt,
+                                    &tc_name,
+                                    &tc_args,
+                                    mcp_confirmation_timeout_ms,
+                                );
+                                if !confirmed {
+                                    Self::store_pending_mcp_action(
+                                        pending_mcp_confirmations,
+                                        session_id,
+                                        &tc_name,
+                                        &tc_args,
+                                    );
+                                    return LlmMessage::tool_result(
+                                        &tc_id,
+                                        &tc_name,
+                                        serde_json::json!({
+                                            "requires_confirmation": true,
+                                            "tool": tc_name,
+                                            "arguments": tc_args,
+                                            "message": "This MCP action may place an order, start payment, checkout, reserve, or book. Show the final cart/order/booking to the user and ask for explicit confirmation in the latest turn before retrying this exact tool call."
+                                        }),
+                                    );
+                                }
+                            }
                             match mcp.call_tool(&tc_name, &tc_args) {
                                 Some(res) => res,
                                 None => serde_json::json!({"error": format!("MCP server for tool {} not found or disconnected", tc_name)}),
@@ -4842,13 +5061,13 @@ impl<'a> SessionStoreRef<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentRole, MAX_OUTBOUND_DASHBOARD_MESSAGES, append_dashboard_outbound_message,
-        build_progress_marker, build_role_supervisor_hint, build_skill_prefetch_message,
-        dashboard_outbound_queue_path, extract_final_text, generated_code_runtime_spec,
-        generated_code_script_path, manage_generated_code_tool, normalize_conversation_log_text,
-        parse_shell_like_args, prompt_mode_from_doc, reasoning_policy_from_doc,
-        role_relevance_score, sanitize_generated_code_name, select_delegate_roles,
-        select_relevant_skills, utf8_safe_preview,
+        append_dashboard_outbound_message, build_progress_marker, build_role_supervisor_hint,
+        build_skill_prefetch_message, dashboard_outbound_queue_path, extract_final_text,
+        generated_code_runtime_spec, generated_code_script_path, manage_generated_code_tool,
+        normalize_conversation_log_text, parse_shell_like_args, prompt_mode_from_doc,
+        reasoning_policy_from_doc, role_relevance_score, sanitize_generated_code_name,
+        select_delegate_roles, select_relevant_skills, utf8_safe_preview, AgentRole,
+        MAX_OUTBOUND_DASHBOARD_MESSAGES,
     };
     use crate::core::prompt_builder::{PromptMode, ReasoningPolicy};
     use crate::core::textual_skill_scanner::TextualSkill;

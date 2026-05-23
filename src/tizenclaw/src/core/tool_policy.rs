@@ -35,6 +35,8 @@ struct PolicyConfig {
     blocked_skills: HashSet<String>,
     risk_levels: HashMap<String, RiskLevel>,
     aliases: HashMap<String, String>,
+    mcp_confirmation_keywords: Vec<String>,
+    mcp_confirmation_timeout_ms: u64,
 }
 
 impl Default for PolicyConfig {
@@ -45,6 +47,24 @@ impl Default for PolicyConfig {
             blocked_skills: HashSet::new(),
             risk_levels: HashMap::new(),
             aliases: HashMap::new(),
+            mcp_confirmation_keywords: vec![
+                "checkout".into(),
+                "payment".into(),
+                "pay".into(),
+                "place order".into(),
+                "place_order".into(),
+                "book".into(),
+                "booking".into(),
+                "reserve".into(),
+                "reservation".into(),
+                "confirm".into(),
+                "cod".into(),
+                "upi".into(),
+                "card".into(),
+                "wallet".into(),
+                "cash".into(),
+            ],
+            mcp_confirmation_timeout_ms: 300_000,
         }
     }
 }
@@ -117,11 +137,46 @@ impl ToolPolicy {
                 }
             }
         }
+        if let Some(mcp) = j.get("mcp_confirmation").and_then(|v| v.as_object()) {
+            if let Some(arr) = mcp.get("keywords").and_then(|v| v.as_array()) {
+                let keywords = arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.trim().to_ascii_lowercase()))
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>();
+                if !keywords.is_empty() {
+                    self.config.mcp_confirmation_keywords = keywords;
+                }
+            }
+            if let Some(timeout) = mcp.get("timeout_ms").and_then(|v| v.as_u64()) {
+                self.config.mcp_confirmation_timeout_ms = timeout.max(1_000);
+            }
+        }
+        if let Some(arr) = j
+            .get("mcp_confirmation_keywords")
+            .and_then(|v| v.as_array())
+        {
+            let keywords = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.trim().to_ascii_lowercase()))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>();
+            if !keywords.is_empty() {
+                self.config.mcp_confirmation_keywords = keywords;
+            }
+        }
+        if let Some(timeout) = j
+            .get("mcp_confirmation_timeout_ms")
+            .and_then(|v| v.as_u64())
+        {
+            self.config.mcp_confirmation_timeout_ms = timeout.max(1_000);
+        }
         log::info!(
-            "Tool policy loaded: max_repeat={}, blocked={}, aliases={}",
+            "Tool policy loaded: max_repeat={}, blocked={}, aliases={}, mcp_confirm_keywords={}",
             self.config.max_repeat_count,
             self.config.blocked_skills.len(),
-            self.config.aliases.len()
+            self.config.aliases.len(),
+            self.config.mcp_confirmation_keywords.len()
         );
         true
     }
@@ -198,6 +253,12 @@ impl ToolPolicy {
             .get(name)
             .cloned()
             .unwrap_or(RiskLevel::Normal)
+    }
+    pub fn mcp_confirmation_keywords(&self) -> Vec<String> {
+        self.config.mcp_confirmation_keywords.clone()
+    }
+    pub fn mcp_confirmation_timeout_ms(&self) -> u64 {
+        self.config.mcp_confirmation_timeout_ms
     }
 
     fn hash_call(name: &str, args: &Value) -> String {
