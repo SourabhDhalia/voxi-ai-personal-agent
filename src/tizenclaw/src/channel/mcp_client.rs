@@ -445,12 +445,12 @@ impl McpClient {
         self.connected
     }
 
-    fn resolve_remote_tool_name(&self, full_name: &str) -> Option<&str> {
+    fn resolve_remote_tool_name<'a>(&'a self, full_name: &'a str) -> Option<&'a str> {
         self.tool_infos
             .iter()
             .find(|tool| tool.safe_name == full_name || tool.legacy_name == full_name)
             .map(|tool| tool.original_name.as_str())
-            .or_else(|| {
+            .or_else(move || {
                 let prefix = format!("mcp_{}_", self.server_name);
                 full_name.strip_prefix(&prefix)
             })
