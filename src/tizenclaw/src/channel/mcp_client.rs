@@ -106,6 +106,12 @@ pub struct McpToolSearchResult {
     pub tool: McpToolInfo,
 }
 
+#[derive(Clone, Debug)]
+pub enum McpToolResolveError {
+    NotFound,
+    Ambiguous(Vec<McpToolInfo>),
+}
+
 impl McpToolSearchResult {
     pub fn to_json(&self) -> Value {
         self.tool.to_search_json(self.score)
@@ -1400,7 +1406,11 @@ impl McpClient {
     fn resolve_remote_tool_name<'a>(&'a self, full_name: &'a str) -> Option<&'a str> {
         self.tool_infos
             .iter()
-            .find(|tool| tool.safe_name == full_name || tool.legacy_name == full_name)
+            .find(|tool| {
+                tool.safe_name == full_name
+                    || tool.legacy_name == full_name
+                    || tool.original_name == full_name
+            })
             .map(|tool| tool.original_name.as_str())
             .or_else(move || {
                 let prefix = format!("mcp_{}_", self.server_name);
@@ -1879,7 +1889,11 @@ impl McpClientManager {
             .clients
             .iter()
             .flat_map(|client| client.get_tool_infos())
-            .find(|tool| tool.safe_name == full_name || tool.legacy_name == full_name)
+            .find(|tool| {
+                tool.safe_name == full_name
+                    || tool.legacy_name == full_name
+                    || tool.original_name == full_name
+            })
             .map(|tool| tool.original_name.to_ascii_lowercase());
 
         if let Some(orig) = original_name {
@@ -1892,16 +1906,68 @@ impl McpClientManager {
         false
     }
 
-    /// Route a tool call to the appropriate client.
-    pub fn call_tool(&mut self, full_name: &str, args: &Value) -> Option<Value> {
-        for client in &mut self.clients {
-            if let Some(tool_name) = client
-                .resolve_remote_tool_name(full_name)
-                .map(|name| name.to_string())
-            {
-                return Some(client.call_tool(&tool_name, args));
+    fn resolve_tool_alias_with_client(
+        &self,
+        requested_name: &str,
+    ) -> Result<(usize, McpToolInfo), McpToolResolveError> {
+        let matchers: [fn(&McpToolInfo, &str) -> bool; 3] = [
+            |tool: &McpToolInfo, name: &str| tool.safe_name == name,
+            |tool: &McpToolInfo, name: &str| tool.legacy_name == name,
+            |tool: &McpToolInfo, name: &str| tool.original_name == name,
+        ];
+        for matcher in matchers {
+            let matches = self
+                .clients
+                .iter()
+                .enumerate()
+                .filter(|(_, client)| client.is_connected())
+                .flat_map(|(client_index, client)| {
+                    client
+                        .get_tool_infos()
+                        .iter()
+                        .filter(move |tool| matcher(tool, requested_name))
+                        .cloned()
+                        .map(move |tool| (client_index, tool))
+                })
+                .collect::<Vec<_>>();
+
+            match matches.len() {
+                0 => continue,
+                1 => return Ok(matches.into_iter().next().unwrap()),
+                _ => {
+                    return Err(McpToolResolveError::Ambiguous(
+                        matches.into_iter().map(|(_, tool)| tool).collect(),
+                    ));
+                }
             }
         }
+
+        Err(McpToolResolveError::NotFound)
+    }
+
+    pub fn resolve_tool_alias(
+        &self,
+        requested_name: &str,
+    ) -> Result<McpToolInfo, McpToolResolveError> {
+        self.resolve_tool_alias_with_client(requested_name)
+            .map(|(_, tool)| tool)
+    }
+
+    pub fn call_tool_resolved(
+        &mut self,
+        requested_name: &str,
+        args: &Value,
+    ) -> Result<Value, McpToolResolveError> {
+        let (client_index, tool_info) = self.resolve_tool_alias_with_client(requested_name)?;
+        Ok(self.clients[client_index].call_tool(&tool_info.original_name, args))
+    }
+
+    /// Route a tool call to the appropriate client.
+    pub fn call_tool(&mut self, full_name: &str, args: &Value) -> Option<Value> {
+        if let Ok(result) = self.call_tool_resolved(full_name, args) {
+            return Some(result);
+        }
+
         None
     }
 }
@@ -1909,6 +1975,100 @@ impl McpClientManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_tool(server: &str, original: &str) -> McpToolInfo {
+        let safe_name = safe_mcp_tool_name(server, original);
+        McpToolInfo {
+            server_name: server.to_string(),
+            original_name: original.to_string(),
+            safe_name: safe_name.clone(),
+            legacy_name: legacy_mcp_tool_name(server, original),
+            description: String::new(),
+            parameters: json!({"type": "object"}),
+            searchable_text: build_searchable_text(
+                server,
+                original,
+                &safe_name,
+                "",
+                &json!({"type": "object"}),
+            ),
+        }
+    }
+
+    fn test_client(server: &str, originals: &[&str]) -> McpClient {
+        let mut client = McpClient::new(server, "test-command", &[], 30000);
+        client.connected = true;
+        client.tool_infos = originals
+            .iter()
+            .map(|original| test_tool(server, original))
+            .collect();
+        client.tools = client
+            .tool_infos
+            .iter()
+            .map(McpToolInfo::declaration)
+            .collect();
+        client
+    }
+
+    #[test]
+    fn resolve_tool_alias_matches_safe_legacy_and_original_names() {
+        let manager = McpClientManager {
+            clients: vec![test_client("swiggy-instamart", &["list_saved_addresses"])],
+        };
+
+        let safe = manager
+            .resolve_tool_alias("mcp_swiggy_instamart_list_saved_addresses")
+            .unwrap();
+        assert_eq!(safe.original_name, "list_saved_addresses");
+
+        let legacy = manager
+            .resolve_tool_alias("mcp_swiggy-instamart_list_saved_addresses")
+            .unwrap();
+        assert_eq!(
+            legacy.safe_name,
+            "mcp_swiggy_instamart_list_saved_addresses"
+        );
+
+        let original = manager.resolve_tool_alias("list_saved_addresses").unwrap();
+        assert_eq!(
+            original.safe_name,
+            "mcp_swiggy_instamart_list_saved_addresses"
+        );
+    }
+
+    #[test]
+    fn resolve_tool_alias_fails_closed_on_ambiguous_original_name() {
+        let manager = McpClientManager {
+            clients: vec![
+                test_client("zepto", &["list_saved_addresses"]),
+                test_client("swiggy", &["list_saved_addresses"]),
+            ],
+        };
+
+        match manager.resolve_tool_alias("list_saved_addresses") {
+            Err(McpToolResolveError::Ambiguous(tools)) => {
+                assert_eq!(tools.len(), 2);
+                assert!(tools
+                    .iter()
+                    .any(|tool| tool.safe_name == "mcp_zepto_list_saved_addresses"));
+                assert!(tools
+                    .iter()
+                    .any(|tool| tool.safe_name == "mcp_swiggy_list_saved_addresses"));
+            }
+            other => panic!("expected ambiguous original-name match, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn requires_confirmation_checks_original_tool_alias() {
+        let manager = McpClientManager {
+            clients: vec![test_client("zepto", &["checkout"])],
+        };
+        let keywords = vec!["checkout".to_string()];
+
+        assert!(manager.requires_confirmation("checkout", &keywords));
+        assert!(manager.requires_confirmation("mcp_zepto_checkout", &keywords));
+    }
 
     #[test]
     fn test_find_access_token() {

@@ -25,7 +25,7 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock};
 static THINK_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?s)<think>(.*?)</think>").unwrap());
 
-use crate::channel::mcp_client::McpClientManager;
+use crate::channel::mcp_client::{McpClientManager, McpToolInfo, McpToolResolveError};
 use crate::core::agent_loop_state::{AgentLoopState, AgentPhase, EvalVerdict};
 use crate::core::agent_role::{AgentRole, AgentRoleRegistry};
 use crate::core::context_engine::{
@@ -49,6 +49,8 @@ const MAX_TOOL_RETRY: usize = 3;
 const MAX_PREFETCHED_SKILLS: usize = 3;
 const MAX_OUTBOUND_DASHBOARD_MESSAGES: usize = 200;
 const MAX_TELEGRAM_OUTBOUND_CHARS: usize = 4000;
+const LLM_RESPONSE_CACHE_TTL_MS: u64 = 300_000;
+const LLM_RESPONSE_CACHE_MAX_ENTRIES: usize = 128;
 
 #[derive(Clone, Debug, Default)]
 struct SessionPromptProfile {
@@ -62,6 +64,15 @@ struct SessionPromptProfile {
     prompt_mode: Option<PromptMode>,
     reasoning_policy: Option<ReasoningPolicy>,
 }
+
+#[derive(Clone, Debug)]
+struct LlmResponseCacheEntry {
+    response: LlmResponse,
+    created_at_ms: u64,
+    last_used_ms: u64,
+}
+
+type LlmResponseCache = Arc<RwLock<HashMap<u64, LlmResponseCacheEntry>>>;
 
 fn normalize_text_block(text: &str) -> Option<String> {
     let mut lines = Vec::new();
@@ -1435,6 +1446,7 @@ pub struct AgentCore {
     prompt_hash: tokio::sync::RwLock<u64>,
     mcp_client_manager: tokio::sync::RwLock<McpClientManager>,
     pending_mcp_confirmations: Mutex<HashMap<String, PendingMcpConfirmation>>,
+    llm_response_cache: LlmResponseCache,
 }
 
 impl AgentCore {
@@ -1462,6 +1474,7 @@ impl AgentCore {
             prompt_hash: tokio::sync::RwLock::new(0),
             mcp_client_manager: tokio::sync::RwLock::new(McpClientManager::new()),
             pending_mcp_confirmations: Mutex::new(HashMap::new()),
+            llm_response_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -1472,6 +1485,131 @@ impl AgentCore {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         s.hash(&mut h);
         h.finish()
+    }
+
+    fn llm_response_cache_key(
+        backend_name: &str,
+        messages: &[LlmMessage],
+        tools: &[crate::llm::backend::LlmToolDecl],
+        system_prompt: &str,
+        max_tokens: Option<u32>,
+    ) -> u64 {
+        use std::hash::{Hash, Hasher};
+
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        backend_name.hash(&mut h);
+        system_prompt.hash(&mut h);
+        max_tokens.hash(&mut h);
+
+        if let Ok(messages_json) = serde_json::to_vec(messages) {
+            messages_json.hash(&mut h);
+        }
+        if let Ok(tools_json) = serde_json::to_vec(tools) {
+            tools_json.hash(&mut h);
+        }
+
+        h.finish()
+    }
+
+    fn zero_cached_response_usage(response: &mut LlmResponse) {
+        response.prompt_tokens = 0;
+        response.completion_tokens = 0;
+        response.total_tokens = 0;
+        response.cache_creation_input_tokens = 0;
+        response.cache_read_input_tokens = 0;
+    }
+
+    fn get_cached_llm_response(&self, cache_key: u64) -> Option<LlmResponse> {
+        let now = Self::now_ms();
+        let Ok(mut cache) = self.llm_response_cache.write() else {
+            return None;
+        };
+
+        if let Some(entry) = cache.get_mut(&cache_key) {
+            if now.saturating_sub(entry.created_at_ms) <= LLM_RESPONSE_CACHE_TTL_MS {
+                entry.last_used_ms = now;
+                let mut response = entry.response.clone();
+                Self::zero_cached_response_usage(&mut response);
+                log::info!("[LlmResponseCache] Cache HIT key={}", cache_key);
+                return Some(response);
+            }
+            cache.remove(&cache_key);
+        }
+
+        None
+    }
+
+    fn store_llm_response_cache(&self, cache_key: u64, response: &LlmResponse) {
+        if !response.success {
+            return;
+        }
+
+        let now = Self::now_ms();
+        let Ok(mut cache) = self.llm_response_cache.write() else {
+            return;
+        };
+
+        cache.retain(|_, entry| {
+            now.saturating_sub(entry.created_at_ms) <= LLM_RESPONSE_CACHE_TTL_MS
+        });
+        if cache.len() >= LLM_RESPONSE_CACHE_MAX_ENTRIES {
+            if let Some(oldest_key) = cache
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used_ms)
+                .map(|(key, _)| *key)
+            {
+                cache.remove(&oldest_key);
+            }
+        }
+
+        cache.insert(
+            cache_key,
+            LlmResponseCacheEntry {
+                response: response.clone(),
+                created_at_ms: now,
+                last_used_ms: now,
+            },
+        );
+        log::debug!("[LlmResponseCache] Stored key={}", cache_key);
+    }
+
+    fn clear_llm_response_cache(&self) {
+        if let Ok(mut cache) = self.llm_response_cache.write() {
+            if !cache.is_empty() {
+                log::debug!(
+                    "[LlmResponseCache] Clearing {} cached responses",
+                    cache.len()
+                );
+            }
+            cache.clear();
+        }
+    }
+
+    fn mcp_alias_allowed(allowed_name: &str, info: &McpToolInfo) -> bool {
+        allowed_name == info.safe_name
+            || allowed_name == info.legacy_name
+            || allowed_name == info.original_name
+    }
+
+    fn mcp_resolve_error_json(tool_name: &str, err: McpToolResolveError) -> Value {
+        match err {
+            McpToolResolveError::NotFound => {
+                json!({"error": format!("MCP server for tool {} not found or disconnected", tool_name)})
+            }
+            McpToolResolveError::Ambiguous(tools) => json!({
+                "error": format!("Ambiguous MCP tool alias '{}'", tool_name),
+                "tools": tools
+                    .into_iter()
+                    .map(|tool| json!({
+                        "name": tool.safe_name,
+                        "legacy_name": tool.legacy_name,
+                        "provider": tool.server_name,
+                        "remote_tool": tool.original_name,
+                    }))
+                    .collect::<Vec<_>>(),
+                "message": "Use one of the listed safe MCP tool names."
+            }),
+        }
     }
 
     fn now_ms() -> u64 {
@@ -3016,7 +3154,29 @@ impl AgentCore {
         args: &Value,
         allowed_tools: &[String],
     ) -> Value {
-        if !allowed_tools.is_empty() && !allowed_tools.iter().any(|name| name == tool_name) {
+        let mcp_alias_resolution = {
+            let mcp = self.mcp_client_manager.read().await;
+            mcp.resolve_tool_alias(tool_name)
+        };
+        let mcp_alias_info = match mcp_alias_resolution {
+            Ok(info) => Some(info),
+            Err(McpToolResolveError::Ambiguous(tools)) => {
+                return Self::mcp_resolve_error_json(
+                    tool_name,
+                    McpToolResolveError::Ambiguous(tools),
+                );
+            }
+            Err(McpToolResolveError::NotFound) => None,
+        };
+
+        let allowed = allowed_tools.is_empty()
+            || allowed_tools.iter().any(|name| name == tool_name)
+            || mcp_alias_info.as_ref().map_or(false, |info| {
+                allowed_tools
+                    .iter()
+                    .any(|name| Self::mcp_alias_allowed(name, info))
+            });
+        if !allowed {
             return json!({"error": format!("Tool not allowed for this app: {}", tool_name)});
         }
 
@@ -3199,7 +3359,7 @@ impl AgentCore {
                 }
                 Err(_) => json!({"error": "Failed to lock action bridge"}),
             },
-            _ if tool_name.starts_with("mcp_") => {
+            _ if mcp_alias_info.is_some() || tool_name.starts_with("mcp_") => {
                 let mut mcp = self.mcp_client_manager.write().await;
                 let confirmation_keywords = if let Ok(policy) = self.tool_policy.lock() {
                     policy.mcp_confirmation_keywords()
@@ -3214,11 +3374,9 @@ impl AgentCore {
                         "message": "Risky MCP shopping actions cannot run through the bridge API. Ask the agent to show the final cart/order/booking and confirm in the latest chat turn."
                     });
                 }
-                match mcp.call_tool(tool_name, args) {
-                    Some(res) => res,
-                    None => {
-                        serde_json::json!({"error": format!("MCP server for tool {} not found or disconnected", tool_name)})
-                    }
+                match mcp.call_tool_resolved(tool_name, args) {
+                    Ok(res) => res,
+                    Err(err) => Self::mcp_resolve_error_json(tool_name, err),
                 }
             }
             _ => {
@@ -3490,6 +3648,7 @@ impl AgentCore {
 
     /// Reload LLM backends dynamically
     pub async fn reload_backends(&self) {
+        self.clear_llm_response_cache();
         let paths = &self.platform.paths;
         let llm_config_path = paths.config_dir.join("llm_config.json");
         let config = LlmConfig::load(&llm_config_path.to_string_lossy());
@@ -3702,12 +3861,29 @@ impl AgentCore {
         system_prompt: &str,
         max_tokens: Option<u32>,
     ) -> LlmResponse {
+        let primary_backend_name = match self.backend_name.read() {
+            Ok(guard) => (*guard).clone(),
+            Err(p) => (*p.into_inner()).clone(),
+        };
+        let cache_key = Self::llm_response_cache_key(
+            &primary_backend_name,
+            messages,
+            tools,
+            system_prompt,
+            max_tokens,
+        );
+        if let Some(cached) = self.get_cached_llm_response(cache_key) {
+            if let Some(on_chunk) = on_chunk {
+                if !cached.text.is_empty() {
+                    on_chunk(&cached.text);
+                }
+            }
+            return cached;
+        }
+
         // Try primary backend — lock is held only during chat()
         {
-            let bn = match self.backend_name.read() {
-                Ok(guard) => (*guard).clone(),
-                Err(p) => (*p.into_inner()).clone(),
-            };
+            let bn = primary_backend_name.clone();
 
             if self.is_backend_available(&bn) {
                 let be_guard = self.backend.read().await;
@@ -3717,6 +3893,7 @@ impl AgentCore {
                         .await;
                     if resp.success {
                         self.record_success(&bn);
+                        self.store_llm_response_cache(cache_key, &resp);
                         return resp;
                     }
                     self.record_failure(&bn);
@@ -3745,6 +3922,7 @@ impl AgentCore {
                         .await;
                     if resp.success {
                         self.record_success(&bn);
+                        self.store_llm_response_cache(cache_key, &resp);
                         return resp;
                     }
                     self.record_failure(&bn);
@@ -5485,44 +5663,64 @@ impl AgentCore {
                             } else {
                                 serde_json::json!({"error": "MemoryStore not initialized"})
                             }
-                        } else if tc_name.starts_with("mcp_") {
+                        } else {
                             let mut mcp = mcp_ref.write().await;
-                            if mcp.requires_confirmation(&tc_name, &mcp_confirmation_keywords) {
-                                let confirmed = Self::try_confirm_pending_mcp_action(
-                                    pending_mcp_confirmations,
-                                    session_id,
-                                    &latest_user_prompt,
-                                    &tc_name,
-                                    &tc_args,
-                                    mcp_confirmation_timeout_ms,
-                                );
-                                if !confirmed {
-                                    Self::store_pending_mcp_action(
-                                        pending_mcp_confirmations,
-                                        session_id,
+                            match mcp.resolve_tool_alias(&tc_name) {
+                                Ok(tool_info) => {
+                                    let pending_tool_name = tool_info.safe_name.clone();
+                                    if mcp.requires_confirmation(&tc_name, &mcp_confirmation_keywords) {
+                                        let confirmed = Self::try_confirm_pending_mcp_action(
+                                            pending_mcp_confirmations,
+                                            session_id,
+                                            &latest_user_prompt,
+                                            &pending_tool_name,
+                                            &tc_args,
+                                            mcp_confirmation_timeout_ms,
+                                        );
+                                        if !confirmed {
+                                            Self::store_pending_mcp_action(
+                                                pending_mcp_confirmations,
+                                                session_id,
+                                                &pending_tool_name,
+                                                &tc_args,
+                                            );
+                                            return LlmMessage::tool_result(
+                                                &tc_id,
+                                                &tc_name,
+                                                serde_json::json!({
+                                                    "requires_confirmation": true,
+                                                    "tool": tc_name,
+                                                    "canonical_tool": pending_tool_name,
+                                                    "arguments": tc_args,
+                                                    "message": "This MCP action may place an order, start payment, checkout, reserve, or book. Show the final cart/order/booking to the user and ask for explicit confirmation in the latest turn before retrying this exact tool call."
+                                                }),
+                                            );
+                                        }
+                                    }
+                                    match mcp.call_tool_resolved(&tc_name, &tc_args) {
+                                        Ok(res) => res,
+                                        Err(err) => Self::mcp_resolve_error_json(&tc_name, err),
+                                    }
+                                }
+                                Err(McpToolResolveError::Ambiguous(tools)) => {
+                                    Self::mcp_resolve_error_json(
                                         &tc_name,
-                                        &tc_args,
-                                    );
-                                    return LlmMessage::tool_result(
-                                        &tc_id,
+                                        McpToolResolveError::Ambiguous(tools),
+                                    )
+                                }
+                                Err(McpToolResolveError::NotFound) if tc_name.starts_with("mcp_") => {
+                                    Self::mcp_resolve_error_json(
                                         &tc_name,
-                                        serde_json::json!({
-                                            "requires_confirmation": true,
-                                            "tool": tc_name,
-                                            "arguments": tc_args,
-                                            "message": "This MCP action may place an order, start payment, checkout, reserve, or book. Show the final cart/order/booking to the user and ask for explicit confirmation in the latest turn before retrying this exact tool call."
-                                        }),
-                                    );
+                                        McpToolResolveError::NotFound,
+                                    )
+                                }
+                                Err(McpToolResolveError::NotFound) => {
+                                    drop(mcp);
+                                    td_guard_ref
+                                        .execute(&tc_name, &tc_args, Some(&session_workdir))
+                                        .await
                                 }
                             }
-                            match mcp.call_tool(&tc_name, &tc_args) {
-                                Some(res) => res,
-                                None => serde_json::json!({"error": format!("MCP server for tool {} not found or disconnected", tc_name)}),
-                            }
-                        } else {
-                            td_guard_ref
-                                .execute(&tc_name, &tc_args, Some(&session_workdir))
-                                .await
                         };
 
                         log::debug!("[ObservationCollect] Tool '{}' result: {} chars",
@@ -5553,7 +5751,8 @@ impl AgentCore {
                 let mut clarification_question = None;
                 for result in &results {
                     if let Some(obj) = result.tool_result.as_object() {
-                        if obj.get("requires_confirmation").and_then(|v| v.as_bool()) == Some(true) {
+                        if obj.get("requires_confirmation").and_then(|v| v.as_bool()) == Some(true)
+                        {
                             if let Some(msg) = obj.get("message").and_then(|v| v.as_str()) {
                                 clarification_question = Some(msg.to_string());
                             }

@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use super::sqlite;
 use crate::core::on_device_embedding::OnDeviceEmbedding;
 
+const MEMORY_EMBEDDING_MODEL: &str = "all-MiniLM-L6-v2";
+
 /// Sanitizes a string for use as a filename
 fn sanitize_filename(s: &str) -> String {
     let s = s.replace("::", "_").replace(" ", "-");
@@ -176,21 +178,196 @@ impl MemoryStore {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
                 category TEXT DEFAULT 'general',
+                embedding BLOB,
+                embedding_dim INTEGER DEFAULT 0,
+                embedding_model TEXT DEFAULT '',
+                content_hash TEXT DEFAULT '',
                 created_at TEXT DEFAULT (datetime('now')),
                 updated_at TEXT DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_mem_category ON memories(category);",
+        )?;
+        Self::ensure_column(&conn, "embedding", "BLOB")?;
+        Self::ensure_column(&conn, "embedding_dim", "INTEGER DEFAULT 0")?;
+        Self::ensure_column(&conn, "embedding_model", "TEXT DEFAULT ''")?;
+        Self::ensure_column(&conn, "content_hash", "TEXT DEFAULT ''")?;
+        Ok(())
+    }
+
+    fn ensure_column(
+        conn: &rusqlite::Connection,
+        column_name: &str,
+        column_def: &str,
+    ) -> rusqlite::Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(memories)")?;
+        let columns = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for column in columns {
+            if column? == column_name {
+                return Ok(());
+            }
+        }
+
+        conn.execute_batch(&format!(
+            "ALTER TABLE memories ADD COLUMN {} {}",
+            column_name, column_def
+        ))
+    }
+
+    fn content_hash(content: &str) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        content.hash(&mut h);
+        format!("{:016x}", h.finish())
+    }
+
+    fn encode_embedding_blob(embedding: &[f32]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(embedding.len() * std::mem::size_of::<f32>());
+        for value in embedding {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        bytes
+    }
+
+    fn decode_embedding_blob(blob: &[u8], expected_dim: usize) -> Option<Vec<f32>> {
+        if blob.len() != expected_dim * std::mem::size_of::<f32>() {
+            return None;
+        }
+
+        let mut embedding = Vec::with_capacity(expected_dim);
+        for chunk in blob.chunks_exact(std::mem::size_of::<f32>()) {
+            embedding.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        }
+        Some(embedding)
+    }
+
+    fn markdown_for_entry(key: &str, value: &str, category: &str, updated_at: &str) -> String {
+        format!(
+            "---\nkey: {}\ncategory: {}\nupdated_at: {}\n---\n\n## {} (Recorded at: {})\n{}\n",
+            key,
+            category,
+            updated_at,
+            key,
+            updated_at,
+            normalize_markdown_body(value).unwrap_or_default()
         )
+    }
+
+    fn build_relevant_memory_context(
+        &self,
+        scored_memories: Vec<(f32, String, String)>,
+        top_k: usize,
+    ) -> String {
+        let mut combined = String::new();
+
+        if let Ok(summary) = fs::read_to_string(self.base_dir.join("memory.md")) {
+            combined.push_str("## MEMORY SUMMARY & INDEX (RAG Context)\n");
+            combined.push_str(&summary);
+            combined.push_str("\n---\n\n");
+        }
+
+        for (_, cat_name, content) in scored_memories.into_iter().take(top_k) {
+            combined.push_str(&format!("### Key: {}\n", cat_name));
+            combined.push_str(&content);
+            combined.push_str("\n\n");
+        }
+
+        combined.trim_end().to_string()
+    }
+
+    fn load_relevant_from_stored_embeddings(
+        &self,
+        prompt_emb: &[f32],
+        top_k: usize,
+        threshold: f32,
+    ) -> Option<String> {
+        let conn = self.db.lock().ok()?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT key, value, category, updated_at, embedding, embedding_dim
+                 FROM memories
+                 WHERE embedding IS NOT NULL AND embedding_dim = ?1",
+            )
+            .ok()?;
+        let rows = stmt
+            .query_map(params![prompt_emb.len() as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                    row.get::<_, i64>(5)?,
+                ))
+            })
+            .ok()?;
+
+        let mut saw_vector = false;
+        let mut scored_memories = Vec::new();
+        for row in rows.filter_map(|row| row.ok()) {
+            let (key, value, category, updated_at, blob, dim) = row;
+            let Some(embedding) = Self::decode_embedding_blob(&blob, dim as usize) else {
+                continue;
+            };
+            saw_vector = true;
+            let similarity: f32 = prompt_emb
+                .iter()
+                .zip(embedding.iter())
+                .map(|(a, b)| a * b)
+                .sum();
+            if similarity >= threshold {
+                scored_memories.push((
+                    similarity,
+                    format!("{} ({})", category, key),
+                    Self::markdown_for_entry(&key, &value, &category, &updated_at),
+                ));
+            }
+        }
+
+        if !saw_vector {
+            return None;
+        }
+
+        scored_memories.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        Some(self.build_relevant_memory_context(scored_memories, top_k))
     }
 
     /// Set a memory. Updates SQLite and exports to Markdown.
     pub fn set(&self, key: &str, value: &str, category: &str) {
+        let embedding_text = format!("{} {}", key, value);
+        let (embedding_blob, embedding_dim, embedding_model) = {
+            let engine_guard = self.embedding_engine.lock().unwrap();
+            if engine_guard.is_available() {
+                let embedding = engine_guard.encode(&embedding_text);
+                if embedding.is_empty() {
+                    (None, 0i64, String::new())
+                } else {
+                    (
+                        Some(Self::encode_embedding_blob(&embedding)),
+                        embedding.len() as i64,
+                        MEMORY_EMBEDDING_MODEL.to_string(),
+                    )
+                }
+            } else {
+                (None, 0i64, String::new())
+            }
+        };
+        let content_hash = Self::content_hash(&embedding_text);
+
         let updated_at = {
             let conn = self.db.lock().unwrap();
             let _ = conn.execute(
-                "INSERT OR REPLACE INTO memories (key, value, category, updated_at)
-                 VALUES (?1, ?2, ?3, datetime('now'))",
-                params![key, value, category],
+                "INSERT OR REPLACE INTO memories
+                    (key, value, category, embedding, embedding_dim, embedding_model, content_hash, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))",
+                params![
+                    key,
+                    value,
+                    category,
+                    embedding_blob,
+                    embedding_dim,
+                    embedding_model,
+                    content_hash
+                ],
             );
 
             // Get the newly generated updated_at
@@ -297,7 +474,7 @@ impl MemoryStore {
 
     /// Loads subset of memory files by semantics using RAG OnDeviceEmbedding
     pub fn load_relevant_for_prompt(&self, prompt: &str, top_k: usize, threshold: f32) -> String {
-        let mut engine_guard = self.embedding_engine.lock().unwrap();
+        let engine_guard = self.embedding_engine.lock().unwrap();
         if !engine_guard.is_available() {
             // Fallback: load everything
             return self.load_for_prompt();
@@ -306,8 +483,12 @@ impl MemoryStore {
         if prompt_emb.is_empty() {
             return self.load_for_prompt();
         }
+        if let Some(context) =
+            self.load_relevant_from_stored_embeddings(&prompt_emb, top_k, threshold)
+        {
+            return context;
+        }
 
-        let mut combined = String::new();
         let _g = self.file_lock.read().unwrap();
 
         let mut scored_memories = Vec::new();
@@ -349,20 +530,7 @@ impl MemoryStore {
 
         scored_memories.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Include summary index context always at the top of RAG results
-        if let Ok(summary) = fs::read_to_string(self.base_dir.join("memory.md")) {
-            combined.push_str("## MEMORY SUMMARY & INDEX (RAG Context)\n");
-            combined.push_str(&summary);
-            combined.push_str("\n---\n\n");
-        }
-
-        for (_, cat_name, content) in scored_memories.into_iter().take(top_k) {
-            combined.push_str(&format!("### Key: {}\n", cat_name));
-            combined.push_str(&content);
-            combined.push_str("\n\n");
-        }
-
-        combined.trim_end().to_string()
+        self.build_relevant_memory_context(scored_memories, top_k)
     }
 
     /// Loads all markdown files recursively and concatenates them for LLM injection.
@@ -435,15 +603,7 @@ impl MemoryStore {
             }
         }
 
-        let content = format!(
-            "---\nkey: {}\ncategory: {}\nupdated_at: {}\n---\n\n## {} (Recorded at: {})\n{}\n",
-            key,
-            category,
-            updated_at,
-            key,
-            updated_at,
-            normalize_markdown_body(value).unwrap_or_default()
-        );
+        let content = Self::markdown_for_entry(key, value, category, updated_at);
 
         let _ = fs::write(filepath, content);
     }
