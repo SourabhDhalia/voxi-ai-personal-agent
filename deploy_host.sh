@@ -325,7 +325,9 @@ ensure_shell_path() {
   log "Sourcing ~/.bashrc for the current script shell"
   if [ "${DRY_RUN}" = false ]; then
     # shellcheck disable=SC1090
+    set +u
     source "${BASHRC_PATH}" || true
+    set -u
   else
     echo -e "  ${YELLOW}[DRY-RUN]${NC} source '${BASHRC_PATH}'"
   fi
