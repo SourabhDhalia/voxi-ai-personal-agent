@@ -5,8 +5,8 @@
       "args": ["-y", "@modelcontextprotocol/server-sqlite", "/tmp/sqlite.db"]
     },
     "zepto": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://mcp.zepto.co.in/mcp"],
+      "type": "http",
+      "url": "https://mcp.zepto.co.in/mcp",
       "timeout_ms": 60000
     },
     "swiggy-instamart": {
