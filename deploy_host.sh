@@ -414,18 +414,18 @@ do_test() {
     process_report || true
   fi
 
-  log "Running: cargo test --offline"
+  log "Running: cargo test --workspace --exclude tizenclaw-metadata-plugin --exclude tizenclaw-metadata-llm-backend-plugin --exclude tizenclaw-metadata-skill-plugin --exclude tizenclaw-metadata-cli-plugin --offline"
   cd "${PROJECT_DIR}"
 
   if [ "${DRY_RUN}" = true ]; then
     echo -e "  ${YELLOW}[DRY-RUN]${NC} export CARGO_TARGET_DIR='${CARGO_TARGET_DIR_HOST}'"
-    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo test --offline"
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo test --workspace --exclude tizenclaw-metadata-plugin --exclude tizenclaw-metadata-llm-backend-plugin --exclude tizenclaw-metadata-skill-plugin --exclude tizenclaw-metadata-cli-plugin --offline"
     return 0
   fi
 
   mkdir -p "${CARGO_TARGET_DIR_HOST}"
 
-  if CARGO_TARGET_DIR="${CARGO_TARGET_DIR_HOST}" cargo test --offline -- --test-threads=1 2>&1; then
+  if CARGO_TARGET_DIR="${CARGO_TARGET_DIR_HOST}" cargo test --workspace --exclude tizenclaw-metadata-plugin --exclude tizenclaw-metadata-llm-backend-plugin --exclude tizenclaw-metadata-skill-plugin --exclude tizenclaw-metadata-cli-plugin --offline -- --test-threads=1 2>&1; then
     ok "All tests passed"
   else
     warn "Some tests failed (see output above)"
