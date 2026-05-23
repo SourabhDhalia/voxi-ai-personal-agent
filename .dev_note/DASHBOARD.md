@@ -178,4 +178,4 @@
 | MCP OAuth Flow Repair | 5. Test/Review | PASS | `rustfmt --check`, `git diff --check`, Python bridge compile, JSON validation, and protocol misuse scans passed. |
 | MCP OAuth Flow Repair | Supervisor Gate 5 | PASS | Review confirms bearer auth and `Mcp-Session-Id` are no longer conflated in active HTTP POST path. |
 | MCP OAuth Flow Repair | 6. Commit | PASS | Changes committed locally with file-based message. |
-| MCP OAuth Flow Repair | Supervisor Gate 6 | PASS | Commit used `.tmp/commit_msg.txt`; push pending remote verification. |
+| MCP OAuth Flow Repair | Supervisor Gate 6 | PASS | Commit used `.tmp/commit_msg.txt`; pushed to `origin/main` and remote update verified. |
