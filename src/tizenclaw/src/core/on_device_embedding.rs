@@ -559,26 +559,26 @@ impl OnDeviceEmbedding {
         // These offsets correspond to ORT API v18 (1.20.x)
         // Verified against onnxruntime_c_api.h
         Some(OrtFunctions {
-            create_env: std::mem::transmute(*table.add(1)), // CreateEnv
+            create_env: std::mem::transmute(*table.add(3)), // CreateEnv
             create_session_options: std::mem::transmute(*table.add(10)), // CreateSessionOptions
-            set_intra_op_num_threads: std::mem::transmute(*table.add(5)), // SetIntraOpNumThreads
-            set_inter_op_num_threads: std::mem::transmute(*table.add(65)), // SetInterOpNumThreads
-            set_session_graph_optimization_level: std::mem::transmute(*table.add(12)), // SetSessionGraphOptimizationLevel
-            disable_cpu_mem_arena: std::mem::transmute(*table.add(14)), // DisableCpuMemArena
-            disable_mem_pattern: std::mem::transmute(*table.add(16)),   // DisableMemPattern
-            create_session: std::mem::transmute(*table.add(2)),         // CreateSession
-            get_allocator_with_default_options: std::mem::transmute(*table.add(18)), // GetAllocatorWithDefaultOptions
-            create_cpu_memory_info: std::mem::transmute(*table.add(21)), // CreateCpuMemoryInfo
-            create_tensor_with_data: std::mem::transmute(*table.add(22)), // CreateTensorWithDataAsOrtValue
+            set_intra_op_num_threads: std::mem::transmute(*table.add(24)), // SetIntraOpNumThreads
+            set_inter_op_num_threads: std::mem::transmute(*table.add(25)), // SetInterOpNumThreads
+            set_session_graph_optimization_level: std::mem::transmute(*table.add(23)), // SetSessionGraphOptimizationLevel
+            disable_cpu_mem_arena: std::mem::transmute(*table.add(19)), // DisableCpuMemArena
+            disable_mem_pattern: std::mem::transmute(*table.add(17)),   // DisableMemPattern
+            create_session: std::mem::transmute(*table.add(7)),         // CreateSession
+            get_allocator_with_default_options: std::mem::transmute(*table.add(78)), // GetAllocatorWithDefaultOptions
+            create_cpu_memory_info: std::mem::transmute(*table.add(69)), // CreateCpuMemoryInfo
+            create_tensor_with_data: std::mem::transmute(*table.add(49)), // CreateTensorWithDataAsOrtValue
             run: std::mem::transmute(*table.add(9)),                      // Run
-            get_tensor_mutable_data: std::mem::transmute(*table.add(23)), // GetTensorMutableData
-            release_env: std::mem::transmute(*table.add(42)),             // ReleaseEnv
-            release_session: std::mem::transmute(*table.add(38)),         // ReleaseSession
-            release_session_options: std::mem::transmute(*table.add(39)), // ReleaseSessionOptions
-            release_value: std::mem::transmute(*table.add(41)),           // ReleaseValue
-            release_memory_info: std::mem::transmute(*table.add(43)),     // ReleaseMemoryInfo
-            release_status: std::mem::transmute(*table.add(4)),           // ReleaseStatus
-            get_error_message: std::mem::transmute(*table.add(3)),        // GetErrorMessage
+            get_tensor_mutable_data: std::mem::transmute(*table.add(51)), // GetTensorMutableData
+            release_env: std::mem::transmute(*table.add(92)),             // ReleaseEnv
+            release_session: std::mem::transmute(*table.add(95)),         // ReleaseSession
+            release_session_options: std::mem::transmute(*table.add(100)), // ReleaseSessionOptions
+            release_value: std::mem::transmute(*table.add(96)),           // ReleaseValue
+            release_memory_info: std::mem::transmute(*table.add(94)),     // ReleaseMemoryInfo
+            release_status: std::mem::transmute(*table.add(93)),           // ReleaseStatus
+            get_error_message: std::mem::transmute(*table.add(2)),        // GetErrorMessage
         })
     }
 
