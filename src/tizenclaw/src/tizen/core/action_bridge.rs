@@ -62,6 +62,15 @@ impl ActionBridge {
             return true;
         }
 
+        // On non-Tizen hosts, the Action Framework daemon is not running and calls will fail.
+        // Check compat first to avoid logging errors on Ubuntu/Generic Linux hosts.
+        if !std::path::Path::new("/etc/tizen-release").exists()
+            && !std::path::Path::new("/opt/usr/share/tizenclaw").exists()
+        {
+            log::info!("Skipping ActionBridge start on non-Tizen platform");
+            return false;
+        }
+
         unsafe {
             let ret = action_client_create(&mut state.client);
             if ret != ACTION_ERROR_NONE {

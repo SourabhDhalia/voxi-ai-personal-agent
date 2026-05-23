@@ -684,7 +684,11 @@ pub fn apply_llm_index_result(result: &str, root_dir: &str, metadata: &ToolsMeta
     let parsed: serde_json::Value = match serde_json::from_str(json_str) {
         Ok(v) => v,
         Err(e) => {
-            log::error!("ToolIndexer: Failed to parse LLM index response: {}", e);
+            log::warn!(
+                "ToolIndexer: Failed to parse LLM index response: {} (response snippet: {:?})",
+                e,
+                clean.chars().take(200).collect::<String>()
+            );
             return 0;
         }
     };

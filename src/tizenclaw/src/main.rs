@@ -101,24 +101,28 @@ async fn main() {
     );
     let agent = Arc::new(agent);
 
-    // Register pkgmgr listener for runtime plugin injection
-    use libtizenclaw_core::plugin_core::pkgmgr_client::{
-        PkgmgrClient, PkgmgrEventArgs, PkgmgrListener,
-    };
-    struct AgentPkgmgrListener(Arc<core::agent_core::AgentCore>);
-    impl PkgmgrListener for AgentPkgmgrListener {
-        fn on_pkgmgr_event(&self, args: Arc<PkgmgrEventArgs>) {
-            if args.event_status == "end" {
-                let agent_clone = self.0.clone();
-                let event_name = args.event_name.clone();
-                let pkgid = args.pkgid.clone();
-                tokio::spawn(async move {
-                    agent_clone.handle_pkgmgr_event(&event_name, &pkgid).await;
-                });
+    if platform.platform_name() == "Tizen" {
+        // Register pkgmgr listener for runtime plugin injection
+        use libtizenclaw_core::plugin_core::pkgmgr_client::{
+            PkgmgrClient, PkgmgrEventArgs, PkgmgrListener,
+        };
+        struct AgentPkgmgrListener(Arc<core::agent_core::AgentCore>);
+        impl PkgmgrListener for AgentPkgmgrListener {
+            fn on_pkgmgr_event(&self, args: Arc<PkgmgrEventArgs>) {
+                if args.event_status == "end" {
+                    let agent_clone = self.0.clone();
+                    let event_name = args.event_name.clone();
+                    let pkgid = args.pkgid.clone();
+                    tokio::spawn(async move {
+                        agent_clone.handle_pkgmgr_event(&event_name, &pkgid).await;
+                    });
+                }
             }
         }
+        PkgmgrClient::global().add_listener(Arc::new(AgentPkgmgrListener(agent.clone())));
+    } else {
+        log::info!("Skipping Tizen package manager listener setup on generic Linux host");
     }
-    PkgmgrClient::global().add_listener(Arc::new(AgentPkgmgrListener(agent.clone())));
 
     // ── Phase 6: Start TaskScheduler ──
     log::info!("[Boot] Starting TaskScheduler...");
