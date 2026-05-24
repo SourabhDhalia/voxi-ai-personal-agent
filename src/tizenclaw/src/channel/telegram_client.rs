@@ -251,6 +251,16 @@ struct TelegramOutgoingMessage {
     reply_markup: Option<Value>,
 }
 
+pub(crate) struct CodingAgentToolRequest {
+    pub prompt: String,
+    pub backend: Option<String>,
+    pub project_dir: Option<String>,
+    pub model: Option<String>,
+    pub execution_mode: Option<String>,
+    pub auto_approve: Option<bool>,
+    pub timeout_secs: Option<u64>,
+}
+
 impl TelegramOutgoingMessage {
     fn plain(text: impl Into<String>) -> Self {
         Self {
@@ -290,6 +300,23 @@ pub struct TelegramClient {
 }
 
 impl TelegramClient {
+    pub(crate) async fn run_coding_agent_tool(
+        _config_dir: &Path,
+        request: &CodingAgentToolRequest,
+    ) -> Result<Value, String> {
+        Ok(json!({
+            "status": "unavailable",
+            "error": "run_coding_agent is not available in this daemon build",
+            "prompt_chars": request.prompt.chars().count(),
+            "backend": request.backend.clone(),
+            "project_dir": request.project_dir.clone(),
+            "model": request.model.clone(),
+            "execution_mode": request.execution_mode.clone(),
+            "auto_approve": request.auto_approve,
+            "timeout_secs": request.timeout_secs,
+        }))
+    }
+
     pub fn new(
         config: &ChannelConfig,
         agent: Option<Arc<crate::core::agent_core::AgentCore>>,
@@ -2431,6 +2458,7 @@ mod tests {
             &HashMap::new(),
             std::path::Path::new("/tmp"),
             0,
+            &None,
         )
         .unwrap();
 
@@ -2455,6 +2483,7 @@ mod tests {
             &HashMap::new(),
             std::path::Path::new("/tmp"),
             0,
+            &None,
         )
         .unwrap();
 
@@ -2481,6 +2510,7 @@ mod tests {
             &HashMap::new(),
             std::path::Path::new("/work"),
             0,
+            &None,
         )
         .unwrap();
 
@@ -2518,6 +2548,7 @@ mod tests {
             &backend_paths,
             std::path::Path::new("/tmp"),
             0,
+            &None,
         )
         .unwrap();
         assert!(new_reply.text.contains("CLI backend set to `claude`."));
@@ -2530,6 +2561,7 @@ mod tests {
             &HashMap::new(),
             std::path::Path::new("/tmp"),
             0,
+            &None,
         )
         .unwrap();
         assert!(legacy_reply.text.contains("CLI backend set to `codex`."));

@@ -139,7 +139,7 @@ impl AgentCore {
         // from a prior session do not cascade into new requests.
         self.reset_circuit_breakers();
         if let Ok(policy) = self.tool_policy.lock() {
-            policy.reset();
+            policy.reset_session(session_id);
             policy.reset_idle_tracking(session_id);
         }
         let mut loop_state = AgentLoopState::new(session_id, prompt);
@@ -1372,10 +1372,10 @@ impl AgentCore {
                                 "Loop detected: tool '{}' called too many times",
                                 canonical_name
                             ))
-                        } else if tp.is_iteration_limit_reached() {
+                        } else if tp.is_iteration_limit_reached_for_session(session_id) {
                             Some(format!(
                                 "Iteration limit reached: {} total tool calls",
-                                tp.total_calls()
+                                tp.total_calls_for_session(session_id)
                             ))
                         } else {
                             tp.check_policy(session_id, &canonical_name, &tc_args).err()
@@ -1391,7 +1391,7 @@ impl AgentCore {
                         let session_call_count = self
                             .tool_policy
                             .lock()
-                            .map(|tp| tp.total_calls())
+                            .map(|tp| tp.total_calls_for_session(session_id))
                             .unwrap_or(0);
                         safety_guard
                             .check_tool_call(
@@ -1512,35 +1512,45 @@ impl AgentCore {
                             }
                         } else if tc_name == "read_skill" {
                             let name = tc_args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                            let normalized_name =
-                                crate::core::skill_support::normalize_skill_name(name);
-                            if normalized_name.is_empty() {
-                                serde_json::json!({"error": "Skill name is required"})
-                            } else {
-                                match resolve_skill_file(&skill_roots, &normalized_name) {
-                                    Some(skill_md_path) => {
-                                        match std::fs::read_to_string(&skill_md_path) {
-                                            Ok(content) => {
-                                                let snapshot = skill_capability_manager::load_snapshot(
-                                                    &self.platform.paths,
-                                                    &RegisteredPaths::load(&self.platform.paths.config_dir),
-                                                );
-                                                if let Some(metadata) = snapshot.find_skill(&normalized_name) {
-                                                    if !metadata.enabled {
-                                                        serde_json::json!({
-                                                            "error": format!(
-                                                                "Skill '{}' is disabled or missing dependencies. Check '{}'.",
-                                                                normalized_name,
-                                                                snapshot.config_path
-                                                            ),
-                                                            "skill": {
-                                                                "name": metadata.skill.file_name,
-                                                                "dependency_ready": metadata.dependency_ready,
-                                                                "missing_requires": metadata.missing_requires,
-                                                                "install_hints": metadata.skill.openclaw_install,
-                                                                "enabled": metadata.enabled,
-                                                            }
-                                                        })
+                            match crate::core::skill_support::normalize_skill_name(name) {
+                                Err(err) => serde_json::json!({"error": err}),
+                                Ok(normalized_name) => {
+                                    match resolve_skill_file(&skill_roots, &normalized_name) {
+                                        Some(skill_md_path) => {
+                                            match std::fs::read_to_string(&skill_md_path) {
+                                                Ok(content) => {
+                                                    let snapshot = skill_capability_manager::load_snapshot(
+                                                        &self.platform.paths,
+                                                        &RegisteredPaths::load(&self.platform.paths.config_dir),
+                                                    );
+                                                    if let Some(metadata) = snapshot.find_skill(&normalized_name) {
+                                                        if !metadata.enabled {
+                                                            serde_json::json!({
+                                                                "error": format!(
+                                                                    "Skill '{}' is disabled or missing dependencies. Check '{}'.",
+                                                                    normalized_name,
+                                                                    snapshot.config_path
+                                                                ),
+                                                                "skill": {
+                                                                    "name": metadata.skill.file_name,
+                                                                    "dependency_ready": metadata.dependency_ready,
+                                                                    "missing_requires": metadata.missing_requires,
+                                                                    "install_hints": metadata.skill.openclaw_install,
+                                                                    "enabled": metadata.enabled,
+                                                                }
+                                                            })
+                                                        } else {
+                                                            serde_json::json!({
+                                                                "status": "success",
+                                                                "name": normalized_name,
+                                                                "path": skill_md_path.to_string_lossy().to_string(),
+                                                                "content": content,
+                                                                "openclaw": {
+                                                                    "requires": metadata.skill.openclaw_requires.clone(),
+                                                                    "install": metadata.skill.openclaw_install.clone(),
+                                                                }
+                                                            })
+                                                        }
                                                     } else {
                                                         serde_json::json!({
                                                             "status": "success",
@@ -1548,33 +1558,22 @@ impl AgentCore {
                                                             "path": skill_md_path.to_string_lossy().to_string(),
                                                             "content": content,
                                                             "openclaw": {
-                                                                "requires": metadata.skill.openclaw_requires.clone(),
-                                                                "install": metadata.skill.openclaw_install.clone(),
+                                                                "requires": Vec::<String>::new(),
+                                                                "install": Vec::<String>::new(),
                                                             }
                                                         })
                                                     }
-                                                } else {
-                                                    serde_json::json!({
-                                                        "status": "success",
-                                                        "name": normalized_name,
-                                                        "path": skill_md_path.to_string_lossy().to_string(),
-                                                        "content": content,
-                                                        "openclaw": {
-                                                            "requires": Vec::<String>::new(),
-                                                            "install": Vec::<String>::new(),
-                                                        }
-                                                    })
                                                 }
+                                                Err(e) => serde_json::json!({"error": format!("Failed to read skill '{}': {}", normalized_name, e)})
                                             }
-                                            Err(e) => serde_json::json!({"error": format!("Failed to read skill '{}': {}", normalized_name, e)})
                                         }
+                                        None => serde_json::json!({
+                                            "error": format!(
+                                                "Failed to read skill '{}': not found in managed or registered roots",
+                                                normalized_name
+                                            )
+                                        }),
                                     }
-                                    None => serde_json::json!({
-                                        "error": format!(
-                                            "Failed to read skill '{}': not found in managed or registered roots",
-                                            normalized_name
-                                        )
-                                    }),
                                 }
                             }
                         } else if tc_name == "list_skill_references" {
@@ -2175,7 +2174,6 @@ impl AgentCore {
                             store.add_structured_tool_result_message(
                                 session_id,
                                 trace_name,
-                                &result.tool_name,
                                 &result.tool_call_id,
                                 &result.tool_result,
                             );

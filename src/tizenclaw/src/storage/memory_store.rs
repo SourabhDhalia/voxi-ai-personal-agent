@@ -570,6 +570,104 @@ impl MemoryStore {
         }
     }
 
+    pub fn clear_all(&self) -> Result<usize, String> {
+        let deleted = {
+            let conn = self.db.lock().map_err(|_| "DB lock failed".to_string())?;
+            let count = conn
+                .query_row("SELECT COUNT(*) FROM memories", [], |row| row.get::<_, usize>(0))
+                .unwrap_or(0);
+            conn.execute("DELETE FROM memories", [])
+                .map_err(|e| e.to_string())?;
+            count
+        };
+
+        {
+            let _g = self.file_lock.write().unwrap();
+            for name in ["short-term", "long-term", "episodic"] {
+                let dir = self.base_dir.join(name);
+                if dir.exists() {
+                    fs::remove_dir_all(&dir).map_err(|e| e.to_string())?;
+                }
+                fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+            }
+            let summary = self.base_dir.join("memory.md");
+            if summary.exists() {
+                fs::remove_file(summary).map_err(|e| e.to_string())?;
+            }
+        }
+        self.regenerate_summary();
+        Ok(deleted)
+    }
+
+    pub fn runtime_summary(&self) -> serde_json::Value {
+        let (record_count, vector_count) = {
+            let conn = self.db.lock().ok();
+            let record_count = conn
+                .as_ref()
+                .and_then(|conn| {
+                    conn.query_row("SELECT COUNT(*) FROM memories", [], |row| {
+                        row.get::<_, i64>(0)
+                    })
+                    .ok()
+                })
+                .unwrap_or(0);
+            let vector_count = conn
+                .as_ref()
+                .and_then(|conn| {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM memories
+                         WHERE embedding IS NOT NULL AND embedding_dim > 0",
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .ok()
+                })
+                .unwrap_or(0);
+            (record_count, vector_count)
+        };
+        let category_count = |category: &str| -> i64 {
+            self.db
+                .lock()
+                .ok()
+                .and_then(|conn| {
+                    conn.query_row(
+                        "SELECT COUNT(*) FROM memories WHERE category = ?1",
+                        params![category],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .ok()
+                })
+                .unwrap_or(0)
+        };
+        let embedding_available = self
+            .embedding_engine
+            .lock()
+            .map(|engine| engine.is_available())
+            .unwrap_or(false);
+        let summary_path = self.base_dir.join("memory.md");
+        let summary_exists = summary_path.exists();
+        serde_json::json!({
+            "base_dir": self.base_dir,
+            "summary_path": summary_path,
+            "short_term_dir": self.base_dir.join("short-term"),
+            "long_term_dir": self.base_dir.join("long-term"),
+            "episodic_dir": self.base_dir.join("episodic"),
+            "summary_exists": summary_exists,
+            "prompt_ready": record_count > 0 || summary_exists,
+            "embedding_available": embedding_available,
+            "record_count": record_count,
+            "total_entries": record_count,
+            "vector_count": vector_count,
+            "embedding_model": MEMORY_EMBEDDING_MODEL,
+            "categories": {
+                "general": category_count("general"),
+                "facts": category_count("facts"),
+                "preferences": category_count("preferences"),
+                "episodic": category_count("episodic"),
+            },
+        })
+    }
+
     /// Loads subset of memory files by semantics using RAG OnDeviceEmbedding
     pub fn load_relevant_for_prompt(&self, prompt: &str, top_k: usize, threshold: f32) -> String {
         let effective_top_k = top_k.min(MEMORY_VECTOR_TOP_K_LIMIT);

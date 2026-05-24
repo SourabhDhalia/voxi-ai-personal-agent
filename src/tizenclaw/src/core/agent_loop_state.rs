@@ -91,6 +91,40 @@ impl EvalVerdict {
     }
 }
 
+/// High-level reason recorded when the loop decides to continue or stop.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LoopTransitionReason {
+    LoopInitialized,
+    NoBackendConfigured,
+    ToolCallsRequested,
+    GoalAchieved,
+    StuckLoopAbort,
+    IdleRecovery,
+    FileActionRequired,
+    FileTargetsMissing,
+    WorkflowStepAdvance,
+    PersistedOutputsMissing,
+    RoundLimitReached,
+}
+
+impl LoopTransitionReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LoopTransitionReason::LoopInitialized => "LoopInitialized",
+            LoopTransitionReason::NoBackendConfigured => "NoBackendConfigured",
+            LoopTransitionReason::ToolCallsRequested => "ToolCallsRequested",
+            LoopTransitionReason::GoalAchieved => "GoalAchieved",
+            LoopTransitionReason::StuckLoopAbort => "StuckLoopAbort",
+            LoopTransitionReason::IdleRecovery => "IdleRecovery",
+            LoopTransitionReason::FileActionRequired => "FileActionRequired",
+            LoopTransitionReason::FileTargetsMissing => "FileTargetsMissing",
+            LoopTransitionReason::WorkflowStepAdvance => "WorkflowStepAdvance",
+            LoopTransitionReason::PersistedOutputsMissing => "PersistedOutputsMissing",
+            LoopTransitionReason::RoundLimitReached => "RoundLimitReached",
+        }
+    }
+}
+
 /// Per-session state carried across all agent loop iterations.
 ///
 /// `Send + Sync`: all fields are owned values or standard primitives.
@@ -132,6 +166,8 @@ pub struct AgentLoopState {
 
     // Error recovery
     pub last_error: Option<String>,
+    pub last_transition_reason: String,
+    pub last_transition_detail: String,
 
     // Self-inspection telemetry
     pub started_at: Instant,
@@ -170,6 +206,8 @@ impl AgentLoopState {
             last_prefetch_memory: None,
             last_prefetch_skills: Vec::new(),
             last_error: None,
+            last_transition_reason: LoopTransitionReason::LoopInitialized.as_str().to_string(),
+            last_transition_detail: "loop initialized".to_string(),
             started_at: Instant::now(),
             total_tool_calls: 0,
             stuck_retry_count: 0,
@@ -201,6 +239,55 @@ impl AgentLoopState {
 
     pub fn set_follow_up(&mut self, value: bool) {
         self.needs_follow_up = value;
+    }
+
+    pub fn mark_follow_up(
+        &mut self,
+        reason: LoopTransitionReason,
+        detail: impl Into<String>,
+    ) {
+        self.needs_follow_up = true;
+        self.last_transition_reason = reason.as_str().to_string();
+        self.last_transition_detail = detail.into();
+    }
+
+    pub fn mark_terminal(
+        &mut self,
+        reason: LoopTransitionReason,
+        detail: impl Into<String>,
+    ) {
+        self.needs_follow_up = false;
+        self.last_transition_reason = reason.as_str().to_string();
+        self.last_transition_detail = detail.into();
+    }
+
+    pub fn snapshot(&self) -> Value {
+        serde_json::json!({
+            "session_id": self.session_id,
+            "phase": self.phase.as_str(),
+            "original_goal": self.original_goal,
+            "plan_step_count": self.plan_steps.len(),
+            "current_step": self.current_step,
+            "round": self.round,
+            "error_count": self.error_count,
+            "tool_retry_count": self.tool_retry_count,
+            "max_tool_rounds": self.max_tool_rounds,
+            "last_eval_verdict": self.last_eval_verdict.as_str(),
+            "needs_follow_up": self.needs_follow_up,
+            "last_transition_reason": self.last_transition_reason,
+            "last_transition_detail": self.last_transition_detail,
+            "token_budget": self.token_budget,
+            "token_used": self.token_used,
+            "total_tool_calls": self.total_tool_calls,
+            "stuck_retry_count": self.stuck_retry_count,
+            "tool_budget_events": self.tool_budget_events,
+            "active_workflow_id": self.active_workflow_id,
+            "current_workflow_step": self.current_workflow_step,
+            "last_error": self.last_error,
+            "last_prefetch_skills": self.last_prefetch_skills,
+            "memory_prefetched": self.last_prefetch_memory.is_some(),
+            "elapsed_secs": self.started_at.elapsed().as_secs(),
+        })
     }
 
     pub fn record_prefetch_memory(&mut self, preview: Option<String>) {

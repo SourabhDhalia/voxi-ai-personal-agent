@@ -91,6 +91,21 @@ impl ToolDeclarationBuilder {
         tools.retain(|tool| seen.insert(tool.name.clone()));
     }
 
+    pub fn append_all_builtin_tools(tools: &mut Vec<LlmToolDecl>) {
+        Self::push_meta_tools(tools);
+        Self::push_task_tools(tools);
+        Self::push_memory_tools(tools);
+        Self::push_session_tools(tools);
+        Self::push_workflow_tools(tools);
+        Self::push_agent_tools(tools);
+        Self::push_research_tools(tools);
+        Self::push_document_tools(tools);
+        Self::push_image_tools(tools);
+
+        let mut seen = HashSet::new();
+        tools.retain(|tool| seen.insert(tool.name.clone()));
+    }
+
     fn push_meta_tools(tools: &mut Vec<LlmToolDecl>) {
         tools.push(LlmToolDecl {
             name: "get_agent_status".into(),

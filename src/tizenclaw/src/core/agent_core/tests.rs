@@ -470,9 +470,6 @@ mod tests {
             package_manager: Box::new(generic_linux::GenericPackageManager),
             app_control: Box::new(generic_linux::GenericAppControl),
             paths: paths.clone(),
-            plugins: vec![],
-            is_tizen: false,
-            arch: "x86_64".to_string(),
         });
         let core = AgentCore::new(platform);
         let store = SessionStore::new(

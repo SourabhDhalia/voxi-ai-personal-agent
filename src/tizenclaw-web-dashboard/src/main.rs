@@ -1258,6 +1258,7 @@ struct BridgeDataPayload {
 #[derive(serde::Deserialize)]
 struct BridgeChatPayload {
     app_id: Option<String>,
+    request_id: Option<String>,
     prompt: String,
 }
 
@@ -1476,11 +1477,23 @@ async fn api_bridge_chat(
         .filter(|value| is_safe_app_id(value))
         .unwrap_or_else(|| "anonymous".to_string());
     let session_id = format!("webapp_{}", app_id);
-    let response = tokio::task::spawn_blocking(move || ipc_send_prompt(&session_id, &prompt))
+    let request_id = payload
+        .request_id
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let sid = session_id.clone();
+    let rid = request_id.clone();
+    let response =
+        tokio::task::spawn_blocking(move || ipc_send_prompt(&sid, &prompt, Some(&rid)))
         .await
         .map_err(|err| json_error(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
     match response {
-        Ok(text) => Ok(Json(json!({"status": "ok", "response": text}))),
+        Ok(text) => Ok(Json(json!({
+            "status": "ok",
+            "session_id": session_id,
+            "request_id": request_id,
+            "response": text
+        }))),
         Err(err) => Err(json_error(
             StatusCode::BAD_GATEWAY,
             &format!("Agent error: {}", err),

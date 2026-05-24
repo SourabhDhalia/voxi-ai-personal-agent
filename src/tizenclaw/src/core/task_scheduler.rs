@@ -15,6 +15,11 @@ pub struct ScheduledTask {
     pub schedule_expr: Option<String>,
     pub one_shot: bool,
     pub enabled: bool,
+    pub project_dir: Option<String>,
+    pub coding_backend: Option<String>,
+    pub coding_model: Option<String>,
+    pub execution_mode: Option<String>,
+    pub auto_approve: bool,
 }
 
 pub struct TaskScheduler {
@@ -111,6 +116,11 @@ impl TaskScheduler {
         dir_path: &Path,
         schedule: &str,
         prompt: &str,
+        project_dir: Option<&str>,
+        coding_backend: Option<&str>,
+        coding_model: Option<&str>,
+        execution_mode: Option<&str>,
+        auto_approve: bool,
     ) -> Result<ScheduledTask, String> {
         let schedule = schedule.trim();
         let prompt = prompt.trim();
@@ -136,7 +146,7 @@ impl TaskScheduler {
         let file_path = dir_path.join(format!("{}.md", id));
         let name = first_prompt_line(prompt);
         let session_id = format!("scheduler_{}", slug);
-        let content = format!(
+        let mut content = format!(
             "---\nname: {}\nschedule: {}\ninterval_secs: {}\none_shot: {}\nenabled: true\nsession_id: {}\n---\n{}\n",
             name,
             schedule,
@@ -145,6 +155,25 @@ impl TaskScheduler {
             session_id,
             prompt
         );
+        let mut extra_frontmatter = String::new();
+        if let Some(value) = project_dir.map(str::trim).filter(|value| !value.is_empty()) {
+            extra_frontmatter.push_str(&format!("project_dir: {}\n", value));
+        }
+        if let Some(value) = coding_backend.map(str::trim).filter(|value| !value.is_empty()) {
+            extra_frontmatter.push_str(&format!("coding_backend: {}\n", value));
+        }
+        if let Some(value) = coding_model.map(str::trim).filter(|value| !value.is_empty()) {
+            extra_frontmatter.push_str(&format!("coding_model: {}\n", value));
+        }
+        if let Some(value) = execution_mode.map(str::trim).filter(|value| !value.is_empty()) {
+            extra_frontmatter.push_str(&format!("execution_mode: {}\n", value));
+        }
+        if auto_approve {
+            extra_frontmatter.push_str("auto_approve: true\n");
+        }
+        if !extra_frontmatter.is_empty() {
+            content = content.replacen("---\n", &format!("---\n{}", extra_frontmatter), 1);
+        }
 
         std::fs::write(&file_path, content)
             .map_err(|e| format!("Failed to write task file '{}': {}", file_path.display(), e))?;
@@ -158,6 +187,23 @@ impl TaskScheduler {
             schedule_expr: Some(schedule.to_string()),
             one_shot,
             enabled: true,
+            project_dir: project_dir
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+            coding_backend: coding_backend
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+            coding_model: coding_model
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+            execution_mode: execution_mode
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
+            auto_approve,
         })
     }
 
@@ -371,6 +417,11 @@ impl TaskScheduler {
         let mut one_shot = false;
         let mut enabled = true;
         let mut session_id = "scheduler".to_string();
+        let mut project_dir = None;
+        let mut coding_backend = None;
+        let mut coding_model = None;
+        let mut execution_mode = None;
+        let mut auto_approve = false;
         let mut schedule_expr = None;
         let mut prompt = String::new();
         let mut in_frontmatter = false;
@@ -391,6 +442,11 @@ impl TaskScheduler {
                         "enabled" => enabled = val != "false",
                         "name" => name = val.to_string(),
                         "session_id" => session_id = val.to_string(),
+                        "project_dir" => project_dir = Some(val.to_string()),
+                        "coding_backend" => coding_backend = Some(val.to_string()),
+                        "coding_model" => coding_model = Some(val.to_string()),
+                        "execution_mode" => execution_mode = Some(val.to_string()),
+                        "auto_approve" => auto_approve = val == "true",
                         _ => {}
                     }
                 }
@@ -409,6 +465,11 @@ impl TaskScheduler {
             schedule_expr,
             one_shot,
             enabled,
+            project_dir,
+            coding_backend,
+            coding_model,
+            execution_mode,
+            auto_approve,
         })
     }
 
@@ -699,6 +760,11 @@ mod tests {
             schedule_expr: None,
             one_shot: false,
             enabled: true,
+            project_dir: None,
+            coding_backend: None,
+            coding_model: None,
+            execution_mode: None,
+            auto_approve: false,
         }
     }
 
@@ -763,6 +829,11 @@ mod tests {
             &temp_root,
             "interval 30m",
             "Collect a short health summary.",
+            None,
+            None,
+            None,
+            None,
+            false,
         )
         .unwrap();
         let listed = TaskScheduler::list_tasks_from_dir(&temp_root).unwrap();

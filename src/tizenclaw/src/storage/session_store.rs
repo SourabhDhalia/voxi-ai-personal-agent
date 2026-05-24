@@ -37,6 +37,33 @@ pub struct SessionMessage {
     pub timestamp: String,
 }
 
+impl SessionMessage {
+    pub fn from_llm_message(message: &crate::llm::backend::LlmMessage) -> Self {
+        let text = if message.role == "tool" && !message.tool_result.is_null() {
+            message.tool_result.to_string()
+        } else {
+            message.text.clone()
+        };
+        Self {
+            role: message.role.clone(),
+            text,
+            timestamp: get_timestamp(),
+        }
+    }
+
+    pub fn into_llm_message(self) -> crate::llm::backend::LlmMessage {
+        crate::llm::backend::LlmMessage {
+            role: self.role,
+            text: self.text,
+            reasoning_text: String::new(),
+            tool_calls: Vec::new(),
+            tool_name: String::new(),
+            tool_call_id: String::new(),
+            tool_result: Value::Null,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TokenUsage {
     pub total_prompt_tokens: i64,
@@ -195,6 +222,10 @@ impl SessionStore {
     /// Compaction snapshot: `sessions/{session_id}/compacted.md`
     fn compacted_path(&self, session_id: &str) -> PathBuf {
         self.session_dir(session_id).join("compacted.md")
+    }
+
+    fn compacted_structured_path(&self, session_id: &str) -> PathBuf {
+        self.session_dir(session_id).join("compacted.jsonl")
     }
 
     /// Session-scoped working directory for file-oriented tasks.
@@ -430,6 +461,39 @@ impl SessionStore {
         Ok(())
     }
 
+    pub fn save_compacted_structured(
+        &self,
+        session_id: &str,
+        messages: &[SessionMessage],
+    ) -> Result<(), String> {
+        let dir = self.session_dir(session_id);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let final_path = self.compacted_structured_path(session_id);
+        let tmp_path = dir.join(".compacted.jsonl.tmp");
+        let mut content = String::new();
+        for message in messages {
+            content.push_str(
+                &json!({
+                    "type": "message",
+                    "message": {
+                        "role": message.role,
+                        "content": message.text,
+                        "timestamp": message.timestamp,
+                    }
+                })
+                .to_string(),
+            );
+            content.push('\n');
+        }
+        {
+            let _g = self.lock.write().unwrap();
+            fs::write(&tmp_path, content.as_bytes())
+                .map_err(|e| format!("tmp write failed: {}", e))?;
+            fs::rename(&tmp_path, &final_path).map_err(|e| format!("rename failed: {}", e))?;
+        }
+        Ok(())
+    }
+
     // ── Legacy API (kept for compatibility) ───────────────────────────────────
 
     /// Get recent messages (legacy single-file API; prefer `load_session_context`).
@@ -444,6 +508,67 @@ impl SessionStore {
         let path = self.session_file_today(session_id);
         let _g = self.lock.write().unwrap();
         let _ = fs::remove_file(path);
+    }
+
+    pub fn clear_all(&self) -> Result<Value, String> {
+        let sessions_root = self.base_dir.join("sessions");
+        let workdirs_root = self.base_dir.join("workdirs");
+        {
+            let _g = self.lock.write().unwrap();
+            if sessions_root.exists() {
+                fs::remove_dir_all(&sessions_root).map_err(|e| e.to_string())?;
+            }
+            if workdirs_root.exists() {
+                fs::remove_dir_all(&workdirs_root).map_err(|e| e.to_string())?;
+            }
+            fs::create_dir_all(&sessions_root).map_err(|e| e.to_string())?;
+            fs::create_dir_all(&workdirs_root).map_err(|e| e.to_string())?;
+        }
+        if let Ok(conn) = self.db.lock() {
+            let _ = conn.execute("DELETE FROM session_index", []);
+            let _ = conn.execute("DELETE FROM token_usage", []);
+        }
+        Ok(json!({
+            "sessions_deleted": true,
+            "sessions_dir": sessions_root,
+            "workdirs_dir": workdirs_root,
+        }))
+    }
+
+    pub fn session_runtime_summary(&self, session_id: &str) -> Value {
+        let session_dir = self.session_dir(session_id);
+        let today_path = self.session_file_today(session_id);
+        let compacted_path = self.compacted_path(session_id);
+        let compacted_structured_path = self.compacted_structured_path(session_id);
+        let transcript_path = self.transcript_path(session_id);
+        let workdir_path = self.base_dir.join("workdirs").join(session_id);
+        let message_file_count = fs::read_dir(&session_dir)
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.flatten())
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "md"))
+            .count();
+        let transcript_text = fs::read_to_string(&transcript_path).unwrap_or_default();
+        let transcript_message_count = transcript_text.lines().count();
+        let assistant_message_count = transcript_text.matches("\"role\":\"assistant\"").count();
+        let tool_result_count = transcript_text.matches("\"role\":\"toolResult\"").count();
+        json!({
+            "session_dir": session_dir,
+            "today_path": today_path,
+            "compacted_path": compacted_path,
+            "compacted_structured_path": compacted_structured_path,
+            "transcript_path": transcript_path,
+            "workdir_path": workdir_path,
+            "session_exists": session_dir.exists(),
+            "message_file_count": message_file_count,
+            "compacted_snapshot_exists": compacted_path.exists(),
+            "structured_compaction_exists": compacted_structured_path.exists(),
+            "transcript_exists": transcript_path.exists(),
+            "transcript_message_count": transcript_message_count,
+            "assistant_message_count": assistant_message_count,
+            "tool_result_count": tool_result_count,
+            "resume_ready": compacted_path.exists() || transcript_path.exists(),
+        })
     }
 
     // ── Token usage ──────────────────────────────────────────────────────────
@@ -1115,4 +1240,3 @@ mod tests {
         assert_eq!(res, vec![msg("user", "E")]);
     }
 }
-

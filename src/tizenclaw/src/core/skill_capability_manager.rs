@@ -52,17 +52,22 @@ impl SkillCapabilitySnapshot {
     }
 
     pub fn is_disabled(&self, name: &str) -> bool {
-        let normalized = normalize_skill_name(name);
+        let Ok(normalized) = normalize_skill_name(name) else {
+            return false;
+        };
         self.disabled_skills.iter().any(|entry| entry == &normalized)
     }
 
     pub fn find_skill(&self, name: &str) -> Option<&SkillCapabilityEntry> {
-        let normalized = normalize_skill_name(name);
+        let normalized = normalize_skill_name(name).ok()?;
         self.skills
             .iter()
             .find(|entry| {
                 entry.skill.file_name == name
-                    || normalize_skill_name(&entry.skill.file_name) == normalized
+                    || normalize_skill_name(&entry.skill.file_name)
+                        .ok()
+                        .as_deref()
+                        == Some(normalized.as_str())
             })
     }
 
@@ -303,7 +308,7 @@ pub fn build_skill_snapshot(
         .map(|root| (root.path.clone(), root.kind.clone()))
         .collect::<BTreeMap<_, _>>();
     let registered_tools = registered_tool_names(paths, registrations);
-    let textual_skills = scan_textual_skills_from_roots(&root_paths);
+    let textual_skills = scan_textual_skills_from_roots(root_paths.iter().copied());
     let mut skills = textual_skills
         .into_iter()
         .map(|skill| {
@@ -315,7 +320,9 @@ pub fn build_skill_snapshot(
             let missing_requires =
                 missing_dependencies(&skill.openclaw_requires, &registered_tools);
             let dependency_ready = missing_requires.is_empty();
-            let enabled = dependency_ready && !disabled.contains(&normalize_skill_name(&skill.file_name));
+            let normalized_skill_name =
+                normalize_skill_name(&skill.file_name).unwrap_or_else(|_| skill.file_name.clone());
+            let enabled = dependency_ready && !disabled.contains(&normalized_skill_name);
             SkillCapabilityEntry {
                 skill,
                 source_root,
@@ -425,8 +432,7 @@ fn load_config(path: &Path) -> SkillCapabilityConfig {
 fn normalized_disabled_skills(raw: &[String]) -> Vec<String> {
     let mut normalized = BTreeSet::new();
     for value in raw {
-        let normalized_name = normalize_skill_name(value);
-        if !normalized_name.is_empty() {
+        if let Ok(normalized_name) = normalize_skill_name(value) {
             normalized.insert(normalized_name);
         }
     }
@@ -435,20 +441,16 @@ fn normalized_disabled_skills(raw: &[String]) -> Vec<String> {
 
 fn collect_skill_roots(paths: &PlatformPaths, registrations: &RegisteredPaths) -> Vec<SkillRoot> {
     let mut roots = Vec::new();
-    for root in paths.skill_root_dirs() {
-        roots.push(SkillRoot {
-            path: root.to_string_lossy().to_string(),
-            kind: "user".to_string(),
-            external: false,
-        });
-    }
-    for root in paths.skill_hub_root_dirs() {
-        roots.push(SkillRoot {
-            path: root.to_string_lossy().to_string(),
-            kind: "system".to_string(),
-            external: false,
-        });
-    }
+    roots.push(SkillRoot {
+        path: paths.skills_dir.to_string_lossy().to_string(),
+        kind: "user".to_string(),
+        external: false,
+    });
+    roots.push(SkillRoot {
+        path: paths.skill_hubs_dir.to_string_lossy().to_string(),
+        kind: "system".to_string(),
+        external: false,
+    });
     for root in paths.discover_skill_hub_roots() {
         roots.push(SkillRoot {
             path: root.to_string_lossy().to_string(),
@@ -479,10 +481,9 @@ fn skill_source_root(skill: &TextualSkill) -> Option<String> {
 fn missing_dependencies(requires: &[String], registered_tools: &BTreeSet<String>) -> Vec<String> {
     let mut missing = Vec::new();
     for requirement in requires {
-        let normalized = normalize_skill_name(requirement);
-        if normalized.is_empty() {
+        let Ok(normalized) = normalize_skill_name(requirement) else {
             continue;
-        }
+        };
         if !registered_tools.contains(&normalized) {
             missing.push(requirement.trim().to_string());
         }
@@ -504,8 +505,7 @@ fn registered_tool_names(paths: &PlatformPaths, registrations: &RegisteredPaths)
     dispatcher
         .list()
         .into_iter()
-        .map(|tool| normalize_skill_name(&tool.name))
-        .filter(|name| !name.is_empty())
+        .filter_map(|tool| normalize_skill_name(&tool.name).ok())
         .collect()
 }
 

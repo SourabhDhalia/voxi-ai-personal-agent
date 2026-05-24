@@ -421,30 +421,14 @@ impl AgentCore {
             return;
         }
 
-        let snapshot = state.snapshot();
-        let payload = json!({
-            "session_id": snapshot.session_id,
-            "phase": snapshot.phase,
-            "original_goal": snapshot.original_goal,
-            "plan_step_count": snapshot.plan_step_count,
-            "current_step": snapshot.current_step,
-            "round": snapshot.round,
-            "error_count": snapshot.error_count,
-            "tool_retry_count": snapshot.tool_retry_count,
-            "max_tool_rounds": snapshot.max_tool_rounds,
-            "last_eval_verdict": snapshot.last_eval_verdict,
-            "needs_follow_up": snapshot.needs_follow_up,
-            "last_transition_reason": snapshot.last_transition_reason,
-            "last_transition_detail": snapshot.last_transition_detail,
-            "last_error": snapshot.last_error,
-            "total_tool_calls": snapshot.total_tool_calls,
-            "stuck_retry_count": snapshot.stuck_retry_count,
-            "tool_budget_events": snapshot.tool_budget_events,
-            "active_workflow_id": snapshot.active_workflow_id,
-            "current_workflow_step": snapshot.current_workflow_step,
-            "updated_at_unix_secs": unix_timestamp_secs(),
-            "resumable": state.phase != AgentPhase::Complete,
-        });
+        let mut payload = state.snapshot();
+        if let Some(object) = payload.as_object_mut() {
+            object.insert("updated_at_unix_secs".to_string(), json!(unix_timestamp_secs()));
+            object.insert(
+                "resumable".to_string(),
+                json!(state.phase != AgentPhase::Complete),
+            );
+        }
 
         let path = topology.loop_state_path(&state.session_id);
         let tmp_path = path.with_extension("json.tmp");
@@ -767,7 +751,7 @@ impl AgentCore {
         let scan_roots = [root_dir.as_str(), embedded_dir.as_str()];
         let skill_roots = collect_skill_roots(&self.platform.paths);
         let skill_count = crate::core::textual_skill_scanner::scan_textual_skills_from_roots(
-            &skill_roots.iter().map(|root| root.as_str()).collect::<Vec<_>>(),
+            skill_roots.iter().map(|root| root.as_str()),
         )
         .len();
         let tool_count = self

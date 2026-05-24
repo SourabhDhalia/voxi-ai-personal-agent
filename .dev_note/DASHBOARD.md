@@ -304,3 +304,15 @@
 | Minimal Korian Selective Audit | Supervisor Gate 5 | PASS | Review confirms Zepto, Ollama, MCP, cancellation, session lock, cache, scheduler, and ONNX/RAG paths are untouched. |
 | Minimal Korian Selective Audit | 6. Commit | PASS | Implementation committed locally at `a4ca30b0`; preparing dashboard completion commit and remote push. |
 | Minimal Korian Selective Audit | Supervisor Gate 6 | PASS | Commit flow uses `.tmp/commit_msg.txt`; no inline `git commit -m` usage. |
+| Forward Compile Repair | 1. Planning | PASS | Planned patch-forward repair for Ubuntu host-test API drift without reverting current main. |
+| Forward Compile Repair | Supervisor Gate 1 | PASS | Scope limited to compile compatibility; Zepto, Ollama, MCP, cancellation, and session routing behavior remain protected. |
+| Forward Compile Repair | 2. Design | PASS | Designed compatibility shims for dashboard request ids, loop telemetry, tool policy, skills, stores, scheduler, and coding-agent drift. |
+| Forward Compile Repair | Supervisor Gate 2 | PASS | Design keeps all changes narrow and avoids wholesale Korean checkout restoration. |
+| Forward Compile Repair | 3. Development | PASS | Patched dashboard request ids, loop telemetry, session-scoped tool policy, skill metadata, store summaries, task metadata, and coding-agent drift. |
+| Forward Compile Repair | Supervisor Gate 3 | PASS | Development stayed compatibility-only and did not alter Zepto, Ollama, MCP, cancellation, or session-lock behavior. |
+| Forward Compile Repair | 4. Build/Deploy | PASS | `./deploy.sh --dry-run -a x86_64 -S` and `./deploy.sh --dry-run -a armv7l -S` completed successfully with expected dry-run tool warnings. |
+| Forward Compile Repair | Supervisor Gate 4 | PASS | Dry-run deploy validation covered Ubuntu x86_64 and Tizen armv7l paths without local cargo execution. |
+| Forward Compile Repair | 5. Test/Review | PASS | `git diff --check` and targeted `rg` scans passed; local `cargo build/check/test/clippy` remained intentionally unused. |
+| Forward Compile Repair | Supervisor Gate 5 | PASS | Review confirms the repair is forward-compatible shimming rather than a rollback or broad Korean checkout restore. |
+| Forward Compile Repair | 6. Commit | PASS | Commit prepared through `.tmp/commit_msg.txt` with `git commit -F`; remote push follows after local commit creation. |
+| Forward Compile Repair | Supervisor Gate 6 | PASS | Commit flow avoids inline `git commit -m` and preserves the requested patch-forward strategy. |

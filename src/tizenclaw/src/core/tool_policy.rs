@@ -241,6 +241,70 @@ impl ToolPolicy {
         }
     }
 
+    pub fn reset(&self) {
+        if let Ok(mut h) = self.call_history.lock() {
+            h.clear();
+        }
+        if let Ok(mut h) = self.idle_history.lock() {
+            h.clear();
+        }
+    }
+
+    pub fn total_calls(&self) -> usize {
+        self.call_history
+            .lock()
+            .map(|history| {
+                history
+                    .values()
+                    .flat_map(|session| session.values())
+                    .copied()
+                    .sum()
+            })
+            .unwrap_or(0)
+    }
+
+    pub fn total_calls_for_session(&self, session_id: &str) -> usize {
+        self.call_history
+            .lock()
+            .ok()
+            .and_then(|history| {
+                history
+                    .get(session_id)
+                    .map(|session| session.values().copied().sum())
+            })
+            .unwrap_or(0)
+    }
+
+    pub fn is_iteration_limit_reached(&self) -> bool {
+        self.total_calls() >= self.config.max_iterations
+    }
+
+    pub fn is_iteration_limit_reached_for_session(&self, session_id: &str) -> bool {
+        self.total_calls_for_session(session_id) >= self.config.max_iterations
+    }
+
+    pub fn is_loop_detected(&self, _tool_name: &str) -> bool {
+        false
+    }
+
+    pub fn record_call(&self, _tool_name: &str) {
+        // `check_policy` records session-scoped calls with argument hashes.
+        // This compatibility hook exists for older call sites.
+    }
+
+    pub fn status_json(&self) -> Value {
+        serde_json::json!({
+            "max_repeat_count": self.config.max_repeat_count,
+            "max_iterations": self.config.max_iterations,
+            "current_iteration_count": self.total_calls(),
+            "blocked_skills": self.config.blocked_skills.iter().cloned().collect::<Vec<_>>(),
+            "aliases": self.config.aliases.clone(),
+            "mcp_confirmation_keywords": self.config.mcp_confirmation_keywords.clone(),
+            "mcp_confirmation_timeout_ms": self.config.mcp_confirmation_timeout_ms,
+            "status": "ok",
+        })
+    }
+
     pub fn get_max_iterations(&self) -> usize {
         self.config.max_iterations
     }

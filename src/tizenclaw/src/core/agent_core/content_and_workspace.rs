@@ -2308,7 +2308,6 @@ fn record_synthetic_tool_interaction(
     );
     store.add_structured_tool_result_message(
         session_id,
-        tool_name,
         actual_tool_name,
         call_id,
         result,

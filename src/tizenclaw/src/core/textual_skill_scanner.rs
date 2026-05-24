@@ -12,6 +12,9 @@ pub struct TextualSkill {
     pub examples: Vec<String>,
     pub openclaw_requires: Vec<String>,
     pub openclaw_install: Vec<String>,
+    pub prelude_excerpt: String,
+    pub code_fence_languages: Vec<String>,
+    pub shell_prelude: bool,
     pub searchable_text: String,
 }
 
@@ -43,6 +46,11 @@ pub fn scan_textual_skills(skills_dir: &str) -> Vec<TextualSkill> {
                     let absolute_path = skill_md_path.to_string_lossy().to_string();
                     let content = fs::read_to_string(&skill_md_path).unwrap_or_default();
                     let metadata = extract_skill_metadata(&content, &skill_name);
+                    let code_fence_languages = detect_code_fence_languages(&content);
+                    let shell_prelude = code_fence_languages.iter().any(|lang| {
+                        matches!(lang.as_str(), "bash" | "sh" | "shell" | "zsh")
+                    });
+                    let prelude_excerpt = prelude_excerpt(&content, 400);
                     let searchable_text = build_searchable_text(
                         &skill_name,
                         &metadata.description,
@@ -61,6 +69,9 @@ pub fn scan_textual_skills(skills_dir: &str) -> Vec<TextualSkill> {
                         examples: metadata.examples,
                         openclaw_requires: metadata.openclaw_requires,
                         openclaw_install: metadata.openclaw_install,
+                        prelude_excerpt,
+                        code_fence_languages,
+                        shell_prelude,
                         searchable_text,
                     });
                 }
@@ -70,17 +81,43 @@ pub fn scan_textual_skills(skills_dir: &str) -> Vec<TextualSkill> {
     skills
 }
 
-pub fn scan_textual_skills_from_roots<'a, I>(roots: I) -> Vec<TextualSkill>
+pub fn scan_textual_skills_from_roots<I, S>(roots: I) -> Vec<TextualSkill>
 where
-    I: IntoIterator<Item = &'a str>,
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
 {
     let mut deduped = BTreeMap::new();
     for root in roots {
-        for skill in scan_textual_skills(root) {
+        for skill in scan_textual_skills(root.as_ref()) {
             deduped.entry(skill.file_name.clone()).or_insert(skill);
         }
     }
     deduped.into_values().collect()
+}
+
+fn prelude_excerpt(content: &str, max_chars: usize) -> String {
+    let body = crate::core::skill_support::strip_frontmatter(content);
+    body.chars().take(max_chars).collect()
+}
+
+fn detect_code_fence_languages(content: &str) -> Vec<String> {
+    let mut languages = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix("```") else {
+            continue;
+        };
+        let lang = rest
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if !lang.is_empty() && !languages.iter().any(|existing| existing == &lang) {
+            languages.push(lang);
+        }
+    }
+    languages
 }
 
 #[derive(Default)]
