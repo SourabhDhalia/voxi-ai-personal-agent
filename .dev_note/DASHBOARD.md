@@ -302,3 +302,5 @@
 | Minimal Korian Selective Audit | Supervisor Gate 4 | PASS | Dry-run paths validate packaging command shape while real GBS/sdb target execution remains on Ubuntu/Tizen devices. |
 | Minimal Korian Selective Audit | 5. Test/Review | PASS | `git diff --check` passed; reviewed diff confirms only opt-in `--devel` entrypoint and dashboard notes changed. |
 | Minimal Korian Selective Audit | Supervisor Gate 5 | PASS | Review confirms Zepto, Ollama, MCP, cancellation, session lock, cache, scheduler, and ONNX/RAG paths are untouched. |
+| Minimal Korian Selective Audit | 6. Commit | PASS | Implementation committed locally at `a4ca30b0`; preparing dashboard completion commit and remote push. |
+| Minimal Korian Selective Audit | Supervisor Gate 6 | PASS | Commit flow uses `.tmp/commit_msg.txt`; no inline `git commit -m` usage. |
