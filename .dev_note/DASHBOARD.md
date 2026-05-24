@@ -22,6 +22,18 @@
 
 | Task | Stage | Status | Notes |
 | --- | --- | --- | --- |
+| Codex-like MCP Shopping Flow | 1. Planning | PASS | Scope covers MCP behavior indexing, outcome normalization, shopping state, concise numbered UX, and target-only validation. |
+| Codex-like MCP Shopping Flow | Supervisor Gate 1 | PASS | Plan keeps provider-neutral MCP discovery, existing ONNX/SQLite storage, and confirmation gates for irreversible actions. |
+| Codex-like MCP Shopping Flow | 2. Design | PASS | Designed behavior records, normalized outcomes, session shopping selections, cart verification hints, and prompt contracts. |
+| Codex-like MCP Shopping Flow | Supervisor Gate 2 | PASS | Design stays within AgentCore, MCP client, prompt, and existing embedding-store boundaries. |
+| Codex-like MCP Shopping Flow | 3. Development | PASS | Implemented MCP behavior summaries, outcome normalization, option state, ID preservation, cart verification guard, and prompt updates. |
+| Codex-like MCP Shopping Flow | Supervisor Gate 3 | PASS | Changes are scoped to MCP client, AgentCore loop, embedding store, memory encoder, and shopping prompts. |
+| Codex-like MCP Shopping Flow | 4. Build/Deploy | BLOCKED | `./deploy_host.sh --test` reached host tests but failed on macOS peer-credential libc symbols; `./deploy.sh -a armv7l -S` blocked because GBS is not installed. |
+| Codex-like MCP Shopping Flow | Supervisor Gate 4 | PASS | `./deploy.sh --dry-run -a armv7l -S`, JSON validation, and `git diff --check` passed; no local cargo command was run outside deploy scripts. |
+| Codex-like MCP Shopping Flow | 5. Test/Review | PASS | Reviewed diffs for behavior indexing, `isError` normalization, ID preservation, numbered selection state, and cart verification guard. |
+| Codex-like MCP Shopping Flow | Supervisor Gate 5 | PASS | JSON validation and whitespace checks passed; rustfmt parser check found no syntax error after fix but existing formatting drift remains. |
+| Codex-like MCP Shopping Flow | 6. Commit | PASS | Commit message prepared in `.tmp/commit_msg.txt`; intended files ready for staging. |
+| Codex-like MCP Shopping Flow | Supervisor Gate 6 | PASS | Commit workflow uses file-based message and avoids inline `git commit -m`. |
 | Initial publish | All stages | PASS | Snapshot published to `origin/main` at `1f2f99e`. |
 | DTV docs | 1. Planning | PASS | Scope limited to docs and public navigation links. |
 | DTV docs | Supervisor Gate 1 | PASS | Root rules reviewed; doc-only change is low risk. |

@@ -26,6 +26,7 @@ pub struct AgentCore {
     action_bridge: Mutex<crate::core::action_bridge::ActionBridge>,
     tool_policy: Mutex<crate::core::tool_policy::ToolPolicy>,
     memory_store: Mutex<Option<crate::storage::memory_store::MemoryStore>>,
+    tool_embedding_store: Mutex<Option<crate::storage::embedding_store::EmbeddingStore>>,
     workflow_engine: tokio::sync::RwLock<crate::core::workflow_engine::WorkflowEngine>,
     agent_roles: RwLock<AgentRoleRegistry>,
     session_profiles: Mutex<HashMap<String, SessionPromptProfile>>,
@@ -64,4 +65,3 @@ pub struct RequestState {
     pub request_id: String,
     pub cancelled: Arc<std::sync::atomic::AtomicBool>,
 }
-

@@ -741,6 +741,15 @@ impl MemoryStore {
         self.build_relevant_memory_context(scored_memories, effective_top_k)
     }
 
+    pub fn encode_text_embedding(&self, text: &str) -> Option<Vec<f32>> {
+        let engine_guard = self.embedding_engine.lock().ok()?;
+        if !engine_guard.is_available() {
+            return None;
+        }
+        let embedding = engine_guard.encode(text);
+        (!embedding.is_empty()).then_some(embedding)
+    }
+
     /// Loads all markdown files recursively and concatenates them for LLM injection.
     /// Injects `memory.md` summary at the top if it exists.
     pub fn load_for_prompt(&self) -> String {

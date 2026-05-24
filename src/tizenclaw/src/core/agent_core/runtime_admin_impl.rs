@@ -758,6 +758,7 @@ impl AgentCore {
             tool_indexer::scan_tools_metadata_with_embedded(&root_dir, Some(&embedded_dir));
 
         let mcp_tools = self.mcp_client_manager.read().await.get_all_tool_infos();
+        let behavior_indexed = self.index_mcp_tool_behaviors(&mcp_tools);
         let mcp_count = mcp_tools.len();
 
         let mut local_count = 0;
@@ -772,10 +773,11 @@ impl AgentCore {
         let tool_count = local_count + embedded_count + mcp_count;
 
         log::info!(
-            "[Startup Indexing] Discovered {} local tools (empty is normal on hosts), {} embedded tools, and {} MCP tools.",
+            "[Startup Indexing] Discovered {} local tools (empty is normal on hosts), {} embedded tools, {} MCP tools, and indexed {} MCP behavior docs.",
             local_count,
             embedded_count,
-            mcp_count
+            mcp_count,
+            behavior_indexed
         );
 
         // Group and inject MCP tools into catalog indexing metadata
@@ -871,6 +873,65 @@ impl AgentCore {
                 "skill_roots": skill_roots,
             }),
         );
+    }
+
+    fn index_mcp_tool_behaviors(
+        &self,
+        mcp_tools: &[crate::channel::mcp_client::McpToolInfo],
+    ) -> usize {
+        let behaviors = mcp_tools
+            .iter()
+            .map(|tool| crate::channel::mcp_client::McpToolBehavior::from_tool(tool, mcp_tools))
+            .collect::<Vec<_>>();
+        if behaviors.is_empty() {
+            return 0;
+        }
+
+        let Ok(store_guard) = self.tool_embedding_store.lock() else {
+            return 0;
+        };
+        let Some(store) = store_guard.as_ref() else {
+            return 0;
+        };
+
+        let _ = store.delete_source_prefix("mcp://");
+        let mut indexed = 0usize;
+        for behavior in behaviors {
+            let source = format!("mcp://{}/{}", behavior.provider, behavior.safe_name);
+            let result = store.ingest_with_embeddings(&source, &behavior.behavior_doc, |chunk| {
+                self.memory_store
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.as_ref().and_then(|memory| memory.encode_text_embedding(chunk)))
+            });
+            if result.is_ok() {
+                indexed += 1;
+            }
+        }
+        indexed
+    }
+
+    fn search_mcp_behavior_index(&self, query: &str, top_k: usize) -> Vec<Value> {
+        let Ok(store_guard) = self.tool_embedding_store.lock() else {
+            return vec![];
+        };
+        let Some(store) = store_guard.as_ref() else {
+            return vec![];
+        };
+
+        if let Some(query_embedding) = self
+            .memory_store
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().and_then(|memory| memory.encode_text_embedding(query)))
+        {
+            let hits = store.search_by_embedding(&query_embedding, top_k, 0.15);
+            if !hits.is_empty() {
+                return hits;
+            }
+        }
+
+        store.search(query, top_k)
     }
 
     /// Extractor sub-task logic. Invokes the LLM to glean long-term knowledge.

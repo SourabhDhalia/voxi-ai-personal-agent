@@ -19,6 +19,7 @@ impl AgentCore {
             action_bridge: Mutex::new(crate::core::action_bridge::ActionBridge::new()),
             tool_policy: Mutex::new(crate::core::tool_policy::ToolPolicy::new()),
             memory_store: Mutex::new(None),
+            tool_embedding_store: Mutex::new(None),
             workflow_engine: tokio::sync::RwLock::new(
                 crate::core::workflow_engine::WorkflowEngine::new(),
             ),
@@ -1169,6 +1170,17 @@ impl AgentCore {
                 }
             }
             Err(e) => log::error!("Memory store failed: {}", e),
+        }
+
+        let tool_embedding_db = paths.data_dir.join("tool_behaviors.db");
+        let mut tool_embedding_store = crate::storage::embedding_store::EmbeddingStore::new();
+        if tool_embedding_store.initialize(&tool_embedding_db.to_string_lossy()) {
+            log::info!("Tool behavior embedding store initialized");
+            if let Ok(mut store) = self.tool_embedding_store.lock() {
+                *store = Some(tool_embedding_store);
+            }
+        } else {
+            log::warn!("Tool behavior embedding store unavailable");
         }
 
         // Load tools from all subdirectories under the tools directory

@@ -271,8 +271,23 @@ impl AgentCore {
                     }
                 };
 
+                if pending_action.tool_name.starts_with("mcp_") {
+                    if !crate::channel::mcp_client::McpToolOutcome::normalize(&tool_result).is_failure()
+                        && pending_action.tool_name.contains("search")
+                    {
+                        store_shopping_options_from_search_result(
+                            &session_workdir,
+                            session_id,
+                            &pending_action.tool_name,
+                            &tool_result,
+                        );
+                    }
+                    tool_result =
+                        normalize_mcp_tool_result(&pending_action.tool_name, tool_result);
+                }
+
                 // If this is a search tool, compact it
-                if pending_action.tool_name.contains("search") {
+                if pending_action.tool_name.contains("search") && tool_result.get("error").is_none() {
                     let search_query = pending_action.args.get("query").and_then(|v| v.as_str()).unwrap_or("");
                     tool_result = compact_shopping_search_result(&tool_result, search_query);
                 }
@@ -648,7 +663,7 @@ impl AgentCore {
             // Add search_tools meta-tool for Two-Tier router
             tools.push(crate::llm::backend::LlmToolDecl {
                 name: "search_tools".into(),
-                description: "Search available tools across all categories or within a specific category. Use this whenever the required capability is not already present in context.".into(),
+                description: "Search available tools and MCP behavior summaries. Use this whenever the required capability, provider flow, identifier requirements, or verification tool is not already clear.".into(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -761,6 +776,11 @@ impl AgentCore {
                     session_workdir.to_string_lossy()
                 ),
             );
+        }
+        if let Some(shopping_context) =
+            shopping_selection_context(&session_workdir, session_id, prompt)
+        {
+            inject_context_message(&mut messages, shopping_context);
         }
         self.inject_prompt_contract_context(prompt, literal_json_output, &tools, &mut messages);
 
@@ -1675,15 +1695,25 @@ impl AgentCore {
                             }
                         } else if tc_name_clone.starts_with("mcp_") {
                             let mut mcp = self.mcp_client_manager.write().await;
-                            let mut res = match mcp.call_tool_resolved(&tc_name_clone, &tc_args_clone) {
+                            let raw_res = match mcp.call_tool_resolved(&tc_name_clone, &tc_args_clone) {
                                 Ok(value) => value,
                                 Err(err) => {
                                     log::error!("Failed to execute MCP tool '{}': {:?}", tc_name_clone, err);
                                     json!({"error": format!("Failed to execute MCP tool: {:?}", err)})
                                 }
                             };
+                            let outcome = crate::channel::mcp_client::McpToolOutcome::normalize(&raw_res);
+                            if !outcome.is_failure() && tc_name_clone.contains("search") {
+                                store_shopping_options_from_search_result(
+                                    &session_workdir,
+                                    session_id,
+                                    &tc_name_clone,
+                                    &raw_res,
+                                );
+                            }
+                            let mut res = normalize_mcp_tool_result(&tc_name_clone, raw_res);
                             // If this is a search tool, compact it
-                            if tc_name_clone.contains("search") {
+                            if tc_name_clone.contains("search") && res.get("error").is_none() {
                                 let search_query = tc_args_clone.get("query").and_then(|v| v.as_str()).unwrap_or("");
                                 res = compact_shopping_search_result(&res, search_query);
                             }
@@ -1759,7 +1789,7 @@ impl AgentCore {
                             } else {
                                 8
                             };
-                            let results: Vec<Value> = scored_tools
+                            let mut results: Vec<Value> = scored_tools
                                 .into_iter()
                                 .take(limit)
                                 .map(|(score, tool)| {
@@ -1771,10 +1801,30 @@ impl AgentCore {
                                     })
                                 })
                                 .collect();
+                            let mcp_behavior_hits = {
+                                let mcp = self.mcp_client_manager.read().await;
+                                mcp.search_tools(query, if query.eq_ignore_ascii_case("ALL") { 64 } else { 12 })
+                                    .into_iter()
+                                    .map(|result| {
+                                        let mut value = result.to_json();
+                                        if let Some(obj) = value.as_object_mut() {
+                                            obj.insert("source".to_string(), Value::String("mcp_behavior".to_string()));
+                                        }
+                                        value
+                                    })
+                                    .collect::<Vec<_>>()
+                            };
+                            results.extend(mcp_behavior_hits);
+                            let behavior_index_hits =
+                                self.search_mcp_behavior_index(query, if query.eq_ignore_ascii_case("ALL") { 16 } else { 6 });
                             if results.is_empty() {
                                 serde_json::json!({"error": format!("No tools found matching '{}'", query)})
                             } else {
-                                serde_json::json!({"tools": results})
+                                serde_json::json!({
+                                    "tools": results,
+                                    "behavior_index_hits": behavior_index_hits,
+                                    "usage": "Use safe MCP names, preserve provider identifiers, and verify cart mutations with a cart/bill read tool."
+                                })
                             }
                         } else if tc_name == "create_skill" {
                             let name = tc_args.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed_skill");
@@ -2987,6 +3037,22 @@ impl AgentCore {
                     continue;
                 }
 
+                if is_shopping && shopping_cart_mutation_unverified(&messages) {
+                    log::info!("[GoalEvaluation] Cart mutation detected without cart/bill verification. Rejecting termination.");
+                    messages.push(LlmMessage {
+                        role: "assistant".into(),
+                        text: response.text.clone(),
+                        ..Default::default()
+                    });
+                    messages.push(LlmMessage::user(
+                        "System: A shopping cart mutation was executed but not verified. \
+                         Call the provider's cart, bill, or cart-details read tool before the final answer. \
+                         If no verification tool exists, state that verification is unavailable and keep the response short."
+                    ));
+                    loop_state.transition(AgentPhase::RePlanning);
+                    continue;
+                }
+
                 loop_state.last_eval_verdict = EvalVerdict::GoalAchieved;
 
                 log::debug!(
@@ -3130,6 +3196,305 @@ fn was_shopping_tool_executed(messages: &[LlmMessage]) -> bool {
     false
 }
 
+fn normalize_mcp_tool_result(tool_name: &str, result: Value) -> Value {
+    let outcome = crate::channel::mcp_client::McpToolOutcome::normalize(&result);
+    if outcome.is_failure() {
+        return json!({
+            "error": outcome
+                .message
+                .clone()
+                .unwrap_or_else(|| format!("MCP tool returned {}", outcome.status)),
+            "mcp_outcome": outcome.to_json(),
+            "raw_result": result,
+        });
+    }
+
+    if is_cart_mutation_tool_name(tool_name) {
+        match result {
+            Value::Object(mut obj) => {
+                obj.insert("mcp_outcome".to_string(), outcome.to_json());
+                obj.insert("verification_required".to_string(), Value::Bool(true));
+                obj.insert(
+                    "verification_hint".to_string(),
+                    Value::String(
+                        "Call a provider cart, bill, or cart-details read tool before final response."
+                            .to_string(),
+                    ),
+                );
+                Value::Object(obj)
+            }
+            other => json!({
+                "result": other,
+                "mcp_outcome": outcome.to_json(),
+                "verification_required": true,
+                "verification_hint": "Call a provider cart, bill, or cart-details read tool before final response."
+            }),
+        }
+    } else {
+        result
+    }
+}
+
+fn is_cart_mutation_tool_name(tool_name: &str) -> bool {
+    let name = tool_name.to_ascii_lowercase();
+    name.contains("update_cart")
+        || name.contains("add_to_cart")
+        || name.contains("remove_from_cart")
+        || name.contains("clear_cart")
+}
+
+fn is_cart_verification_tool_name(tool_name: &str) -> bool {
+    let name = tool_name.to_ascii_lowercase();
+    if is_cart_mutation_tool_name(&name) {
+        return false;
+    }
+    name.contains("view_cart")
+        || name.contains("get_cart")
+        || name.contains("cart_details")
+        || name.contains("bill")
+}
+
+fn shopping_cart_mutation_unverified(messages: &[LlmMessage]) -> bool {
+    let mut pending_mutation = false;
+    for msg in messages {
+        if msg.role != "tool" {
+            continue;
+        }
+        let name = msg.tool_name.to_ascii_lowercase();
+        if is_cart_mutation_tool_name(&name) && msg.tool_result.get("error").is_none() {
+            pending_mutation = true;
+        } else if pending_mutation && is_cart_verification_tool_name(&name) {
+            pending_mutation = false;
+        }
+    }
+    pending_mutation
+}
+
+fn shopping_state_path(session_workdir: &Path, session_id: &str) -> PathBuf {
+    let safe_session = session_id
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    session_workdir
+        .join("state")
+        .join("shopping")
+        .join(format!("{}.json", safe_session))
+}
+
+fn parse_numbered_selection(input: &str) -> Option<usize> {
+    let lower = input.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return None;
+    }
+    let token = lower
+        .split_whitespace()
+        .find(|part| part.chars().next().is_some_and(|ch| ch.is_ascii_digit()))?;
+    let digits = token
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    digits.parse::<usize>().ok().filter(|value| *value > 0)
+}
+
+fn shopping_selection_context(
+    session_workdir: &Path,
+    session_id: &str,
+    prompt: &str,
+) -> Option<String> {
+    let selected_number = parse_numbered_selection(prompt)?;
+    let path = shopping_state_path(session_workdir, session_id);
+    let state_text = std::fs::read_to_string(path).ok()?;
+    let state: Value = serde_json::from_str(&state_text).ok()?;
+    let options = state.get("options").and_then(Value::as_array)?;
+    let selected = options.iter().find(|option| {
+        option
+            .get("number")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize == selected_number)
+            .unwrap_or(false)
+    })?;
+
+    Some(format!(
+        "## Shopping Selection Context\nThe user selected option {} from the latest shopping results. Use the preserved provider identifiers from this JSON instead of long-term memory or display-only IDs:\n{}",
+        selected_number,
+        selected
+    ))
+}
+
+fn store_shopping_options_from_search_result(
+    session_workdir: &Path,
+    session_id: &str,
+    tool_name: &str,
+    result: &Value,
+) {
+    if !tool_name.to_ascii_lowercase().contains("search") {
+        return;
+    }
+    let provider = provider_from_mcp_tool_name(tool_name);
+    let mut raw_options = Vec::new();
+    collect_shopping_option_objects(result, &mut raw_options);
+    if raw_options.is_empty() {
+        return;
+    }
+
+    let options = raw_options
+        .into_iter()
+        .take(20)
+        .enumerate()
+        .map(|(idx, raw)| {
+            json!({
+                "number": idx + 1,
+                "provider": provider,
+                "source_tool": tool_name,
+                "display": shopping_option_display(&provider, &raw),
+                "identifier_hints": shopping_identifier_hints(&raw),
+                "raw": raw,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let state = json!({
+        "session_id": session_id,
+        "provider": provider,
+        "source_tool": tool_name,
+        "options": options,
+    });
+    let path = shopping_state_path(session_workdir, session_id);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(text) = serde_json::to_string_pretty(&state) {
+        let _ = std::fs::write(path, text);
+    }
+}
+
+fn provider_from_mcp_tool_name(tool_name: &str) -> String {
+    let without_prefix = tool_name.strip_prefix("mcp_").unwrap_or(tool_name);
+    if without_prefix.starts_with("swiggy_instamart_") {
+        return "swiggy-instamart".to_string();
+    }
+    if without_prefix.starts_with("swiggy_food_") {
+        return "swiggy-food".to_string();
+    }
+    if without_prefix.starts_with("swiggy_dineout_") {
+        return "swiggy-dineout".to_string();
+    }
+    if without_prefix.starts_with("zepto_") {
+        return "zepto".to_string();
+    }
+    if let Some((provider, _)) = without_prefix.split_once('_') {
+        return provider.replace('_', "-");
+    }
+    without_prefix.replace('_', "-")
+}
+
+fn collect_shopping_option_objects(value: &Value, out: &mut Vec<Value>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_shopping_option_objects(item, out);
+            }
+        }
+        Value::Object(map) => {
+            if looks_like_shopping_option(map) {
+                out.push(Value::Object(map.clone()));
+            }
+            for value in map.values() {
+                collect_shopping_option_objects(value, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn looks_like_shopping_option(map: &serde_json::Map<String, Value>) -> bool {
+    let has_label = ["name", "title", "displayName", "productName", "brand", "description"]
+        .iter()
+        .any(|key| map.get(*key).is_some());
+    let has_commerce_field = map.keys().any(|key| {
+        let lower = key.to_ascii_lowercase();
+        lower.contains("id")
+            || lower.contains("price")
+            || lower.contains("mrp")
+            || lower.contains("stock")
+            || lower.contains("available")
+    });
+    has_label && has_commerce_field
+}
+
+fn shopping_option_display(provider: &str, raw: &Value) -> String {
+    let name = first_string_field(
+        raw,
+        &["name", "title", "displayName", "productName", "description"],
+    )
+    .unwrap_or_else(|| "item".to_string());
+    let size = first_string_field(raw, &["quantity", "unit", "packSize", "weight"])
+        .unwrap_or_else(|| "-".to_string());
+    let price = first_value_text(raw, &["price", "finalPrice", "salePrice", "mrp"])
+        .unwrap_or_else(|| "-".to_string());
+    let availability = first_value_text(raw, &["availability", "available", "inStock", "in_stock"])
+        .unwrap_or_else(|| "-".to_string());
+    format!(
+        "{} - {}, size {}, price {}, availability {}",
+        provider, name, size, price, availability
+    )
+}
+
+fn shopping_identifier_hints(raw: &Value) -> Value {
+    let mut map = serde_json::Map::new();
+    collect_identifier_hints(raw, &mut map);
+    Value::Object(map)
+}
+
+fn collect_identifier_hints(value: &Value, out: &mut serde_json::Map<String, Value>) {
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                let lower = key.to_ascii_lowercase();
+                if lower.contains("id")
+                    || lower == "spinid"
+                    || lower == "spin_id"
+                    || lower == "skuid"
+                    || lower == "sku_id"
+                    || lower == "variantid"
+                    || lower == "variant_id"
+                {
+                    out.insert(key.clone(), value.clone());
+                }
+                collect_identifier_hints(value, out);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_identifier_hints(item, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn first_string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str).map(ToString::to_string))
+}
+
+fn first_value_text(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        value.get(*key).map(|value| {
+            value
+                .as_str()
+                .map(ToString::to_string)
+                .unwrap_or_else(|| value.to_string())
+        })
+    })
+}
+
 fn compact_shopping_search_result(value: &Value, query: &str) -> Value {
     match value {
         Value::Array(arr) => {
@@ -3167,7 +3532,10 @@ fn compact_shopping_search_result(value: &Value, query: &str) -> Value {
                         let essential_keys = [
                             "id", "productId", "product_id", "name", "title", "price", 
                             "mrp", "brand", "quantity", "unit", "inStock", "in_stock", 
-                            "available", "availability", "discount"
+                            "available", "availability", "discount", "spinId", "spin_id",
+                            "variantId", "variant_id", "skuId", "sku_id", "itemId",
+                            "item_id", "storeId", "store_id", "selectedAddressId",
+                            "addressId", "restaurantId", "rawProductId", "product_id_v2"
                         ];
                         obj.retain(|k, _| essential_keys.contains(&k.as_str()));
                     }
@@ -3210,4 +3578,3 @@ fn sanitize_for_log(value: &Value) -> Value {
         _ => value.clone(),
     }
 }
-

@@ -104,6 +104,7 @@ impl McpToolInfo {
 pub struct McpToolSearchResult {
     pub score: usize,
     pub tool: McpToolInfo,
+    pub behavior: McpToolBehavior,
 }
 
 #[derive(Clone, Debug)]
@@ -114,8 +115,387 @@ pub enum McpToolResolveError {
 
 impl McpToolSearchResult {
     pub fn to_json(&self) -> Value {
-        self.tool.to_search_json(self.score)
+        let mut value = self.tool.to_search_json(self.score);
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("behavior".to_string(), self.behavior.to_json());
+        }
+        value
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct McpToolBehavior {
+    pub provider: String,
+    pub safe_name: String,
+    pub original_name: String,
+    pub description: String,
+    pub required_inputs: Vec<String>,
+    pub capability_tags: Vec<String>,
+    pub risk_level: String,
+    pub identifiers: Vec<String>,
+    pub prerequisites: Vec<String>,
+    pub verification_tools: Vec<String>,
+    pub known_error_patterns: Vec<String>,
+    pub behavior_doc: String,
+}
+
+impl McpToolBehavior {
+    pub fn from_tool(tool: &McpToolInfo, provider_tools: &[McpToolInfo]) -> Self {
+        let searchable = format!(
+            "{} {} {} {}",
+            tool.server_name,
+            tool.original_name,
+            tool.description,
+            tool.parameters
+        )
+        .to_ascii_lowercase();
+        let required_inputs = required_inputs_from_schema(&tool.parameters);
+        let capability_tags = infer_capability_tags(&searchable);
+        let risk_level = infer_risk_level(&searchable);
+        let identifiers = infer_identifier_fields(&searchable, &tool.parameters);
+        let prerequisites = infer_prerequisites(&capability_tags, &searchable);
+        let verification_tools = infer_verification_tools(tool, provider_tools);
+        let known_error_patterns = infer_known_error_patterns(&capability_tags, &searchable);
+
+        let behavior_doc = format!(
+            "provider: {}\nsafe_tool: {}\nremote_tool: {}\nrisk: {}\ncapabilities: {}\nrequired_inputs: {}\nidentifiers: {}\nprerequisites: {}\nverification_tools: {}\nknown_errors: {}\ndescription: {}\nschema: {}",
+            tool.server_name,
+            tool.safe_name,
+            tool.original_name,
+            risk_level,
+            capability_tags.join(", "),
+            required_inputs.join(", "),
+            identifiers.join(", "),
+            prerequisites.join("; "),
+            verification_tools.join(", "),
+            known_error_patterns.join("; "),
+            tool.description,
+            tool.parameters
+        );
+
+        Self {
+            provider: tool.server_name.clone(),
+            safe_name: tool.safe_name.clone(),
+            original_name: tool.original_name.clone(),
+            description: tool.description.clone(),
+            required_inputs,
+            capability_tags,
+            risk_level,
+            identifiers,
+            prerequisites,
+            verification_tools,
+            known_error_patterns,
+            behavior_doc,
+        }
+    }
+
+    pub fn to_json(&self) -> Value {
+        json!({
+            "provider": self.provider.clone(),
+            "safe_name": self.safe_name.clone(),
+            "remote_tool": self.original_name.clone(),
+            "capability_tags": self.capability_tags.clone(),
+            "risk_level": self.risk_level.clone(),
+            "required_inputs": self.required_inputs.clone(),
+            "identifiers": self.identifiers.clone(),
+            "prerequisites": self.prerequisites.clone(),
+            "verification_tools": self.verification_tools.clone(),
+            "known_error_patterns": self.known_error_patterns.clone(),
+            "summary": self.behavior_doc.clone(),
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct McpToolOutcome {
+    pub status: String,
+    pub message: Option<String>,
+}
+
+impl McpToolOutcome {
+    pub fn normalize(result: &Value) -> Self {
+        if result
+            .get("isError")
+            .or_else(|| result.get("is_error"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            return Self::from_message("fatal", first_error_message(result));
+        }
+
+        if let Some(error) = result.get("error") {
+            return Self::from_message("fatal", Some(value_to_short_text(error)));
+        }
+
+        let combined = collect_string_values(result).join(" ").to_ascii_lowercase();
+        if combined.contains("unauthorized")
+            || combined.contains("forbidden")
+            || combined.contains("oauth")
+            || combined.contains("token expired")
+            || combined.contains("login")
+            || combined.contains("authentication")
+        {
+            return Self::from_message("auth_required", Some(extract_relevant_message(result)));
+        }
+
+        if combined.contains("no valid items in cart")
+            || combined.contains("address id could not be found")
+            || combined.contains("address id not found")
+            || combined.contains("delivery address id could not be found")
+            || combined.contains("invalid address")
+            || combined.contains("invalid item")
+            || combined.contains("out of stock")
+            || combined.contains("not serviceable")
+        {
+            return Self::from_message("business_error", Some(extract_relevant_message(result)));
+        }
+
+        if combined.contains("please select")
+            || combined.contains("please choose")
+            || combined.contains("please specify")
+            || combined.contains("requires confirmation")
+            || combined.contains("otp")
+        {
+            return Self::from_message("user_action_required", Some(extract_relevant_message(result)));
+        }
+
+        if combined.contains("ambiguous") || combined.contains("multiple matches") {
+            return Self::from_message("ambiguous", Some(extract_relevant_message(result)));
+        }
+
+        Self {
+            status: "success".to_string(),
+            message: None,
+        }
+    }
+
+    fn from_message(status: &str, message: Option<String>) -> Self {
+        Self {
+            status: status.to_string(),
+            message,
+        }
+    }
+
+    pub fn is_failure(&self) -> bool {
+        self.status != "success"
+    }
+
+    pub fn to_json(&self) -> Value {
+        json!({
+            "status": self.status.clone(),
+            "message": self.message.clone(),
+        })
+    }
+}
+
+fn required_inputs_from_schema(schema: &Value) -> Vec<String> {
+    schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn infer_capability_tags(text: &str) -> Vec<String> {
+    let mut tags = Vec::new();
+    for (needle, tag) in [
+        ("address", "address"),
+        ("location", "address"),
+        ("search", "search"),
+        ("product", "product"),
+        ("menu", "menu"),
+        ("restaurant", "food"),
+        ("food", "food"),
+        ("grocery", "grocery"),
+        ("instamart", "grocery"),
+        ("cart", "cart"),
+        ("checkout", "checkout"),
+        ("payment", "payment"),
+        ("order", "order"),
+        ("book", "booking"),
+        ("reserve", "booking"),
+        ("table", "booking"),
+        ("bill", "verification"),
+        ("view", "read"),
+        ("list", "read"),
+        ("get", "read"),
+    ] {
+        if text.contains(needle) && !tags.iter().any(|existing| existing == tag) {
+            tags.push(tag.to_string());
+        }
+    }
+    if tags.is_empty() {
+        tags.push("generic".to_string());
+    }
+    tags
+}
+
+fn infer_risk_level(text: &str) -> String {
+    if text.contains("checkout")
+        || text.contains("payment")
+        || text.contains("pay")
+        || text.contains("place_order")
+        || text.contains("book")
+        || text.contains("reserve")
+    {
+        "irreversible_confirmation_required".to_string()
+    } else if text.contains("update_cart")
+        || text.contains("add_to_cart")
+        || text.contains("remove_from_cart")
+        || text.contains("clear_cart")
+        || text.contains("cart")
+    {
+        "reversible_cart_mutation".to_string()
+    } else {
+        "read_only".to_string()
+    }
+}
+
+fn infer_identifier_fields(text: &str, schema: &Value) -> Vec<String> {
+    let mut fields = Vec::new();
+    for key in [
+        "spinId",
+        "spin_id",
+        "variantId",
+        "variant_id",
+        "skuId",
+        "sku_id",
+        "productId",
+        "product_id",
+        "itemId",
+        "item_id",
+        "storeId",
+        "store_id",
+        "addressId",
+        "address_id",
+        "selectedAddressId",
+        "restaurantId",
+        "restaurant_id",
+    ] {
+        if text.contains(&key.to_ascii_lowercase()) || schema.to_string().contains(key) {
+            fields.push(key.to_string());
+        }
+    }
+    fields.sort();
+    fields.dedup();
+    fields
+}
+
+fn infer_prerequisites(tags: &[String], text: &str) -> Vec<String> {
+    let mut prereqs = Vec::new();
+    let needs_address = tags.iter().any(|tag| tag == "search" || tag == "cart")
+        && !tags.iter().any(|tag| tag == "address");
+    if needs_address {
+        prereqs.push("Resolve a live provider address/location before search or cart writes.".to_string());
+    }
+    if text.contains("update_cart") || text.contains("add_to_cart") || text.contains("cart") {
+        prereqs.push("Use a provider-returned product/cart identifier; never invent IDs from display text.".to_string());
+    }
+    prereqs
+}
+
+fn infer_verification_tools(tool: &McpToolInfo, provider_tools: &[McpToolInfo]) -> Vec<String> {
+    let name = tool.original_name.to_ascii_lowercase();
+    if !(name.contains("update_cart")
+        || name.contains("add_to_cart")
+        || name.contains("remove_from_cart")
+        || name.contains("clear_cart"))
+    {
+        return vec![];
+    }
+
+    provider_tools
+        .iter()
+        .filter(|candidate| candidate.server_name == tool.server_name)
+        .filter(|candidate| {
+            let candidate_name = candidate.original_name.to_ascii_lowercase();
+            (candidate_name.contains("view_cart")
+                || candidate_name.contains("get_cart")
+                || candidate_name.contains("cart_details")
+                || candidate_name.contains("bill"))
+                && !candidate_name.contains("update_cart")
+                && !candidate_name.contains("add_to_cart")
+                && !candidate_name.contains("remove_from_cart")
+                && !candidate_name.contains("clear_cart")
+        })
+        .map(|candidate| candidate.safe_name.clone())
+        .collect()
+}
+
+fn infer_known_error_patterns(tags: &[String], text: &str) -> Vec<String> {
+    let mut patterns = Vec::new();
+    if tags.iter().any(|tag| tag == "cart") || text.contains("cart") {
+        patterns.push("No valid items in cart".to_string());
+        patterns.push("Invalid or stale product identifier".to_string());
+    }
+    if tags.iter().any(|tag| tag == "address") || text.contains("address") {
+        patterns.push("Address ID not found".to_string());
+        patterns.push("Location not serviceable".to_string());
+    }
+    patterns.push("Auth token expired or login required".to_string());
+    patterns
+}
+
+fn collect_string_values(value: &Value) -> Vec<String> {
+    let mut strings = Vec::new();
+    collect_string_values_into(value, &mut strings);
+    strings
+}
+
+fn collect_string_values_into(value: &Value, strings: &mut Vec<String>) {
+    match value {
+        Value::String(text) => strings.push(text.clone()),
+        Value::Array(items) => {
+            for item in items {
+                collect_string_values_into(item, strings);
+            }
+        }
+        Value::Object(map) => {
+            for value in map.values() {
+                collect_string_values_into(value, strings);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn first_error_message(value: &Value) -> Option<String> {
+    value
+        .get("error")
+        .map(value_to_short_text)
+        .or_else(|| Some(extract_relevant_message(value)))
+}
+
+fn value_to_short_text(value: &Value) -> String {
+    value
+        .as_str()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| value.to_string())
+        .chars()
+        .take(500)
+        .collect()
+}
+
+fn extract_relevant_message(value: &Value) -> String {
+    collect_string_values(value)
+        .into_iter()
+        .find(|text| {
+            let lower = text.to_ascii_lowercase();
+            lower.contains("error")
+                || lower.contains("failed")
+                || lower.contains("invalid")
+                || lower.contains("not found")
+                || lower.contains("no valid")
+                || lower.contains("please")
+                || lower.contains("auth")
+        })
+        .unwrap_or_else(|| value.to_string().chars().take(500).collect())
 }
 
 fn sanitize_tool_fragment(input: &str) -> String {
@@ -1850,6 +2230,7 @@ impl McpClientManager {
     pub fn search_tools(&self, query: &str, limit: usize) -> Vec<McpToolSearchResult> {
         let query = query.trim();
         let include_all = query.is_empty() || query.eq_ignore_ascii_case("ALL");
+        let all_tools = self.get_all_tool_infos();
         let mut results = self
             .clients
             .iter()
@@ -1863,6 +2244,7 @@ impl McpClientManager {
                 (score > 0).then_some(McpToolSearchResult {
                     score,
                     tool: tool.clone(),
+                    behavior: McpToolBehavior::from_tool(tool, &all_tools),
                 })
             })
             .collect::<Vec<_>>();
@@ -1875,6 +2257,14 @@ impl McpClientManager {
         });
         results.truncate(limit.max(1));
         results
+    }
+
+    pub fn get_all_tool_behaviors(&self) -> Vec<McpToolBehavior> {
+        let all_tools = self.get_all_tool_infos();
+        all_tools
+            .iter()
+            .map(|tool| McpToolBehavior::from_tool(tool, &all_tools))
+            .collect()
     }
 
     pub fn requires_confirmation(&self, full_name: &str, keywords: &[String]) -> bool {

@@ -124,6 +124,15 @@ impl EmbeddingStore {
         self.ingest_with_embeddings(source, text, |_| None)
     }
 
+    pub fn delete_source_prefix(&self, source_prefix: &str) -> Result<usize, String> {
+        let conn = self.conn.as_ref().ok_or("Not initialized")?;
+        conn.execute(
+            "DELETE FROM embeddings WHERE source LIKE ?1",
+            params![format!("{}%", source_prefix)],
+        )
+        .map_err(|e| e.to_string())
+    }
+
     pub fn ingest_with_embeddings<F>(
         &self,
         source: &str,
