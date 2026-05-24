@@ -170,6 +170,7 @@ struct OutboundMessage {
     message: String,
     created_at_ms: u64,
     session_id: Option<String>,
+    request_id: Option<String>,
 }
 
 const MAX_OUTBOUND_MESSAGES: usize = 200;
@@ -282,6 +283,7 @@ async fn main() {
         .route("/api/status", get(api_status))
         .route("/api/metrics", get(api_metrics))
         .route("/api/chat", post(api_chat))
+        .route("/api/chat/stop", post(api_chat_stop))
         .route("/api/sessions/dates", get(api_session_dates))
         .route(
             "/api/sessions",
@@ -739,6 +741,12 @@ async fn api_chat(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
+    let requested_request_id = payload
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
     let session_id = if requested_session_id.trim().is_empty() {
         generate_session_id("web")
     } else {
@@ -749,12 +757,13 @@ async fn api_chat(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode
     }
     let sid = session_id.clone();
     let p = prompt.clone();
-    let response = tokio::task::spawn_blocking(move || ipc_send_prompt(&sid, &p))
+    let rid = requested_request_id.clone();
+    let response = tokio::task::spawn_blocking(move || ipc_send_prompt(&sid, &p, Some(&rid)))
         .await
         .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
     match response {
         Ok(text) => Ok(Json(
-            json!({"status": "ok", "session_id": session_id, "response": text}),
+            json!({"status": "ok", "session_id": session_id, "request_id": requested_request_id, "response": text}),
         )),
         Err(e) => Err(json_error(
             StatusCode::BAD_GATEWAY,
@@ -763,10 +772,42 @@ async fn api_chat(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode
     }
 }
 
+async fn api_chat_stop(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let session_id = payload
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let request_id = payload
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if session_id.is_empty() || request_id.is_empty() {
+        return Err(json_error(StatusCode::BAD_REQUEST, "Missing session_id or request_id"));
+    }
+
+    let sid = session_id.clone();
+    let rid = request_id.clone();
+    let response = tokio::task::spawn_blocking(move || {
+        ipc_call("cancel_request", json!({"session_id": sid, "request_id": rid}))
+    })
+    .await
+    .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    match response {
+        Ok(val) => Ok(Json(val)),
+        Err(e) => Err(json_error(StatusCode::BAD_GATEWAY, &format!("IPC error: {}", e))),
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct OutboundQuery {
     since: Option<u64>,
     limit: Option<usize>,
+    session_id: Option<String>,
+    request_id: Option<String>,
 }
 
 async fn api_outbound_messages(
@@ -777,7 +818,19 @@ async fn api_outbound_messages(
         .limit
         .unwrap_or(20)
         .clamp(1, MAX_OUTBOUND_MESSAGES);
-    let messages = load_outbound_messages(&state.data_dir, query.since, limit);
+    let mut messages = load_outbound_messages(&state.data_dir, query.since, limit);
+
+    if let Some(ref q_sid) = query.session_id {
+        messages.retain(|msg| {
+            msg.session_id.is_none() || msg.session_id.as_ref() == Some(q_sid)
+        });
+    }
+    if let Some(ref q_rid) = query.request_id {
+        messages.retain(|msg| {
+            msg.request_id.is_none() || msg.request_id.as_ref() == Some(q_rid)
+        });
+    }
+
     let latest_cursor = messages
         .last()
         .map(|message| message.created_at_ms)
@@ -1541,7 +1594,7 @@ fn ipc_get_usage() -> Option<Value> {
     }
 }
 
-fn ipc_send_prompt(session_id: &str, prompt: &str) -> Result<String, String> {
+fn ipc_send_prompt(session_id: &str, prompt: &str, request_id: Option<&str>) -> Result<String, String> {
     unsafe {
         let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
         if fd < 0 {
@@ -1564,7 +1617,11 @@ fn ipc_send_prompt(session_id: &str, prompt: &str) -> Result<String, String> {
 
         let req = json!({
             "jsonrpc": "2.0", "method": "prompt", "id": 1,
-            "params": {"session_id": session_id, "text": prompt}
+            "params": {
+                "session_id": session_id,
+                "text": prompt,
+                "request_id": request_id
+            }
         });
         let data = req.to_string();
         let len_bytes = (data.len() as u32).to_be_bytes();

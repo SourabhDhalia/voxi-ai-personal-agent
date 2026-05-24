@@ -223,7 +223,7 @@ impl A2aHandler {
 
         tokio::spawn(async move {
             let result = agent_clone
-                .process_prompt(&session_id, &text_clone, None)
+                .process_prompt_with_request(&session_id, &text_clone, Some(task_id_clone.clone()), None)
                 .await;
 
             let secs = std::time::SystemTime::now()
@@ -237,9 +237,11 @@ impl A2aHandler {
 
             if let Ok(mut tasks) = tasks_clone.lock() {
                 if let Some(task) = tasks.get_mut(&task_id_clone) {
-                    task.status = TaskStatus::Completed;
-                    task.artifacts = json!([{"type": "text", "text": result}]);
-                    task.updated_at = updated_now;
+                    if task.status != TaskStatus::Cancelled {
+                        task.status = TaskStatus::Completed;
+                        task.artifacts = json!([{"type": "text", "text": result}]);
+                        task.updated_at = updated_now;
+                    }
                 }
             }
         });
@@ -294,6 +296,7 @@ impl A2aHandler {
                 {
                     return json!({"error": format!("Cannot cancel task in terminal state: {}", task.status.as_str())});
                 }
+                let _ = self.agent.cancel_request(&task.session_id, task_id);
                 task.status = TaskStatus::Cancelled;
                 task.updated_at = self.timestamp_now();
                 json!({

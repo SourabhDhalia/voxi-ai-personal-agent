@@ -261,6 +261,11 @@ impl IpcServer {
                     .get("stream")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
+                let request_id = params
+                    .get("request_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
                 if text.is_empty() {
                     return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Empty prompt"},"id":req_id})
                         .to_string();
@@ -269,13 +274,20 @@ impl IpcServer {
                 let result = if stream {
                     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
                     let req_id_clone = req_id.clone();
+                    let session_id_clone = session_id.clone();
+                    let request_id_clone = request_id.clone();
                     let fd_clone = client_fd;
                     rt_handle.spawn(async move {
                         while let Some(chunk) = rx.recv().await {
                             let stream_resp = json!({
                                 "jsonrpc": "2.0",
                                 "method": "stream_chunk",
-                                "params": {"id": &req_id_clone, "chunk": chunk}
+                                "params": {
+                                    "id": &req_id_clone,
+                                    "chunk": chunk,
+                                    "session_id": &session_id_clone,
+                                    "request_id": &request_id_clone
+                                }
                             })
                             .to_string();
                             let _ = tokio::task::spawn_blocking(move || {
@@ -287,14 +299,27 @@ impl IpcServer {
                     let on_chunk = move |chunk: &str| {
                         let _ = tx.send(chunk.to_string());
                     };
-                    let fut = agent.process_prompt(&session_id, text, Some(&on_chunk));
+                    let fut = agent.process_prompt_with_request(&session_id, text, Some(request_id.clone()), Some(&on_chunk));
                     tokio::task::block_in_place(|| rt_handle.block_on(fut))
                 } else {
-                    let fut = agent.process_prompt(&session_id, text, None);
+                    let fut = agent.process_prompt_with_request(&session_id, text, Some(request_id.clone()), None);
                     tokio::task::block_in_place(|| rt_handle.block_on(fut))
                 };
 
-                json!({"text": result, "session_id": session_id})
+                json!({"text": result, "session_id": session_id, "request_id": request_id})
+            }
+
+            "cancel_request" => {
+                let session_id = params["session_id"].as_str().unwrap_or("");
+                let request_id = params["request_id"].as_str().unwrap_or("");
+                if session_id.is_empty() || request_id.is_empty() {
+                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing session_id or request_id"},"id":req_id})
+                        .to_string();
+                }
+                match agent.cancel_request(session_id, request_id) {
+                    Ok(_) => json!({"status": "cancelled", "session_id": session_id, "request_id": request_id}),
+                    Err(e) => json!({"status": "error", "message": e, "session_id": session_id, "request_id": request_id}),
+                }
             }
 
             "get_usage" => {

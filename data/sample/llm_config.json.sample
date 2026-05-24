@@ -19,20 +19,34 @@
     "gemini": {
       "api_key": "",
       "model": "gemini-2.5-flash",
-      "temperature": 0.7,
-      "max_tokens": 4096
+      "temperature": 0.7
     },
     "openai": {
       "api_key": "",
       "model": "gpt-4o",
       "endpoint": "https://api.openai.com/v1"
     },
+    "openai-codex": {
+      "auth_mode": "oauth",
+      "model": "gpt-5.4",
+      "endpoint": "https://chatgpt.com/backend-api",
+      "transport": "responses",
+      "api_path": "/codex/responses",
+      "oauth": {
+        "access_token": "",
+        "refresh_token": "",
+        "id_token": "",
+        "expires_at": 0,
+        "account_id": "",
+        "auth_path": "",
+        "source": "codex_cli"
+      }
+    },
     "anthropic": {
       "api_key": "",
       "model": "claude-sonnet-4-20250514",
       "endpoint": "https://api.anthropic.com/v1",
-      "temperature": 0.7,
-      "max_tokens": 4096
+      "temperature": 0.7
     },
     "xai": {
       "api_key": "",

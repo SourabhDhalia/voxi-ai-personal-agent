@@ -13,6 +13,46 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncBufReadExt;
 
+use std::sync::OnceLock;
+use std::sync::Mutex as StdMutex;
+
+struct ActiveTelegramTask {
+    session_id: Option<String>,
+    request_id: Option<String>,
+    pid: Option<u32>,
+}
+
+static ACTIVE_TELEGRAM_TASKS: OnceLock<StdMutex<HashMap<i64, ActiveTelegramTask>>> = OnceLock::new();
+
+fn register_active_chat_request(chat_id: i64, session_id: String, request_id: String) {
+    let map_mutex = ACTIVE_TELEGRAM_TASKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    if let Ok(mut map) = map_mutex.lock() {
+        map.insert(chat_id, ActiveTelegramTask {
+            session_id: Some(session_id),
+            request_id: Some(request_id),
+            pid: None,
+        });
+    }
+}
+
+fn register_active_coding_pid(chat_id: i64, pid: u32) {
+    let map_mutex = ACTIVE_TELEGRAM_TASKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    if let Ok(mut map) = map_mutex.lock() {
+        map.insert(chat_id, ActiveTelegramTask {
+            session_id: None,
+            request_id: None,
+            pid: Some(pid),
+        });
+    }
+}
+
+fn clear_active_telegram_task(chat_id: i64) {
+    let map_mutex = ACTIVE_TELEGRAM_TASKS.get_or_init(|| StdMutex::new(HashMap::new()));
+    if let Ok(mut map) = map_mutex.lock() {
+        map.remove(&chat_id);
+    }
+}
+
 const MAX_CONCURRENT_HANDLERS: i32 = 3;
 const DEFAULT_CLI_TIMEOUT_SECS: u64 = 900;
 const CLI_PROGRESS_UPDATE_SECS: u64 = 15;
@@ -1164,12 +1204,53 @@ backend failures: `{}`",
         cli_backend_paths: &HashMap<TelegramCliBackend, String>,
         cli_workdir: &Path,
         active_handlers: i32,
+        agent: &Option<Arc<crate::core::agent_core::AgentCore>>,
     ) -> Option<TelegramOutgoingMessage> {
         let (command, args) = Self::parse_command(text)?;
 
         let reply = match command.as_str() {
             "start" | "help" => TelegramOutgoingMessage::plain(Self::supported_commands_text()),
             "select" => Self::set_interaction_mode(chat_states, state_path, chat_id, &args),
+            "stop" => {
+                let map_mutex = ACTIVE_TELEGRAM_TASKS.get_or_init(|| StdMutex::new(HashMap::new()));
+                let mut cancelled = false;
+                let mut killed = false;
+                let mut session_id_opt = None;
+                let mut request_id_opt = None;
+                let mut pid_opt = None;
+
+                if let Ok(map) = map_mutex.lock() {
+                    if let Some(task) = map.get(&chat_id) {
+                        session_id_opt = task.session_id.clone();
+                        request_id_opt = task.request_id.clone();
+                        pid_opt = task.pid;
+                    }
+                }
+
+                if let (Some(sid), Some(rid)) = (session_id_opt, request_id_opt) {
+                    if let Some(agent_core) = agent {
+                        if let Err(e) = agent_core.cancel_request(&sid, &rid) {
+                            log::warn!("Failed to cancel Telegram chat request: {}", e);
+                        } else {
+                            cancelled = true;
+                        }
+                    }
+                } else if let Some(pid) = pid_opt {
+                    #[cfg(unix)]
+                    unsafe {
+                        libc::kill(pid as libc::pid_t, libc::SIGKILL);
+                        killed = true;
+                    }
+                }
+
+                if cancelled {
+                    TelegramOutgoingMessage::plain("Request stopped.")
+                } else if killed {
+                    TelegramOutgoingMessage::plain("CLI execution stopped.")
+                } else {
+                    TelegramOutgoingMessage::plain("No active request to stop.")
+                }
+            }
             "agent-cli" | "agent_cli" | "cli-backend" | "cli_backend" => {
                 Self::set_cli_backend(chat_states, state_path, chat_id, &args, cli_backend_paths)
             }
@@ -1706,6 +1787,11 @@ User request:\n{}",
             }
         };
 
+        let pid = child.id();
+        if let Some(p) = pid {
+            register_active_coding_pid(chat_id, p);
+        }
+
         Self::send_telegram_message(
             bot_token,
             chat_id,
@@ -1824,7 +1910,7 @@ User request:\n{}",
 
         let timed_output = tokio::time::timeout(Duration::from_secs(cli_timeout_secs), execution).await;
 
-        match timed_output {
+        let result = match timed_output {
             Ok(Ok((status, stdout, stderr))) => {
                 let duration_ms = started.elapsed().as_millis() as u64;
                 let exit_code = status.code().unwrap_or(-1);
@@ -1901,7 +1987,9 @@ User request:\n{}",
                     cli_timeout_secs
                 )
             }
-        }
+        };
+        clear_active_telegram_task(chat_id);
+        result
     }
 
     async fn route_message(
@@ -1931,6 +2019,7 @@ User request:\n{}",
             &cli_backend_paths,
             &cli_workdir,
             active_handlers,
+            &agent,
         ) {
             replies.push(reply);
             return replies;
@@ -1950,7 +2039,10 @@ User request:\n{}",
                     chat_id,
                     state.session_label_for(TelegramInteractionMode::Chat)
                 );
-                let response = agent_core.process_prompt(&session_id, text, None).await;
+                let request_id = uuid::Uuid::new_v4().to_string();
+                register_active_chat_request(chat_id, session_id.clone(), request_id.clone());
+                let response = agent_core.process_prompt_with_request(&session_id, text, Some(request_id), None).await;
+                clear_active_telegram_task(chat_id);
                 Self::append_session_transcript(
                     chat_id,
                     TelegramInteractionMode::Chat,

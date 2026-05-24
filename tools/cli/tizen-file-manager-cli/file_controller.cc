@@ -44,6 +44,44 @@ std::string JsonEscape(const std::string& s) {
   return out;
 }
 
+std::string DecodeEscapedText(const std::string& s) {
+  std::string out;
+  out.reserve(s.size());
+
+  for (size_t i = 0; i < s.size(); ++i) {
+    char c = s[i];
+    if (c != '\\' || i + 1 >= s.size()) {
+      out += c;
+      continue;
+    }
+
+    char next = s[++i];
+    switch (next) {
+      case 'n':
+        out += '\n';
+        break;
+      case 'r':
+        out += '\r';
+        break;
+      case 't':
+        out += '\t';
+        break;
+      case '\\':
+        out += '\\';
+        break;
+      case '"':
+        out += '"';
+        break;
+      default:
+        out += '\\';
+        out += next;
+        break;
+    }
+  }
+
+  return out;
+}
+
 std::string ErrorJson(const std::string& msg) {
   return "{\"error\": \"" + JsonEscape(msg) + "\"}";
 }
@@ -80,6 +118,7 @@ std::string FileController::Read(
 std::string FileController::Write(
     const std::string& path,
     const std::string& content) {
+  const std::string decoded = DecodeEscapedText(content);
   std::ofstream f(path,
       std::ios::binary | std::ios::trunc);
   if (!f.is_open()) {
@@ -88,17 +127,18 @@ std::string FileController::Write(
         + std::string(strerror(errno)));
   }
 
-  f << content;
+  f << decoded;
   f.close();
 
   return "{\"status\": \"success\", \"path\": \""
        + JsonEscape(path) + "\", \"bytes_written\": "
-       + std::to_string(content.size()) + "}";
+       + std::to_string(decoded.size()) + "}";
 }
 
 std::string FileController::Append(
     const std::string& path,
     const std::string& content) {
+  const std::string decoded = DecodeEscapedText(content);
   std::ofstream f(path,
       std::ios::binary | std::ios::app);
   if (!f.is_open()) {
@@ -107,13 +147,13 @@ std::string FileController::Append(
         + std::string(strerror(errno)));
   }
 
-  f << content;
+  f << decoded;
   f.close();
 
   return "{\"status\": \"success\", \"path\": \""
        + JsonEscape(path)
        + "\", \"bytes_appended\": "
-       + std::to_string(content.size()) + "}";
+       + std::to_string(decoded.size()) + "}";
 }
 
 std::string FileController::Remove(

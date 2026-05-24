@@ -276,3 +276,15 @@
 | Ollama MCP Hardening | Supervisor Gate 5 | PASS | Review confirms cache keys, MCP loop handling, and RAG bounds address the requested edge cases. |
 | Ollama MCP Hardening | 6. Commit | PASS | Preparing `.tmp/commit_msg.txt` commit and push for Ubuntu/Tizen pull-and-test flow. |
 | Ollama MCP Hardening | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt`; no inline commit message. |
+| Stop Request & Zepto MCP Routing Fix | 1. Planning | PASS | Created implementation_plan.md outlining request ID tracking, request serialization, stop commands, and Zepto MCP hardening. |
+| Stop Request & Zepto MCP Routing Fix | Supervisor Gate 1 | PASS | Reviewed rules and design limits; created implementation plan artifact. |
+| Stop Request & Zepto MCP Routing Fix | 2. Design | PASS | Designed active request registry, session serialization, checkpoints, Web/Telegram stop commands, and Zepto MCP handshake/flow enforcer. |
+| Stop Request & Zepto MCP Routing Fix | Supervisor Gate 2 | PASS | Architectural limits, IPC protocol, FFI, and async bounds analyzed and verified. |
+| Stop Request & Zepto MCP Routing Fix | 3. Development | PASS | Implemented active request registry, session locks, cancellation checkpoints, Web stop API/button, Telegram stop command, and Zepto address enforcement. |
+| Stop Request & Zepto MCP Routing Fix | Supervisor Gate 3 | PASS | Core FFI, async locking, and UI bounds verified. |
+| Stop Request & Zepto MCP Routing Fix | 4. Build/Deploy | BLOCKED | Target validation cannot run on this macOS workspace; user will run Ubuntu x86_64 and Tizen armv7l deploy paths. |
+| Stop Request & Zepto MCP Routing Fix | Supervisor Gate 4 | PASS | Build/deploy execution deferred to configured target devices per user instruction. |
+| Stop Request & Zepto MCP Routing Fix | 5. Test/Review | PASS | Verified conceptually, git diff check passed; build and execution deferred to actual target devices. |
+| Stop Request & Zepto MCP Routing Fix | Supervisor Gate 5 | PASS | Review confirms cancellation checks, Stop endpoints, and Zepto flow sequence address the plans. |
+| Stop Request & Zepto MCP Routing Fix | 6. Commit | PASS | Preparing `.tmp/commit_msg.txt` commit and push for Ubuntu/Tizen pull-and-test flow. |
+| Stop Request & Zepto MCP Routing Fix | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt`; no inline commit message. |

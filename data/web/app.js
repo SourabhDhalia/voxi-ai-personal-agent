@@ -1179,6 +1179,7 @@
         const prompt = chatInput.value.trim();
         if (!prompt) return;
         const sessionId = currentChatSessionId;
+        const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
 
         addChatMsg('user', prompt);
         chatInput.value = '';
@@ -1186,22 +1187,41 @@
         // Removed chatSend.disabled = true; to allow concurrent/overlapping requests
 
         // Show thinking indicator specific to this request
-        const thinkingId = 'think-' + Date.now() + Math.random().toString(36).substr(2, 5);
+        const thinkingId = 'think-' + requestId;
         const thinking = document.createElement('div');
         thinking.className = 'chat-thinking';
         thinking.id = thinkingId;
         thinking.innerHTML =
             '<span class="chat-thinking-dot"></span>' +
             '<span class="chat-thinking-dot"></span>' +
-            '<span class="chat-thinking-dot"></span>';
+            '<span class="chat-thinking-dot"></span>' +
+            '<button class="chat-stop-btn" title="Stop generating">Stop</button>';
         chatMessages.appendChild(thinking);
         chatMessages.scrollTop =
             chatMessages.scrollHeight;
 
+        const stopBtn = thinking.querySelector('.chat-stop-btn');
+        if (stopBtn) {
+            stopBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                stopBtn.disabled = true;
+                stopBtn.textContent = 'Stopping...';
+                try {
+                    await apiPost('chat/stop', {
+                        session_id: sessionId || currentChatSessionId || '',
+                        request_id: requestId
+                    });
+                } catch (err) {
+                    console.error('Failed to cancel request:', err);
+                }
+            });
+        }
+
         try {
             const resp = await apiPost('chat', {
                 prompt: prompt,
-                session_id: sessionId
+                session_id: sessionId,
+                request_id: requestId
             });
 
             // Remove this specific thinking indicator
@@ -1209,21 +1229,32 @@
             if (indicator) indicator.remove();
 
             if (resp && resp.session_id) {
-                selectChatSession(resp.session_id);
+                if (!sessionId) {
+                    if (currentChatSessionId === null) {
+                        currentChatSessionId = resp.session_id;
+                        selectChatSession(resp.session_id);
+                    }
+                }
             }
 
             if (resp && resp.response) {
-                addChatMsg('assistant', resp.response);
+                if (resp.session_id === currentChatSessionId) {
+                    addChatMsg('assistant', resp.response);
+                }
                 await loadChatSessions();
             } else {
-                addChatMsg('assistant',
-                    (resp && resp.error) ||
-                    'Error: no response from agent.');
+                if (resp && resp.session_id === currentChatSessionId) {
+                    addChatMsg('assistant',
+                        (resp && resp.error) ||
+                        'Error: no response from agent.');
+                }
             }
         } catch (err) {
             const indicator = document.getElementById(thinkingId);
             if (indicator) indicator.remove();
-            addChatMsg('assistant', 'Error: connection failed.');
+            if (sessionId === currentChatSessionId) {
+                addChatMsg('assistant', 'Error: connection failed.');
+            }
         }
     }
 

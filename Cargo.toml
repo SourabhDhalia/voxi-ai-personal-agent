@@ -5,6 +5,7 @@ members = [
     "src/libtizenclaw-core",
     "src/tizenclaw",
     "src/tizenclaw-cli",
+    "src/tizenclaw-tests",
     "src/tizenclaw-web-dashboard",
     "src/tizenclaw-tool-executor",
     "src/tizenclaw-metadata-plugin",

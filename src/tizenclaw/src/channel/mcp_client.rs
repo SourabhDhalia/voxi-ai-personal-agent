@@ -993,7 +993,7 @@ impl McpClient {
             // Perform initialize handshake
             let init_params = json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": {},
+                "capabilities": {"tools": {}},
                 "clientInfo": {"name": "tizenclaw-mcp-client", "version": "1.0.0"}
             });
 
@@ -1042,7 +1042,7 @@ impl McpClient {
                                     self.start_legacy_sse_listener(legacy_client);
                                     let legacy_init = json!({
                                         "protocolVersion": LEGACY_HTTP_SSE_PROTOCOL_VERSION,
-                                        "capabilities": {},
+                                        "capabilities": {"tools": {}},
                                         "clientInfo": {"name": "tizenclaw-mcp-client", "version": "1.0.0"}
                                     });
                                     match self.send_request_sync("initialize", &legacy_init, 10000)
@@ -1142,7 +1142,8 @@ impl McpClient {
             // Send notifications/initialized
             let notif = json!({
                 "jsonrpc": "2.0",
-                "method": "notifications/initialized"
+                "method": "notifications/initialized",
+                "params": {}
             });
             let _ = self.send_rpc_message(&notif);
             self.set_connection_state(McpConnectionState::Connected, None);
@@ -1224,7 +1225,7 @@ impl McpClient {
         // Perform initialize handshake
         let init_params = json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
-            "capabilities": {},
+            "capabilities": {"tools": {}},
             "clientInfo": {"name": "tizenclaw-mcp-client", "version": "1.0.0"}
         });
 
@@ -1253,7 +1254,8 @@ impl McpClient {
         // Send notifications/initialized
         let notif = json!({
             "jsonrpc": "2.0",
-            "method": "notifications/initialized"
+            "method": "notifications/initialized",
+            "params": {}
         });
         let _ = self.send_rpc_message(&notif);
         self.set_connection_state(McpConnectionState::Connected, None);
@@ -1969,6 +1971,10 @@ impl McpClientManager {
         }
 
         None
+    }
+
+    pub fn get_client(&self, name: &str) -> Option<&McpClient> {
+        self.clients.iter().find(|c| c.server_name == name)
     }
 }
 

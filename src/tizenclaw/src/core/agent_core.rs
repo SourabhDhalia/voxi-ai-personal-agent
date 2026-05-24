@@ -187,6 +187,7 @@ fn append_dashboard_outbound_message(
     title: Option<&str>,
     message: &str,
     session_id: Option<&str>,
+    request_id: Option<&str>,
 ) -> Result<Value, String> {
     let message = message.trim();
     if message.is_empty() {
@@ -221,6 +222,7 @@ fn append_dashboard_outbound_message(
         "title": title.unwrap_or("TizenClaw"),
         "message": message,
         "session_id": session_id,
+        "request_id": request_id,
         "created_at_ms": created_at_ms,
     });
     entries.push(record.to_string());
@@ -1417,6 +1419,13 @@ struct McpOAuthClient {
     client_secret: Option<String>,
 }
 
+#[derive(Clone)]
+pub struct RequestState {
+    pub session_id: String,
+    pub request_id: String,
+    pub cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
 /// Thread-safe AgentCore with fine-grained internal locking.
 ///
 /// Callers share `Arc<AgentCore>` — no outer Mutex needed.
@@ -1449,6 +1458,8 @@ pub struct AgentCore {
     mcp_client_manager: tokio::sync::RwLock<McpClientManager>,
     pending_mcp_confirmations: Mutex<HashMap<String, PendingMcpConfirmation>>,
     llm_response_cache: LlmResponseCache,
+    active_requests: Arc<Mutex<HashMap<String, RequestState>>>,
+    session_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 impl AgentCore {
@@ -1477,6 +1488,8 @@ impl AgentCore {
             mcp_client_manager: tokio::sync::RwLock::new(McpClientManager::new()),
             pending_mcp_confirmations: Mutex::new(HashMap::new()),
             llm_response_cache: Arc::new(RwLock::new(HashMap::new())),
+            active_requests: Arc::new(Mutex::new(HashMap::new())),
+            session_locks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -1738,6 +1751,8 @@ impl AgentCore {
             || error.contains("Tool arguments must be a JSON object")
         {
             Some("malformed_tool_args")
+        } else if error.contains("Address not selected") || error.contains("delivery address must be selected") {
+            Some("missing_address")
         } else {
             None
         }
@@ -1775,10 +1790,45 @@ impl AgentCore {
             );
         }
 
+        if kind == "missing_address" {
+            return format!(
+                "System Error: Tool '{}' failed because no delivery address has been selected. You must first call 'mcp_zepto_list_saved_addresses' to get available addresses, and then 'mcp_zepto_select_saved_address' with an address ID before calling '{}'.",
+                tool_name, tool_name
+            );
+        }
+
         format!(
             "System Error: Tool '{}' with arguments '{}' failed as '{}'. Do not repeat the same call. Use a valid safe tool name and JSON object arguments.",
             tool_name, args, kind
         )
+    }
+
+    fn is_zepto_address_selected(messages: &[LlmMessage], current_tool_calls: &[backend::LlmToolCall]) -> bool {
+        for tc in current_tool_calls {
+            let name = tc.name.trim().to_lowercase();
+            if name.contains("select_saved_address") || name.contains("select_address") {
+                return true;
+            }
+        }
+        for msg in messages {
+            if msg.role == "tool" {
+                let name = msg.tool_name.trim().to_lowercase();
+                if name.contains("select_saved_address") || name.contains("select_address") {
+                    if let Some(obj) = msg.tool_result.as_object() {
+                        if obj.get("error").is_none() {
+                            return true;
+                        }
+                    } else if let Some(s) = msg.tool_result.as_str() {
+                        if !s.to_lowercase().contains("error") {
+                            return true;
+                        }
+                    } else if !msg.tool_result.is_null() {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn now_ms() -> u64 {
@@ -2826,6 +2876,18 @@ impl AgentCore {
             return json!({"error": "Outbound message cannot be empty"});
         }
 
+        let mut active_req_id = None;
+        if let Some(sid) = session_id {
+            if let Ok(active) = self.active_requests.lock() {
+                for (rid, state) in active.iter() {
+                    if state.session_id == sid {
+                        active_req_id = Some(rid.clone());
+                        break;
+                    }
+                }
+            }
+        }
+
         let mut results = Vec::new();
         for channel in channels {
             match channel.as_str() {
@@ -2834,6 +2896,7 @@ impl AgentCore {
                     title,
                     message,
                     session_id,
+                    active_req_id.as_deref(),
                 ) {
                     Ok(record) => results.push(json!({
                         "channel": "web_dashboard",
@@ -4256,10 +4319,151 @@ impl AgentCore {
     /// 14. ResultReporting: Format and return final answer
     ///
     /// Thread-safe: acquires fine-grained locks on individual fields.
+    fn truncate_chars(s: &str, max: usize) -> String {
+        if s.len() > max {
+            let mut truncated = s.chars().take(max).collect::<String>();
+            truncated.push_str("...");
+            truncated
+        } else {
+            s.to_string()
+        }
+    }
+
+    fn is_zepto_address_selected(messages: &[LlmMessage]) -> bool {
+        let mut selected = false;
+        for msg in messages {
+            for tc in &msg.tool_calls {
+                if tc.name == "mcp_zepto_select_saved_address" || tc.name == "select_saved_address" {
+                    let tc_id = &tc.id;
+                    for res_msg in messages {
+                        if res_msg.role == "tool" && &res_msg.tool_call_id == tc_id {
+                            let res_str = res_msg.tool_result.to_string();
+                            if !res_str.contains("error") && !res_str.contains("failed") {
+                                selected = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        selected
+    }
+
+    fn get_session_lock(&self, session_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self.session_locks.lock().unwrap();
+        locks.entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    pub fn is_request_cancelled(&self, request_id: &str) -> bool {
+        if let Ok(active) = self.active_requests.lock() {
+            if let Some(req) = active.get(request_id) {
+                return req.cancelled.load(std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        false
+    }
+
+    fn handle_cancellation(&self, session_id: &str, request_id: &str) -> String {
+        log::info!("Request {} for session {} cancelled at checkpoint", request_id, session_id);
+        let msg = "Request stopped by user.";
+        if let Ok(ss) = self.session_store.lock() {
+            if let Some(store) = ss.as_ref() {
+                store.add_message(session_id, "assistant", msg);
+                store.add_structured_assistant_text_message(session_id, msg);
+            }
+        }
+        if let Ok(mut active) = self.active_requests.lock() {
+            active.remove(request_id);
+        }
+        msg.to_string()
+    }
+
+    pub fn cancel_request(&self, session_id: &str, request_id: &str) -> Result<(), String> {
+        let active = self.active_requests.lock().map_err(|e| e.to_string())?;
+        if let Some(req) = active.get(request_id) {
+            if req.session_id == session_id {
+                req.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+                log::info!("Cancelled request {} for session {}", request_id, session_id);
+                return Ok(());
+            } else {
+                return Err("Session ID mismatch".to_string());
+            }
+        }
+        Err("Request not found".to_string())
+    }
+
+    /// Process a user prompt through the 15-phase autonomous agent loop.
+    ///
+    /// ## Loop Phases
+    /// 1. GoalParsing: Initialize AgentLoopState for this session + prompt
+    /// 2. ContextLoading: Load session history, build messages + tools
+    /// 3. Pre-loop Compaction: Compact if ≥90% of 256k token budget
+    ///    4-13. Main loop: DecisionMaking → SafetyCheck → ToolDispatching
+    ///    → ObservationCollect → Evaluating → ErrorRecovery
+    ///    → StateTracking → SelfInspection → RePlanning → TerminationCheck
+    /// 14. ResultReporting: Format and return final answer
+    ///
+    /// Thread-safe: acquires fine-grained locks on individual fields.
     pub async fn process_prompt(
         &self,
         session_id: &str,
         prompt: &str,
+        on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
+    ) -> String {
+        self.process_prompt_with_request(session_id, prompt, None, on_chunk).await
+    }
+
+    pub async fn process_prompt_with_request(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        request_id: Option<String>,
+        on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
+    ) -> String {
+        let request_id = request_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        let req_state = RequestState {
+            session_id: session_id.to_string(),
+            request_id: request_id.clone(),
+            cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        {
+            let mut active = self.active_requests.lock().unwrap();
+            if active.contains_key(&request_id) {
+                return format!("Error: Duplicate active request ID {}", request_id);
+            }
+            active.insert(request_id.clone(), req_state.clone());
+        }
+
+        if req_state.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            return self.handle_cancellation(session_id, &request_id);
+        }
+
+        let lock = self.get_session_lock(session_id);
+        let _guard = lock.lock().await;
+
+        if req_state.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            return self.handle_cancellation(session_id, &request_id);
+        }
+
+        let result = self
+            .process_prompt_internal(session_id, prompt, &request_id, &req_state, on_chunk)
+            .await;
+
+        if let Ok(mut active) = self.active_requests.lock() {
+            active.remove(&request_id);
+        }
+        result
+    }
+
+    async fn process_prompt_internal(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        request_id: &str,
+        req_state: &RequestState,
         on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
     ) -> String {
         let prompt_trimmed = prompt.trim();
@@ -4318,9 +4522,153 @@ impl AgentCore {
             return lines.join("\n");
         }
 
+        let parts: Vec<&str> = prompt_trimmed.split_whitespace().collect();
+        if prompt_trimmed.starts_with("/mcp status ") || (parts.len() == 2 && parts[0] == "/mcp" && parts[1] != "status" && parts[1] != "login" && parts[1] != "token" && parts[1] != "session" && parts[1] != "help" && !parts[1].starts_with("http")) {
+            let server_name = if parts.len() == 2 { parts[1] } else { parts[2] };
+            let mcp = self.mcp_client_manager.read().await;
+            if let Some(status) = mcp.statuses().iter().find(|s| s.name == server_name) {
+                let token_note = if status.transport == "http" {
+                    if status.has_access_token { "present" } else { "missing" }
+                } else { "N/A" };
+                let mut lines = vec![
+                    format!("MCP Server Status for '{}':", server_name),
+                    format!("- State: {}", status.state.as_str()),
+                    format!("- Transport: {}", status.transport),
+                    format!("- Token: {}", token_note),
+                    format!("- Tool Count: {}", status.tool_count),
+                ];
+                if let Some(ref ep) = status.endpoint {
+                    lines.push(format!("- Endpoint: {}", ep));
+                }
+                if let Some(ref ver) = status.negotiated_protocol_version {
+                    lines.push(format!("- Protocol: {}", ver));
+                }
+                if let Some(ref msg) = status.message {
+                    lines.push(format!("- Message: {}", msg));
+                }
+                if server_name == "zepto" {
+                    lines.push("\nRecommended Zepto CLI Flow:".to_string());
+                    lines.push("1. Get user details: `mcp_zepto_get_user_details`".to_string());
+                    lines.push("2. List addresses: `mcp_zepto_list_saved_addresses`".to_string());
+                    lines.push("3. Select address: `mcp_zepto_select_saved_address` with address ID".to_string());
+                    lines.push("4. Search products: `mcp_zepto_search_products`".to_string());
+                }
+                return lines.join("\n");
+            } else {
+                return format!("MCP server '{}' is not configured.", server_name);
+            }
+        }
+
+        if prompt_trimmed.starts_with("/mcp tools ") && parts.len() >= 3 {
+            let server_name = parts[2];
+            let mcp = self.mcp_client_manager.read().await;
+            let mut matched_tools = Vec::new();
+            for tool_result in mcp.get_all_tools() {
+                if tool_result.provider == server_name {
+                    matched_tools.push(tool_result.tool.declaration().name);
+                }
+            }
+            if matched_tools.is_empty() {
+                return format!("No tools found loaded for MCP server '{}'. Make sure it is connected.", server_name);
+            }
+            matched_tools.sort();
+            let mut lines = vec![format!("Available tools for MCP server '{}':", server_name)];
+            for tool in matched_tools {
+                lines.push(format!("- {}", tool));
+            }
+            return lines.join("\n");
+        }
+
+        if prompt_trimmed.starts_with("/mcp test ") && parts.len() >= 5 {
+            let server_name = parts[2];
+            let action = parts[3];
+            let query = parts[4..].join(" ").replace("\"", "");
+
+            if server_name == "zepto" && action == "search" {
+                let mut lines = vec![format!("Running Zepto MCP flow test with query '{}'...", query)];
+
+                lines.push("Step 1: Calling `mcp_zepto_get_user_details`...".to_string());
+                let mut mcp = self.mcp_client_manager.write().await;
+                match mcp.call_tool_resolved("mcp_zepto_get_user_details", &json!({})) {
+                    Ok(res) => {
+                        lines.push(format!("  [Success] User details: {}", Self::truncate_chars(&res.to_string(), 80)));
+                    }
+                    Err(e) => {
+                        lines.push(format!("  [Failure] Failed to get user details: {}", e));
+                        return lines.join("\n");
+                    }
+                }
+
+                lines.push("Step 2: Calling `mcp_zepto_list_saved_addresses`...".to_string());
+                let mut address_id = None;
+                match mcp.call_tool_resolved("mcp_zepto_list_saved_addresses", &json!({})) {
+                    Ok(res) => {
+                        lines.push(format!("  [Success] Saved addresses: {}", Self::truncate_chars(&res.to_string(), 120)));
+                        if let Some(arr) = res.get("addresses").and_then(|v| v.as_array()) {
+                            if let Some(first) = arr.first() {
+                                if let Some(id) = first.get("id").and_then(|v| v.as_str()) {
+                                    address_id = Some(id.to_string());
+                                }
+                            }
+                        } else if let Some(arr) = res.as_array() {
+                            if let Some(first) = arr.first() {
+                                if let Some(id) = first.get("id").and_then(|v| v.as_str()) {
+                                    address_id = Some(id.to_string());
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        lines.push(format!("  [Failure] Failed to list saved addresses: {}", e));
+                        return lines.join("\n");
+                    }
+                }
+
+                if let Some(aid) = address_id {
+                    lines.push(format!("Step 3: Calling `mcp_zepto_select_saved_address` with ID '{}'...", aid));
+                    match mcp.call_tool_resolved("mcp_zepto_select_saved_address", &json!({"address_id": aid})) {
+                        Ok(res) => {
+                            lines.push(format!("  [Success] Select address result: {}", Self::truncate_chars(&res.to_string(), 80)));
+                        }
+                        Err(e) => {
+                            lines.push(format!("  [Failure] Failed to select saved address: {}", e));
+                            return lines.join("\n");
+                        }
+                    }
+                } else {
+                    lines.push("Step 3: Skip select address (no addresses returned in step 2)".to_string());
+                }
+
+                lines.push("Step 4: Calling `mcp_zepto_get_past_order_items`...".to_string());
+                match mcp.call_tool_resolved("mcp_zepto_get_past_order_items", &json!({})) {
+                    Ok(res) => {
+                        lines.push(format!("  [Success] Past order items count: {}", res.as_array().map(|a| a.len()).unwrap_or(0)));
+                    }
+                    Err(e) => {
+                        lines.push(format!("  [Warning] Failed to get past order items (non-blocking): {}", e));
+                    }
+                }
+
+                lines.push(format!("Step 5: Calling `mcp_zepto_search_products` with query '{}'...", query));
+                match mcp.call_tool_resolved("mcp_zepto_search_products", &json!({"query": query})) {
+                    Ok(res) => {
+                        lines.push(format!("  [Success] Search result: {}", Self::truncate_chars(&res.to_string(), 300)));
+                    }
+                    Err(e) => {
+                        lines.push(format!("  [Failure] Search failed: {}", e));
+                    }
+                }
+
+                return lines.join("\n");
+            }
+        }
+
         if prompt_trimmed == "/mcp" || prompt_trimmed == "/mcp help" {
             return "MCP setup commands:\n\
                     `/mcp status` shows connection, auth, and tool loading state.\n\
+                    `/mcp status <server>` shows detail status and CLI flow info for a specific server.\n\
+                    `/mcp tools <server>` lists available tools for a specific server.\n\
+                    `/mcp test zepto search <query>` runs a diagnostic search sequence test.\n\
                     `/mcp login <server>` starts OAuth when the provider exposes OAuth metadata.\n\
                     `/mcp token <server> <access_token_or_authorization_header>` stores a bearer token securely and reloads tools.\n\
                     `/mcp session <server> <mcp_session_id>` stores a manual MCP session id for legacy servers.\n\
@@ -4445,6 +4793,10 @@ impl AgentCore {
             }
         }
 
+        if req_state.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            return self.handle_cancellation(session_id, request_id);
+        }
+
         // ── Phase 1: GoalParsing ─────────────────────────────────────────
         let mut loop_state = AgentLoopState::new(session_id, prompt);
 
@@ -4485,6 +4837,9 @@ impl AgentCore {
         }
 
         // ── Phase 2: ContextLoading ──────────────────────────────────────
+        if req_state.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            return self.handle_cancellation(session_id, request_id);
+        }
         loop_state.transition(AgentPhase::ContextLoading);
 
         log_conversation("User", prompt);
@@ -4612,6 +4967,13 @@ impl AgentCore {
                     .map(|result| result.tool.declaration()),
             );
         }
+
+        // Suppress widget tools in local/Ollama tool declarations if not in widget mode
+        let is_widget = session_id.starts_with("widget_") || session_id.contains("widget");
+        if !is_widget {
+            tools.retain(|tool| tool.name != "mcp_zepto_zepto_shop" && tool.name != "zepto_shop");
+        }
+
         crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(
             &mut tools, prompt,
         );
@@ -4943,7 +5305,11 @@ impl AgentCore {
         // ── Phases 4–13: Main agentic loop ───────────────────────────────
         let mut tool_failure_counts: HashMap<String, usize> = HashMap::new();
         let mut malformed_tool_call_counts: HashMap<String, usize> = HashMap::new();
+        let mut missing_address_count = 0;
         loop {
+            if req_state.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                return self.handle_cancellation(session_id, request_id);
+            }
             // ── Phase 4: DecisionMaking / LLM call ──────────────────────
             loop_state.transition(AgentPhase::DecisionMaking);
             log::debug!(
@@ -4962,6 +5328,10 @@ impl AgentCore {
 
             // Step 6: Set Max Tokens Dynamically
             let dynamic_max_tokens = if prompt.len() < 50 { 1024 } else { 4096 };
+
+            if req_state.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                return self.handle_cancellation(session_id, request_id);
+            }
 
             let mut response = LlmResponse::default();
             let mut is_workflow_tool = false;
@@ -5068,6 +5438,10 @@ impl AgentCore {
                         Some(dynamic_max_tokens),
                     )
                     .await;
+            }
+
+            if req_state.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                return self.handle_cancellation(session_id, request_id);
             }
 
             // ── Phase 6: ObservationCollect ──────────────────────────────
@@ -5216,6 +5590,9 @@ impl AgentCore {
             }
 
             if !detected_tool_calls.is_empty() {
+                if req_state.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                    return self.handle_cancellation(session_id, request_id);
+                }
                 // ── Phase 5: ToolDispatching ─────────────────────────────
                 loop_state.transition(AgentPhase::ToolDispatching);
                 loop_state.total_tool_calls += detected_tool_calls.len();
@@ -5269,6 +5646,12 @@ impl AgentCore {
                 }
 
                 // Parallel tool execution
+                let is_selecting_address_now = detected_tool_calls.iter().any(|tc| {
+                    let n = tc.name.trim().to_lowercase();
+                    n.contains("select_saved_address") || n.contains("select_address")
+                });
+                let messages_clone = messages.clone();
+
                 let td_guard = self.tool_dispatcher.read().await;
                 let mut futures_list = Vec::new();
                 let mem_store_opt = self
@@ -5319,10 +5702,29 @@ impl AgentCore {
                         None
                     };
 
+                    let messages_clone = messages_clone.clone();
+                    let is_selecting_address_now = is_selecting_address_now;
+
                     futures_list.push(async move {
                         if let Some(reason) = block_reason {
                             log::warn!("[SafetyCheck] Tool '{}' blocked: {}", tc_name, reason);
                             return LlmMessage::tool_result(&tc_id, &tc_name, serde_json::json!({"error": reason}));
+                        }
+
+                        let is_address_selected = is_selecting_address_now || Self::is_zepto_address_selected(&messages_clone, &[]);
+                        if (tc_name == "mcp_zepto_search_products"
+                            || tc_name == "mcp_zepto_search_multiple_products"
+                            || tc_name == "search_products"
+                            || tc_name == "search_multiple_products")
+                            && !is_address_selected
+                        {
+                            return LlmMessage::tool_result(
+                                &tc_id,
+                                &tc_name,
+                                serde_json::json!({
+                                    "error": "Address not selected. A delivery address must be selected before searching products on Zepto. Please call `mcp_zepto_list_saved_addresses` and then select a delivery address using `mcp_zepto_select_saved_address` first."
+                                }),
+                            );
                         }
 
                         let result = if tc_name.starts_with("action_") {
@@ -5976,6 +6378,9 @@ impl AgentCore {
                 }
 
                 let results = futures_util::future::join_all(futures_list).await;
+                if req_state.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                    return self.handle_cancellation(session_id, request_id);
+                }
                 if let Ok(ss) = self.session_store.lock() {
                     if let Some(store) = ss.as_ref() {
                         for result in &results {
@@ -5998,6 +6403,17 @@ impl AgentCore {
                     let args = canonical_tool_args
                         .get(&result.tool_call_id)
                         .unwrap_or(&Value::Null);
+                    if let Some(kind) = Self::tool_failure_kind(&result.tool_result) {
+                        if kind == "missing_address" {
+                            missing_address_count += 1;
+                            if missing_address_count >= 2 {
+                                let msg = "Error: Agent repeatedly attempted to search products without selecting a delivery address. Stopping to prevent an execution loop. Please select an address first.";
+                                log::warn!("[AgentLoop] {}", msg);
+                                loop_state.transition(AgentPhase::ResultReporting);
+                                return msg.to_string();
+                            }
+                        }
+                    }
                     if let Some(signature) =
                         Self::tool_failure_signature(&result.tool_name, args, &result.tool_result)
                     {
@@ -6201,6 +6617,9 @@ impl AgentCore {
                             );
                         }
                     }
+                }
+                if req_state.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+                    return self.handle_cancellation(session_id, request_id);
                 }
                 if let Ok(ss) = self.session_store.lock() {
                     if let Some(store) = ss.as_ref() {

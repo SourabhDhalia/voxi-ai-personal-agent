@@ -100,6 +100,26 @@ pub struct PromptResponse {
     pub stream_received: bool,
 }
 
+/// Result of prompt execution with request ID tracking.
+#[derive(Clone, Debug)]
+pub struct PromptRunResponse {
+    pub session_id: String,
+    pub request_id: String,
+    pub text: String,
+    pub status: String,
+    pub stream_received: bool,
+}
+
+/// Result of request cancellation.
+#[derive(Clone, Debug)]
+pub struct CancelRequestResponse {
+    pub request_id: String,
+    pub session_id: String,
+    pub status: String,
+    pub message: String,
+}
+
+
 /// TizenClaw agent — safe Rust API.
 ///
 /// # Example (Rust)
@@ -163,6 +183,65 @@ impl TizenClaw {
     {
         let mut on_chunk = on_chunk;
         self.process_prompt_inner(session_id, prompt, true, Some(&mut on_chunk))
+    }
+
+    /// Process a prompt with request tracking.
+    pub fn process_prompt_with_request(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        request_id: Option<&str>,
+    ) -> Result<PromptRunResponse, String> {
+        let req_id = request_id.map(|s| s.to_string()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let res = self.process_prompt_inner_with_id(session_id, prompt, &req_id, false, None)?;
+        Ok(PromptRunResponse {
+            session_id: res.session_id,
+            request_id: req_id,
+            text: res.text,
+            status: "completed".to_string(),
+            stream_received: res.stream_received,
+        })
+    }
+
+    /// Process a prompt with streaming and request tracking.
+    pub fn process_prompt_streaming_with_request<F>(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        request_id: Option<&str>,
+        on_chunk: F,
+    ) -> Result<PromptRunResponse, String>
+    where
+        F: FnMut(&str),
+    {
+        let req_id = request_id.map(|s| s.to_string()).unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let mut on_chunk = on_chunk;
+        let res = self.process_prompt_inner_with_id(session_id, prompt, &req_id, true, Some(&mut on_chunk))?;
+        Ok(PromptRunResponse {
+            session_id: res.session_id,
+            request_id: req_id,
+            text: res.text,
+            status: "completed".to_string(),
+            stream_received: res.stream_received,
+        })
+    }
+
+    /// Cancel a running request.
+    pub fn cancel_request(&self, session_id: &str, request_id: &str) -> Result<CancelRequestResponse, String> {
+        self.ensure_initialized()?;
+        let res = self.call_method(
+            "cancel_request",
+            json!({
+                "session_id": session_id,
+                "request_id": request_id,
+            }),
+        )?;
+        Ok(CancelRequestResponse {
+            request_id: res.get("request_id").and_then(Value::as_str).unwrap_or(request_id).to_string(),
+            session_id: res.get("session_id").and_then(Value::as_str).unwrap_or(session_id).to_string(),
+            status: res.get("status").and_then(Value::as_str).unwrap_or("error").to_string(),
+            message: res.get("message").and_then(Value::as_str).unwrap_or("").to_string(),
+        })
     }
 
     /// Clear a session's conversation history.
@@ -349,6 +428,18 @@ impl TizenClaw {
         stream: bool,
         on_chunk: Option<&mut dyn FnMut(&str)>,
     ) -> Result<PromptResponse, String> {
+        let request_id = uuid::Uuid::new_v4().to_string();
+        self.process_prompt_inner_with_id(session_id, prompt, &request_id, stream, on_chunk)
+    }
+
+    fn process_prompt_inner_with_id(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        request_id: &str,
+        stream: bool,
+        on_chunk: Option<&mut dyn FnMut(&str)>,
+    ) -> Result<PromptResponse, String> {
         self.ensure_initialized()?;
 
         let envelope = self.send_jsonrpc(
@@ -356,6 +447,7 @@ impl TizenClaw {
             json!({
                 "session_id": session_id,
                 "text": prompt,
+                "request_id": request_id,
                 "stream": bool_to_json(stream)
             }),
             on_chunk,
