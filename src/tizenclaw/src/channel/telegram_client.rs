@@ -2116,7 +2116,7 @@ impl Channel for TelegramClient {
             return true;
         }
         if self.bot_token.is_empty() || self.bot_token == "YOUR_TELEGRAM_BOT_TOKEN_HERE" {
-            log::warn!("TelegramClient: invalid bot token");
+            log::info!("Telegram disabled: invalid token");
             return false;
         }
 

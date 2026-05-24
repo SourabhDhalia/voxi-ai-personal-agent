@@ -740,8 +740,6 @@ impl AgentCore {
 
         self.reload_tools().await;
         let root_dir = self.platform.paths.tools_dir.to_string_lossy().to_string();
-        // Embedded descriptors are documentation/indexing metadata for
-        // code-defined built-in tools. They are not the execution source.
         let embedded_dir = self
             .platform
             .paths
@@ -754,32 +752,62 @@ impl AgentCore {
             skill_roots.iter().map(|root| root.as_str()),
         )
         .len();
-        let tool_count = self
-            .tool_dispatcher
-            .read()
-            .await
-            .get_tool_declarations()
-            .len();
+
+        // Scan tools metadata early to get counts and inject MCP tools
+        let mut metadata =
+            tool_indexer::scan_tools_metadata_with_embedded(&root_dir, Some(&embedded_dir));
+
+        let mcp_tools = self.mcp_client_manager.read().await.get_all_tool_infos();
+        let mcp_count = mcp_tools.len();
+
+        let mut local_count = 0;
+        let mut embedded_count = 0;
+        for cat in &metadata.categories {
+            if cat.name == "embedded" {
+                embedded_count += cat.tools.len();
+            } else {
+                local_count += cat.tools.len();
+            }
+        }
+
         log::info!(
-            "[Startup Indexing] Registered {} tools and {} skills from runtime paths.",
-            tool_count,
-            skill_count
+            "[Startup Indexing] Discovered {} local tools (empty is normal on hosts), {} embedded tools, and {} MCP tools.",
+            local_count,
+            embedded_count,
+            mcp_count
         );
+
+        // Group and inject MCP tools into catalog indexing metadata
+        let mut mcp_by_server: std::collections::HashMap<String, Vec<crate::channel::mcp_client::McpToolInfo>> = std::collections::HashMap::new();
+        for t in mcp_tools {
+            mcp_by_server.entry(t.server_name.clone()).or_default().push(t);
+        }
+
+        for (server_name, tools) in mcp_by_server {
+            let cat_name = format!("mcp_{}", server_name);
+            let mut tools_meta = Vec::new();
+            for t in tools {
+                tools_meta.push(crate::core::tool_indexer::ToolMeta {
+                    name: t.safe_name.clone(),
+                    description: t.description.clone(),
+                    category: cat_name.clone(),
+                    dir_path: "".to_string(),
+                    binary_path: None,
+                    commands: vec![t.original_name.clone()],
+                });
+            }
+            metadata.categories.push(crate::core::tool_indexer::CategoryMeta {
+                name: cat_name,
+                dir_path: "".to_string(),
+                tools: tools_meta,
+            });
+        }
 
         // Phase 1: Hash-based change detection (fast, no I/O beyond stat)
         if !tool_indexer::needs_reindex_for_roots(&root_dir, &scan_roots) {
-            log::info!("[Startup Indexing] No changes detected (hash match). Skipping.");
+            log::info!("[Startup Indexing] No filesystem changes detected (hash match). Skipping.");
             return;
         }
-
-        // Phase 2: Local filesystem scan — collect all tool metadata
-        log::info!(
-            "[Startup Indexing] Scanning tool metadata from {} and {}...",
-            root_dir,
-            embedded_dir
-        );
-        let metadata =
-            tool_indexer::scan_tools_metadata_with_embedded(&root_dir, Some(&embedded_dir));
 
         if metadata.total_tools() == 0 {
             log::info!("[Startup Indexing] No tools found. Skipping index generation.");
@@ -787,7 +815,7 @@ impl AgentCore {
         }
 
         log::info!(
-            "[Startup Indexing] Found {} tools across {} categories.",
+            "[Startup Indexing] Found {} tools (including MCP) across {} categories.",
             metadata.total_tools(),
             metadata.categories.len(),
         );
@@ -861,6 +889,26 @@ impl AgentCore {
             return;
         }
 
+        let scrub_paths = |val: &str| -> String {
+            let workdir_re = match regex::Regex::new(r"(?i)/[a-zA-Z0-9._/-]*/workdirs/web_[a-zA-Z0-9_-]+(?:/[a-zA-Z0-9._/-]+)*") {
+                Ok(re) => re,
+                Err(_) => return val.to_string(),
+            };
+            let tizenclaw_re = match regex::Regex::new(r"(?i)/root/\.tizenclaw(?:/[a-zA-Z0-9._/-]+)*") {
+                Ok(re) => re,
+                Err(_) => return val.to_string(),
+            };
+            let user_home_re = match regex::Regex::new(r"(?i)/(?:home|Users)/[a-zA-Z0-9._/-]+") {
+                Ok(re) => re,
+                Err(_) => return val.to_string(),
+            };
+
+            let res = workdir_re.replace_all(val, "[workdir]");
+            let res = tizenclaw_re.replace_all(&res, "[tizenclaw_dir]");
+            let res = user_home_re.replace_all(&res, "[home_dir]");
+            res.into_owned()
+        };
+
         let system_prompt = "You are an automated daemon component for TizenClaw responsible for extracting \
 useful Long-Term Memories. Analyze the recent conversation snippet and the assistant's final response. \
 Identify permanent facts, user preferences, names, device states, or specific instructions the user wants kept. \
@@ -870,11 +918,11 @@ If there is nothing new to remember, output exactly: []";
 
         let mut msgs = vec![];
         let mut convo_text = String::new();
-        // Give the last few messages for context
+        // Give the last few messages for context after scrubbing paths
         for m in history.iter().rev().take(3).rev() {
-            convo_text.push_str(&format!("{}: {}\n", m.role, m.text));
+            convo_text.push_str(&format!("{}: {}\n", m.role, scrub_paths(&m.text)));
         }
-        convo_text.push_str(&format!("assistant: {}\n", final_response));
+        convo_text.push_str(&format!("assistant: {}\n", scrub_paths(final_response)));
         msgs.push(LlmMessage::user(&convo_text));
 
         log::debug!("[MemoryExtractor] Triggering LLM extraction sub-task...");
@@ -910,9 +958,29 @@ If there is nothing new to remember, output exactly: []";
                         item.get("key").and_then(|v| v.as_str()),
                         item.get("value").and_then(|v| v.as_str()),
                     ) {
-                        store.set(k, v, cat);
+                        // Skip if the key, value, or category contains session-specific attributes
+                        let is_session_specific = k.contains("session_id")
+                            || k.contains("web_")
+                            || k.starts_with("session::")
+                            || v.contains("session_id")
+                            || v.contains("web_");
+
+                        if is_session_specific {
+                            log::debug!("[MemoryExtractor] Filtering out session-specific memory - key: {}, value: {}", k, v);
+                            continue;
+                        }
+
+                        // Also scrub any unexpected paths left in key or value
+                        let scrubbed_k = scrub_paths(k);
+                        let scrubbed_v = scrub_paths(v);
+
+                        if scrubbed_v.trim().is_empty() {
+                            continue;
+                        }
+
+                        store.set(&scrubbed_k, &scrubbed_v, cat);
                         count += 1;
-                        log::debug!("[MemoryExtractor] Saved memory -> {}: {}", k, v);
+                        log::debug!("[MemoryExtractor] Saved memory -> {}: {}", scrubbed_k, scrubbed_v);
                     }
                 }
                 if count > 0 {

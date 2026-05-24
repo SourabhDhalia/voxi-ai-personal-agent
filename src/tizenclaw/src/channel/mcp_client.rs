@@ -1879,6 +1879,26 @@ impl McpClientManager {
 
     pub fn requires_confirmation(&self, full_name: &str, keywords: &[String]) -> bool {
         let name_lower = full_name.to_ascii_lowercase();
+
+        // Check if this is a high-risk tool name explicitly
+        let is_high_risk = name_lower.contains("checkout")
+            || name_lower.contains("pay")
+            || name_lower.contains("payment")
+            || name_lower.contains("place_order")
+            || name_lower.contains("book")
+            || name_lower.contains("reserve");
+
+        // Check if this is a low-risk/query tool name
+        let is_low_risk = name_lower.contains("search")
+            || name_lower.contains("list")
+            || name_lower.contains("view")
+            || name_lower.contains("get")
+            || name_lower.contains("cart");
+
+        if is_low_risk && !is_high_risk {
+            return false;
+        }
+
         let matches_name = keywords.iter().any(|keyword| {
             let keyword = keyword.trim().to_ascii_lowercase();
             !keyword.is_empty() && name_lower.contains(&keyword)
@@ -1899,6 +1919,22 @@ impl McpClientManager {
             .map(|tool| tool.original_name.to_ascii_lowercase());
 
         if let Some(orig) = original_name {
+            // Also apply the low-risk bypass to the original name
+            let is_orig_high_risk = orig.contains("checkout")
+                || orig.contains("pay")
+                || orig.contains("payment")
+                || orig.contains("place_order")
+                || orig.contains("book")
+                || orig.contains("reserve");
+            let is_orig_low_risk = orig.contains("search")
+                || orig.contains("list")
+                || orig.contains("view")
+                || orig.contains("get")
+                || orig.contains("cart");
+            if is_orig_low_risk && !is_orig_high_risk {
+                return false;
+            }
+
             return keywords.iter().any(|keyword| {
                 let keyword = keyword.trim().to_ascii_lowercase();
                 !keyword.is_empty() && orig.contains(&keyword)
@@ -1947,6 +1983,24 @@ impl McpClientManager {
         Err(McpToolResolveError::NotFound)
     }
 
+    fn get_or_create_zepto_device_id(&self) -> String {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        let dir = PathBuf::from(home).join(".tizenclaw");
+        let file_path = dir.join("zepto_device_id");
+        
+        if let Ok(id) = std::fs::read_to_string(&file_path) {
+            let trimmed = id.trim().to_string();
+            if !trimmed.is_empty() {
+                return trimmed;
+            }
+        }
+        
+        let _ = std::fs::create_dir_all(&dir);
+        let new_id = uuid::Uuid::new_v4().to_string();
+        let _ = std::fs::write(&file_path, &new_id);
+        new_id
+    }
+
     pub fn resolve_tool_alias(
         &self,
         requested_name: &str,
@@ -1961,7 +2015,19 @@ impl McpClientManager {
         args: &Value,
     ) -> Result<Value, McpToolResolveError> {
         let (client_index, tool_info) = self.resolve_tool_alias_with_client(requested_name)?;
-        Ok(self.clients[client_index].call_tool(&tool_info.original_name, args))
+        
+        let mut final_args = args.clone();
+        if tool_info.server_name == "zepto" {
+            if let Some(obj) = final_args.as_object_mut() {
+                if !obj.contains_key("deviceId") && !obj.contains_key("device_id") {
+                    let dev_id = self.get_or_create_zepto_device_id();
+                    obj.insert("deviceId".to_string(), Value::String(dev_id.clone()));
+                    obj.insert("device_id".to_string(), Value::String(dev_id));
+                }
+            }
+        }
+        
+        Ok(self.clients[client_index].call_tool(&tool_info.original_name, &final_args))
     }
 
     /// Route a tool call to the appropriate client.

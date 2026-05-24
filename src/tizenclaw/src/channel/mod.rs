@@ -72,7 +72,11 @@ impl ChannelRegistry {
             if ch.start() {
                 log::info!("Channel '{}' started", ch.name());
             } else {
-                log::warn!("Channel '{}' failed to start", ch.name());
+                if ch.name() == "telegram" {
+                    log::info!("Channel 'telegram' disabled (invalid token)");
+                } else {
+                    log::warn!("Channel '{}' failed to start", ch.name());
+                }
             }
         }
     }

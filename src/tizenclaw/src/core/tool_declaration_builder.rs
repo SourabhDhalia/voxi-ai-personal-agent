@@ -108,6 +108,21 @@ impl ToolDeclarationBuilder {
 
     fn push_meta_tools(tools: &mut Vec<LlmToolDecl>) {
         tools.push(LlmToolDecl {
+            name: "debug_list_tools".into(),
+            description: "Debug tool to list all registered tools (local, embedded, and MCP).".into(),
+            parameters: json!({"type": "object", "properties": {}, "required": []}),
+        });
+        tools.push(LlmToolDecl {
+            name: "debug_mcp_server_status".into(),
+            description: "Debug tool to inspect the connection and auth statuses of all configured MCP servers.".into(),
+            parameters: json!({"type": "object", "properties": {}, "required": []}),
+        });
+        tools.push(LlmToolDecl {
+            name: "debug_session_context".into(),
+            description: "Debug tool to inspect the current session context details and cumulative stats.".into(),
+            parameters: json!({"type": "object", "properties": {}, "required": []}),
+        });
+        tools.push(LlmToolDecl {
             name: "get_agent_status".into(),
             description: "Get current agent system status.".into(),
             parameters: json!({"type": "object", "properties": {}, "required": []}),

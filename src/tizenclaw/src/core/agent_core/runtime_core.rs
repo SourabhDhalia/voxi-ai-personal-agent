@@ -46,6 +46,7 @@ pub struct PendingMcpConfirmation {
     pub tool_name: String,
     pub args: Value,
     pub timestamp_ms: u64,
+    pub tool_call_id: String,
 }
 
 #[derive(Clone, Debug)]

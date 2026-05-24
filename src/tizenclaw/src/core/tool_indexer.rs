@@ -664,10 +664,89 @@ pub fn build_indexing_prompt(metadata: &ToolsMetadata) -> String {
 /// Parse the LLM response JSON and write the generated files to disk.
 ///
 /// Returns the number of files successfully written.
+pub fn repair_json(s: &str) -> String {
+    let clean = s.trim();
+    if clean.is_empty() {
+        return clean.to_string();
+    }
+
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut stack = Vec::new();
+    let mut chars = clean.chars().collect::<Vec<char>>();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+        } else {
+            match c {
+                '"' => {
+                    in_string = true;
+                    escaped = false;
+                }
+                '{' => {
+                    stack.push('}');
+                }
+                '[' => {
+                    stack.push(']');
+                }
+                '}' => {
+                    if stack.last() == Some(&'}') {
+                        stack.pop();
+                    }
+                }
+                ']' => {
+                    if stack.last() == Some(&']') {
+                        stack.pop();
+                    }
+                }
+                _ => {}
+            }
+        }
+        i += 1;
+    }
+
+    if in_string {
+        if escaped && !chars.is_empty() {
+            chars.pop();
+        }
+        chars.push('"');
+    }
+
+    while let Some(&last) = chars.last() {
+        if last.is_whitespace() || last == ',' || last == ':' {
+            chars.pop();
+        } else {
+            break;
+        }
+    }
+
+    while let Some(close_char) = stack.pop() {
+        chars.push(close_char);
+    }
+
+    let mut repaired = chars.into_iter().collect::<String>();
+    if let Ok(re) = regex::Regex::new(r",\s*([\}\]])") {
+        repaired = re.replace_all(&repaired, "$1").to_string();
+    }
+    repaired
+}
+
+/// Parse the LLM response JSON and write the generated files to disk.
+///
+/// Returns the number of files successfully written.
 pub fn apply_llm_index_result(result: &str, root_dir: &str, metadata: &ToolsMetadata) -> usize {
     let clean = result.trim();
     // Strip markdown code fences if present
-    let json_str = if clean.starts_with("```json") {
+    let mut json_str = if clean.starts_with("```json") {
         clean
             .trim_start_matches("```json")
             .trim_end_matches("```")
@@ -681,17 +760,44 @@ pub fn apply_llm_index_result(result: &str, root_dir: &str, metadata: &ToolsMeta
         clean
     };
 
-    let parsed: serde_json::Value = match serde_json::from_str(json_str) {
+    // Find the first '{' to isolate the JSON object if there's any preceding text.
+    if let Some(start_idx) = json_str.find('{') {
+        let mut sliced = &json_str[start_idx..];
+        if sliced.ends_with("```") {
+            sliced = sliced.trim_end_matches("```").trim();
+        }
+        json_str = sliced;
+    }
+
+    let repaired_json = repair_json(json_str);
+    let parsed: serde_json::Value = match serde_json::from_str(&repaired_json) {
         Ok(v) => v,
         Err(e) => {
             log::warn!(
-                "ToolIndexer: Failed to parse LLM index response: {} (response snippet: {:?})",
+                "ToolIndexer: Failed to parse LLM index response after repair: {} (original: {:?}, repaired: {:?})",
                 e,
-                clean.chars().take(200).collect::<String>()
+                clean.chars().take(200).collect::<String>(),
+                repaired_json.chars().take(200).collect::<String>()
             );
             return 0;
         }
     };
+
+    // Validate schema: object with tools_md (String) and indices (Object)
+    if !parsed.is_object() {
+        log::warn!("ToolIndexer: LLM index response is not a JSON object");
+        return 0;
+    }
+    let has_tools_md = parsed.get("tools_md").map_or(false, |v| v.is_string());
+    let has_indices = parsed.get("indices").map_or(false, |v| v.is_object());
+    if !has_tools_md || !has_indices {
+        log::warn!(
+            "ToolIndexer: Schema validation failed. tools_md is string: {}, indices is object: {}",
+            has_tools_md,
+            has_indices
+        );
+        return 0;
+    }
 
     let root = Path::new(root_dir);
     let mut written = 0;

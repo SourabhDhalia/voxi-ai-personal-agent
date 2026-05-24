@@ -35,7 +35,38 @@ impl LlmBackend for OllamaBackend {
         if let Some(e) = config["endpoint"].as_str() {
             self.endpoint = e.into();
         }
-        true
+
+        // Validate configured Ollama host via startup health check on /api/tags
+        let url = format!("{}/api/tags", self.endpoint);
+        log::info!("Ollama backend: performing startup health check to {}", url);
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_millis(1500))
+            .build();
+
+        match client {
+            Ok(cl) => {
+                match cl.get(&url).send() {
+                    Ok(resp) => {
+                        if resp.status().is_success() {
+                            log::info!("Ollama backend health check succeeded (status {}).", resp.status());
+                            true
+                        } else {
+                            log::warn!("BOOT WARNING: Ollama endpoint '{}' returned error status: {}. Is the server configured correctly?", self.endpoint, resp.status());
+                            false
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("BOOT WARNING: Ollama connection failed to '{}': {}. Is Ollama running? Is port 11434 open? Is the firewall allowing access? Is OLLAMA_HOST=0.0.0.0:11434 set on the server?", self.endpoint, e);
+                        false
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!("BOOT WARNING: Failed to build HTTP client for Ollama health check: {}", e);
+                false
+            }
+        }
     }
 
     async fn chat(

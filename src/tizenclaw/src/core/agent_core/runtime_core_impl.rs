@@ -1185,6 +1185,17 @@ impl AgentCore {
             we.load_workflows_from(&paths.workflows_dir.to_string_lossy());
         }
 
+        // Load MCP config
+        {
+            let mcp_config_path = paths.config_dir.join("mcp_servers.json");
+            let mut mcp = self.mcp_client_manager.write().await;
+            if mcp.load_config_and_connect(&mcp_config_path.to_string_lossy()) {
+                log::info!("MCP Client Manager loaded config and connected successfully.");
+            } else {
+                log::warn!("MCP Client Manager: failed to load or connect via mcp_servers.json at {:?}", mcp_config_path);
+            }
+        }
+
         {
             let mut bridge = self.action_bridge.lock().unwrap();
             bridge.start();
