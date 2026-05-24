@@ -34,7 +34,7 @@ Every final response must place a bold plan/next-step summary at the very top, f
 
 For choices:
 `**Next Step**: [Brief action plan, e.g. Adding option 7 to Zepto cart. Reply with quantity to confirm.]`
-Group choices by store (e.g., Zepto section, then Swiggy Instamart section) and sort them by price ascending within each section.
+Group choices by store (e.g., Zepto section, then Swiggy Instamart section) and sort them by price ascending within each section. Show ONLY the top 3 best matching or cheapest items per store/service.
 Format each item as a simplified bulleted list:
 `1. [Store] Item Name - Price (Status)`
 `2. [Store] Item Name - Price (Status)`
