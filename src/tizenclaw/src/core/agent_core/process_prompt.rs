@@ -265,7 +265,7 @@ impl AgentCore {
                     }
                 } else {
                     let td = self.tool_dispatcher.read().await;
-                    match td.execute_in_dir(&pending_action.tool_name, &pending_action.args, None, &session_workdir).await {
+                    match td.execute_in_dir(&pending_action.tool_name, &pending_action.args, None, Some(&session_workdir)).await {
                         Ok(val) => val,
                         Err(e) => json!({"error": e}),
                     }
@@ -3137,10 +3137,12 @@ fn compact_shopping_search_result(value: &Value, query: &str) -> Value {
                 return Value::Array(vec![]);
             }
             if arr[0].is_object() {
+                let query_lower = query.to_lowercase();
+                let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+
                 let mut scored: Vec<(usize, Value)> = arr.iter().map(|item| {
                     let score = if let Some(obj) = item.as_object() {
                         let mut s = 0usize;
-                        let query_words: Vec<&str> = query.to_lowercase().split_whitespace().collect();
                         for &field in &["name", "title", "brand", "description"] {
                             if let Some(val_str) = obj.get(field).and_then(|v| v.as_str()) {
                                 let val_lower = val_str.to_lowercase();

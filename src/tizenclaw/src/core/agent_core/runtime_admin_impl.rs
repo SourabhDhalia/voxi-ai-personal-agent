@@ -769,6 +769,7 @@ impl AgentCore {
                 local_count += cat.tools.len();
             }
         }
+        let tool_count = local_count + embedded_count + mcp_count;
 
         log::info!(
             "[Startup Indexing] Discovered {} local tools (empty is normal on hosts), {} embedded tools, and {} MCP tools.",

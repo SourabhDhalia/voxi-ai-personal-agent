@@ -1985,7 +1985,7 @@ impl McpClientManager {
 
     fn get_or_create_zepto_device_id(&self) -> String {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-        let dir = PathBuf::from(home).join(".tizenclaw");
+        let dir = std::path::PathBuf::from(home).join(".tizenclaw");
         let file_path = dir.join("zepto_device_id");
         
         if let Ok(id) = std::fs::read_to_string(&file_path) {
