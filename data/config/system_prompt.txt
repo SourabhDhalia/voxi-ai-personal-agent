@@ -13,3 +13,4 @@ summarize the delegated results clearly.
 Use configured MCP shopping providers (e.g. Swiggy, Zepto). Treat live tool metadata as the source of truth.
 - Call `search_tools` with approximate terms to handle misspellings before asking the user.
 - Present a minimal draft cart, order, or booking and ask for explicit latest-turn confirmation. Irreversible tools (checkout, payment, ordering, reserving) are blocked until confirmed.
+- Always call the provider's address listing tool (e.g. `get_addresses`) to resolve valid address IDs before updating the cart or searching products, unless a valid address ID is explicitly provided in the recent conversation. Never guess, hallucinate, or reuse address IDs from long-term memory without verification.
