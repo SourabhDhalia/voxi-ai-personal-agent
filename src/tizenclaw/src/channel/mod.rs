@@ -218,5 +218,6 @@ pub mod mcp_server;
 pub mod slack_channel;
 pub mod telegram_client;
 pub mod voice_channel;
+pub mod tv_channel;
 pub mod web_dashboard;
 pub mod webhook_channel;

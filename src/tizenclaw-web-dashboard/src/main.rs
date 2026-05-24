@@ -111,6 +111,7 @@ const ALLOWED_CONFIGS: &[&str] = &[
     "agent_roles.json",
     "tunnel_config.json",
     "web_search_config.json",
+    "system_prompt.txt",
 ];
 const BRIDGE_RATE_LIMIT_PER_SECOND: usize = 10;
 
@@ -121,6 +122,7 @@ struct AppState {
     web_root: PathBuf,
     config_dir: PathBuf,
     data_dir: PathBuf,
+    channel_name: String,
     admin_pw_hash: Arc<Mutex<String>>,
     active_tokens: Arc<Mutex<HashSet<String>>>,
     bridge_rate: Arc<Mutex<HashMap<String, Vec<u64>>>>,
@@ -200,12 +202,17 @@ async fn main() {
     let mut web_root_str = String::new();
     let mut config_dir_str = String::new();
     let mut data_dir_str = String::new();
+    let mut channel_name = "web_dashboard".to_string();
 
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "--port" if i + 1 < args.len() => {
                 port = args[i + 1].parse().unwrap_or(default_dashboard_port());
+                i += 2;
+            }
+            "--name" if i + 1 < args.len() => {
+                channel_name = args[i + 1].clone();
                 i += 2;
             }
             "--web-root" if i + 1 < args.len() => {
@@ -262,6 +269,7 @@ async fn main() {
         web_root: web_root.clone(),
         config_dir,
         data_dir,
+        channel_name,
         admin_pw_hash: Arc::new(Mutex::new(pw_hash)),
         active_tokens: Arc::new(Mutex::new(HashSet::new())),
         bridge_rate: Arc::new(Mutex::new(HashMap::new())),
@@ -497,16 +505,18 @@ fn render_session_markdown(messages: &[DashboardSessionMessage]) -> String {
     out.trim_end().to_string()
 }
 
-fn outbound_queue_path(data_dir: &std::path::Path) -> PathBuf {
-    data_dir.join("outbound").join("web_dashboard.jsonl")
+fn outbound_queue_path(data_dir: &std::path::Path, channel_name: &str) -> PathBuf {
+    let filename = format!("{}.jsonl", channel_name);
+    data_dir.join("outbound").join(filename)
 }
 
 fn load_outbound_messages(
     data_dir: &std::path::Path,
+    channel_name: &str,
     since: Option<u64>,
     limit: usize,
 ) -> Vec<OutboundMessage> {
-    let path = outbound_queue_path(data_dir);
+    let path = outbound_queue_path(data_dir, channel_name);
     let content = match std::fs::read_to_string(path) {
         Ok(content) => content,
         Err(_) => return Vec::new(),
@@ -730,7 +740,10 @@ async fn api_metrics() -> Json<Value> {
     }))
 }
 
-async fn api_chat(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+async fn api_chat(
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let prompt = payload
         .get("prompt")
         .and_then(|v| v.as_str())
@@ -748,7 +761,7 @@ async fn api_chat(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let session_id = if requested_session_id.trim().is_empty() {
-        generate_session_id("web")
+        generate_session_id(&state.channel_name)
     } else {
         requested_session_id.trim().to_string()
     };
@@ -818,7 +831,7 @@ async fn api_outbound_messages(
         .limit
         .unwrap_or(20)
         .clamp(1, MAX_OUTBOUND_MESSAGES);
-    let mut messages = load_outbound_messages(&state.data_dir, query.since, limit);
+    let mut messages = load_outbound_messages(&state.data_dir, &state.channel_name, query.since, limit);
 
     if let Some(ref q_sid) = query.session_id {
         messages.retain(|msg| {

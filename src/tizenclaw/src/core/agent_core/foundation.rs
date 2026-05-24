@@ -764,6 +764,65 @@ fn append_dashboard_outbound_message(
     Ok(record)
 }
 
+fn tv_outbound_queue_path(base_dir: &Path) -> PathBuf {
+    base_dir.join("outbound").join("tv.jsonl")
+}
+
+fn append_tv_outbound_message(
+    base_dir: &Path,
+    title: Option<&str>,
+    message: &str,
+    session_id: Option<&str>,
+) -> Result<Value, String> {
+    let message = message.trim();
+    if message.is_empty() {
+        return Err("Outbound message cannot be empty".to_string());
+    }
+
+    let path = tv_outbound_queue_path(base_dir);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut entries = if let Ok(content) = std::fs::read_to_string(&path) {
+        content
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    let created_at_ms = current_timestamp_millis();
+    let record = json!({
+        "id": format!("tv-{}", created_at_ms),
+        "channel": "tv",
+        "title": title.unwrap_or("TizenClaw"),
+        "message": message,
+        "session_id": session_id,
+        "created_at_ms": created_at_ms,
+    });
+    entries.push(record.to_string());
+    if entries.len() > MAX_OUTBOUND_DASHBOARD_MESSAGES {
+        let start = entries.len() - MAX_OUTBOUND_DASHBOARD_MESSAGES;
+        entries = entries.split_off(start);
+    }
+
+    let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    for entry in entries {
+        writeln!(file, "{}", entry).map_err(|e| e.to_string())?;
+    }
+
+    Ok(record)
+}
+
 fn tool_schema_char_count(tools: &[backend::LlmToolDecl]) -> usize {
     tools
         .iter()

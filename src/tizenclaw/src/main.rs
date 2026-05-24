@@ -180,6 +180,30 @@ async fn main() {
             }
         }
 
+        // Ensure tv is always registered (auto_start follows config).
+        // If not present in config, register with auto_start = true as default.
+        if !reg.has_channel("tv") {
+            let web_root = platform.paths.web_root.to_string_lossy().to_string();
+            let tv_config = channel::ChannelConfig {
+                name: "tv".into(),
+                channel_type: "tv".into(),
+                enabled: true,
+                settings: serde_json::json!({
+                    "port": 9092,
+                    "localhost_only": false,
+                    "web_root": web_root
+                }),
+            };
+            if let Some(ch) =
+                channel::channel_factory::create_channel(&tv_config, Some(agent.clone()))
+            {
+                reg.register(ch, true);
+                log::info!(
+                    "[Boot] TvChannel registered (port 9092, auto_start=true)"
+                );
+            }
+        }
+
         reg.start_all();
     }
     boot_logger.record_status("Channels", true, "channel registry initialized");

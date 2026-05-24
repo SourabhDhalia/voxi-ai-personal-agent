@@ -257,6 +257,23 @@ impl AgentCore {
                         "error": err,
                     })),
                 },
+                "tv" => match append_tv_outbound_message(
+                    &self.platform.paths.data_dir,
+                    title,
+                    message,
+                    session_id,
+                ) {
+                    Ok(record) => results.push(json!({
+                        "channel": "tv",
+                        "status": "sent",
+                        "record": record,
+                    })),
+                    Err(err) => results.push(json!({
+                        "channel": "tv",
+                        "status": "error",
+                        "error": err,
+                    })),
+                },
                 "telegram" => {
                     results.push(self.send_telegram_outbound_message(title, message).await);
                 }

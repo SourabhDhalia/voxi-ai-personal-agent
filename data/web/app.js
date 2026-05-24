@@ -1314,7 +1314,8 @@
         'tool_policy.json': 'Tool Policy',
         'agent_roles.json': 'Agent Roles',
         'tunnel_config.json': 'Tunnel Configuration',
-        'web_search_config.json': 'Web Search'
+        'web_search_config.json': 'Web Search',
+        'system_prompt.txt': 'System Prompt'
     };
     const CONFIG_DESCRIPTIONS = {
         'llm_config.json': 'Manage model backends, token limits, and sampling options.',
@@ -1326,7 +1327,8 @@
         'tool_policy.json': 'Manage allowed tools and execution policies.',
         'agent_roles.json': 'Define agent roles and prompt routing behavior.',
         'tunnel_config.json': 'Manage tunnel endpoints and authentication tokens.',
-        'web_search_config.json': 'Configure search providers and search options.'
+        'web_search_config.json': 'Configure search providers and search options.',
+        'system_prompt.txt': 'Edit the core system instructions and behavioral constraints of the agent.'
     };
     let adminConfigsCache = [];
     let activeConfigName = null;

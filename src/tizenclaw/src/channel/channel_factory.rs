@@ -8,6 +8,7 @@ pub fn create_channel(
 ) -> Option<Box<dyn Channel + Send + Sync>> {
     match config.channel_type.as_str() {
         "web_dashboard" => Some(Box::new(super::web_dashboard::WebDashboard::new(config))),
+        "tv" => Some(Box::new(super::tv_channel::TvChannel::new(config))),
         "webhook" => Some(Box::new(super::webhook_channel::WebhookChannel::new(
             config,
         ))),
