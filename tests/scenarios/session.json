@@ -1,0 +1,24 @@
+{
+  "name": "session_lifecycle",
+  "steps": [
+    {
+      "name": "list_sessions",
+      "method": "session.list",
+      "params": {},
+      "assertions": [
+        {
+          "path": "sessions",
+          "exists": true
+        }
+      ]
+    },
+    {
+      "name": "clear_session",
+      "method": "session.clear",
+      "params": {
+        "session_id": "test-cleanup"
+      },
+      "assertions": []
+    }
+  ]
+}

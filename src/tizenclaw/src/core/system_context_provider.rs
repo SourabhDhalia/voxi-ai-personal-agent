@@ -74,10 +74,11 @@ impl SystemContextProvider {
         }
 
         // Disk
+        // SAFETY: `buf` is written by `statvfs`, and the path is a static
+        // NUL-terminated C string literal with process lifetime.
         let statvfs = unsafe {
             let mut buf: libc::statvfs = std::mem::zeroed();
-            let path = std::ffi::CString::new("/").unwrap();
-            if libc::statvfs(path.as_ptr(), &mut buf) == 0 {
+            if libc::statvfs(c"/".as_ptr(), &mut buf) == 0 {
                 Some(buf)
             } else {
                 None

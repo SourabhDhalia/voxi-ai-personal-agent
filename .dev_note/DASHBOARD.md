@@ -288,3 +288,9 @@
 | Stop Request & Zepto MCP Routing Fix | Supervisor Gate 5 | PASS | Review confirms cancellation checks, Stop endpoints, and Zepto flow sequence address the plans. |
 | Stop Request & Zepto MCP Routing Fix | 6. Commit | PASS | Preparing `.tmp/commit_msg.txt` commit and push for Ubuntu/Tizen pull-and-test flow. |
 | Stop Request & Zepto MCP Routing Fix | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt`; no inline commit message. |
+| Korian Version Selective Merge | 1. Planning | PASS | Outlined selective merge of modularized structures, Korean worksheet grounding, clawhub, provider selection, and runtime capabilities. |
+| Korian Version Selective Merge | Supervisor Gate 1 | PASS | Design plan reviewed and submitted for user feedback. |
+| Korian Version Selective Merge | 2. Design | PASS | Designed inclusion architecture, modular file map, and custom feature preservation strategies. |
+| Korian Version Selective Merge | Supervisor Gate 2 | PASS | Architectural boundaries, FFI, and module layout verified. |
+
+

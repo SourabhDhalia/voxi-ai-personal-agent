@@ -1,6 +1,6 @@
 //! Safety guard — controls which tools are allowed based on safety policy.
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashSet;
 
 /// Side effect classification for tools.
@@ -51,6 +51,28 @@ impl SafetyGuard {
             allow_irreversible: false,
             max_tool_calls_per_session: 50,
         }
+    }
+
+    pub fn block_tool(&mut self, tool_name: &str) {
+        self.blocked_tools.insert(tool_name.to_string());
+    }
+
+    pub fn allow_irreversible(&mut self, allow: bool) {
+        self.allow_irreversible = allow;
+    }
+
+    pub fn is_blocked(&self, tool_name: &str) -> bool {
+        self.blocked_tools.contains(tool_name)
+    }
+
+    pub fn status_json(&self) -> Value {
+        let mut blocked_tools = self.blocked_tools.iter().cloned().collect::<Vec<_>>();
+        blocked_tools.sort();
+        serde_json::json!({
+            "blocked_tools": blocked_tools,
+            "allow_irreversible": self.allow_irreversible,
+            "max_tool_calls_per_session": self.max_tool_calls_per_session,
+        })
     }
 
     /// Load safety policy from a JSON config file.
@@ -106,8 +128,53 @@ impl SafetyGuard {
 
         for blocked in &self.blocked_args {
             if args.contains(blocked.as_str()) {
-                return Err(format!("Blocked argument pattern '{}' detected", blocked));
+                return Err(format!(
+                    "Tool '{}' blocked: argument contains denied pattern '{}'",
+                    tool_name, blocked
+                ));
             }
+        }
+
+        Ok(())
+    }
+
+    /// Check a structured tool call against the active policy.
+    pub fn check_tool_call(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        side_effect: SideEffect,
+        session_call_count: usize,
+    ) -> Result<(), String> {
+        if self.blocked_tools.contains(tool_name) {
+            return Err(format!(
+                "Tool '{}' is blocked by safety policy",
+                tool_name
+            ));
+        }
+
+        if side_effect == SideEffect::Irreversible && !self.allow_irreversible {
+            return Err(format!(
+                "Tool '{}' is blocked because irreversible side effects are disabled",
+                tool_name
+            ));
+        }
+
+        if self.max_tool_calls_per_session > 0
+            && session_call_count >= self.max_tool_calls_per_session
+        {
+            return Err(format!(
+                "Tool '{}' blocked: session tool call limit {} reached",
+                tool_name,
+                self.max_tool_calls_per_session
+            ));
+        }
+
+        if let Some(blocked_arg) = self.find_blocked_arg(args) {
+            return Err(format!(
+                "Tool '{}' blocked: argument value '{}' matches a denied pattern",
+                tool_name, blocked_arg
+            ));
         }
 
         Ok(())
@@ -131,6 +198,19 @@ impl SafetyGuard {
             }
         }
         false
+    }
+
+    fn find_blocked_arg<'a>(&'a self, value: &'a Value) -> Option<&'a str> {
+        match value {
+            Value::String(text) => self
+                .blocked_args
+                .iter()
+                .find(|blocked| text == blocked.as_str() || text.contains(blocked.as_str()))
+                .map(String::as_str),
+            Value::Array(items) => items.iter().find_map(|item| self.find_blocked_arg(item)),
+            Value::Object(map) => map.values().find_map(|item| self.find_blocked_arg(item)),
+            _ => None,
+        }
     }
 }
 
@@ -210,5 +290,57 @@ mod tests {
         );
         assert_eq!(SideEffect::from_str("reversible"), SideEffect::Reversible);
         assert_eq!(SideEffect::from_str("other"), SideEffect::Reversible);
+    }
+
+    #[test]
+    fn structured_tool_call_respects_blocked_tools() {
+        let mut guard = SafetyGuard::new();
+        guard.blocked_tools.insert("danger_tool".to_string());
+
+        let result = guard.check_tool_call(
+            "danger_tool",
+            &serde_json::json!({"path": "/tmp"}),
+            SideEffect::None,
+            0,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn safety_guard_blocks_denied_tool() {
+        let mut guard = SafetyGuard::new();
+        guard.block_tool("dangerous_tool");
+        assert!(guard.is_blocked("dangerous_tool"));
+        assert!(!guard.is_blocked("safe_tool"));
+    }
+
+    #[test]
+    fn structured_tool_call_respects_session_budget() {
+        let mut guard = SafetyGuard::new();
+        guard.max_tool_calls_per_session = 1;
+
+        let result = guard.check_tool_call(
+            "echo",
+            &serde_json::json!({"args": "hello"}),
+            SideEffect::None,
+            1,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn structured_tool_call_blocks_blocked_arg_value() {
+        let guard = SafetyGuard::new();
+
+        let result = guard.check_tool_call(
+            "echo",
+            &serde_json::json!({"command": "shutdown"}),
+            SideEffect::None,
+            0,
+        );
+
+        assert!(result.is_err());
     }
 }
