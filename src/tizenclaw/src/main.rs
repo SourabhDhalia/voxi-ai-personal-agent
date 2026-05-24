@@ -99,6 +99,13 @@ async fn main() {
             "agent core initialization failed"
         },
     );
+
+    if std::env::args().any(|arg| arg == "--devel") {
+        core::devel_mode::run(&agent).await;
+        agent.shutdown().await;
+        return;
+    }
+
     let agent = Arc::new(agent);
 
     if platform.platform_name() == "Tizen" {

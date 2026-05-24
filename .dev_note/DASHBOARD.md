@@ -292,5 +292,13 @@
 | Korian Version Selective Merge | Supervisor Gate 1 | PASS | Design plan reviewed and submitted for user feedback. |
 | Korian Version Selective Merge | 2. Design | PASS | Designed inclusion architecture, modular file map, and custom feature preservation strategies. |
 | Korian Version Selective Merge | Supervisor Gate 2 | PASS | Architectural boundaries, FFI, and module layout verified. |
-
-
+| Minimal Korian Selective Audit | 1. Planning | PASS | Reduced scope to only unique, isolated missing pieces from the Korean snapshot; broad restore explicitly rejected. |
+| Minimal Korian Selective Audit | Supervisor Gate 1 | PASS | Current repo is source of truth; Downloads checkout remains unreadable due macOS privacy restrictions. |
+| Minimal Korian Selective Audit | 2. Design | PASS | Selected only the existing `devel_mode` CLI dispatcher as low-risk and opt-in; left scheduler, MCP, Zepto, Ollama, cache, and RAG paths untouched. |
+| Minimal Korian Selective Audit | Supervisor Gate 2 | PASS | Design avoids runtime behavior changes unless `--devel` is explicitly passed. |
+| Minimal Korian Selective Audit | 3. Development | PASS | Wired `--devel` to run existing developer mode after AgentCore initialization, then shut down and exit cleanly. |
+| Minimal Korian Selective Audit | Supervisor Gate 3 | PASS | Change is isolated to daemon entrypoint and does not alter normal boot flow. |
+| Minimal Korian Selective Audit | 4. Build/Deploy | PASS | Ran `./deploy.sh --dry-run -a x86_64 -S` and `./deploy.sh --dry-run -a armv7l -S`; no local cargo command executed. |
+| Minimal Korian Selective Audit | Supervisor Gate 4 | PASS | Dry-run paths validate packaging command shape while real GBS/sdb target execution remains on Ubuntu/Tizen devices. |
+| Minimal Korian Selective Audit | 5. Test/Review | PASS | `git diff --check` passed; reviewed diff confirms only opt-in `--devel` entrypoint and dashboard notes changed. |
+| Minimal Korian Selective Audit | Supervisor Gate 5 | PASS | Review confirms Zepto, Ollama, MCP, cancellation, session lock, cache, scheduler, and ONNX/RAG paths are untouched. |
