@@ -799,6 +799,7 @@ dependencies = [
  "libc",
  "log",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -978,13 +979,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
-name = "openssl-src"
-version = "300.5.5+3.5.5"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "openssl-sys"
 version = "0.9.112"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -992,7 +986,6 @@ checksum = "57d55af3b3e226502be1526dfdba67ab0e9c96fc293004e79576b2b9edb0dbdb"
 dependencies = [
  "cc",
  "libc",
- "openssl-src",
  "pkg-config",
  "vcpkg",
 ]
@@ -1493,6 +1486,7 @@ dependencies = [
  "tokio",
  "tower-http 0.5.2",
  "uuid",
+ "zip",
 ]
 
 [[package]]
@@ -1556,18 +1550,13 @@ name = "tizenclaw-web-dashboard"
 version = "1.0.0"
 dependencies = [
  "axum",
- "base64",
- "hyper",
- "hyper-util",
  "libc",
- "libtizenclaw-core",
  "log",
- "openssl",
- "rusqlite",
  "serde",
  "serde_json",
  "tokio",
  "tower-http 0.5.2",
+ "uuid",
 ]
 
 [[package]]
@@ -2140,7 +2129,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "zip"
+version = "2.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
+dependencies = [
+ "arbitrary",
+ "crc32fast",
+ "crossbeam-utils",
+ "displaydoc",
+ "flate2",
+ "indexmap",
+ "memchr",
+ "thiserror",
+ "zopfli",
+]
+
+[[package]]
 name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[package]]
+name = "zopfli"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f05cd8797d63865425ff89b5c4a48804f35ba0ce8d125800027ad6017d2b5249"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
+
+[[patch.unused]]
+name = "openssl-src"
+version = "300.5.5+3.5.5"
