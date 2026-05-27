@@ -1800,6 +1800,18 @@ impl McpClient {
             })
     }
 
+    pub fn get_expected_parameter_keys(&self) -> std::collections::HashSet<String> {
+        let mut keys = std::collections::HashSet::new();
+        for tool in &self.tool_infos {
+            if let Some(properties) = tool.parameters.get("properties").and_then(|p| p.as_object()) {
+                for key in properties.keys() {
+                    keys.insert(key.clone());
+                }
+            }
+        }
+        keys
+    }
+
     /// Call a tool on the remote server.
     pub fn call_tool(&mut self, tool_name: &str, arguments: &Value) -> Value {
         if !self.connected {
@@ -2431,6 +2443,14 @@ impl McpClientManager {
 
     pub fn get_client(&self, name: &str) -> Option<&McpClient> {
         self.clients.iter().find(|c| c.server_name == name)
+    }
+
+    pub fn get_server_parameter_keys(&self, server_name: &str) -> std::collections::HashSet<String> {
+        if let Some(client) = self.get_client(server_name) {
+            client.get_expected_parameter_keys()
+        } else {
+            std::collections::HashSet::new()
+        }
     }
 }
 

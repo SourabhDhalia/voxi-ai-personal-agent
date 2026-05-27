@@ -289,7 +289,14 @@ impl AgentCore {
                 // If this is a search tool, compact it
                 if pending_action.tool_name.contains("search") && tool_result.get("error").is_none() {
                     let search_query = pending_action.args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                    tool_result = compact_shopping_search_result(&tool_result, search_query);
+                    let mut critical_keys = std::collections::HashSet::new();
+                    if pending_action.tool_name.starts_with("mcp_") {
+                        let mcp = self.mcp_client_manager.read().await;
+                        if let Ok(tool_info) = mcp.resolve_tool_alias(&pending_action.tool_name) {
+                            critical_keys = mcp.get_server_parameter_keys(&tool_info.server_name);
+                        }
+                    }
+                    tool_result = compact_shopping_search_result(&tool_result, search_query, &critical_keys);
                 }
 
                 // Store user message, assistant tool calls message and the tool result message
@@ -1715,7 +1722,11 @@ impl AgentCore {
                             // If this is a search tool, compact it
                             if tc_name_clone.contains("search") && res.get("error").is_none() {
                                 let search_query = tc_args_clone.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                                res = compact_shopping_search_result(&res, search_query);
+                                let mut critical_keys = std::collections::HashSet::new();
+                                if let Ok(tool_info) = mcp.resolve_tool_alias(&tc_name_clone) {
+                                    critical_keys = mcp.get_server_parameter_keys(&tool_info.server_name);
+                                }
+                                res = compact_shopping_search_result(&res, search_query, &critical_keys);
                             }
                             res
                         } else if tc_name_clone == "debug_list_tools" {
@@ -3495,62 +3506,179 @@ fn first_value_text(value: &Value, keys: &[&str]) -> Option<String> {
     })
 }
 
-fn compact_shopping_search_result(value: &Value, query: &str) -> Value {
+fn compact_shopping_search_result(
+    value: &Value,
+    query: &str,
+    critical_keys: &std::collections::HashSet<String>,
+) -> Value {
     match value {
         Value::Array(arr) => {
             if arr.is_empty() {
                 return Value::Array(vec![]);
             }
             if arr[0].is_object() {
+                // Check if this array is an MCP content array (which contains {"type": "text", "text": "..."})
+                let is_mcp_content = arr[0].get("type").is_some()
+                    && (arr[0].get("text").is_some() || arr[0].get("image").is_some());
+
+                if is_mcp_content {
+                    return Value::Array(
+                        arr.iter()
+                            .map(|v| compact_shopping_search_result(v, query, critical_keys))
+                            .collect(),
+                    );
+                }
+
+                // If not MCP content, it is a list of product/item objects. Score and keep top 10.
                 let query_lower = query.to_lowercase();
                 let query_words: Vec<&str> = query_lower.split_whitespace().collect();
 
-                let mut scored: Vec<(usize, Value)> = arr.iter().map(|item| {
-                    let score = if let Some(obj) = item.as_object() {
-                        let mut s = 0usize;
-                        for &field in &["name", "title", "brand", "description"] {
-                            if let Some(val_str) = obj.get(field).and_then(|v| v.as_str()) {
-                                let val_lower = val_str.to_lowercase();
-                                for word in &query_words {
-                                    if val_lower.contains(word) {
-                                        s += 10;
+                let mut scored: Vec<(usize, Value)> = arr
+                    .iter()
+                    .map(|item| {
+                        let score = if let Some(obj) = item.as_object() {
+                            let mut s = 0usize;
+                            for &field in &["name", "title", "brand", "description", "displayName", "brandName"] {
+                                if let Some(val_str) = obj.get(field).and_then(|v| v.as_str()) {
+                                    let val_lower = val_str.to_lowercase();
+                                    for word in &query_words {
+                                        if val_lower.contains(word) {
+                                            s += 10;
+                                        }
                                     }
                                 }
                             }
-                        }
-                        s
-                    } else {
-                        0
-                    };
-                    (score, item.clone())
-                }).collect();
+                            s
+                        } else {
+                            0
+                        };
+                        (score, item.clone())
+                    })
+                    .collect();
 
                 scored.sort_by(|a, b| b.0.cmp(&a.0));
 
-                let top_10: Vec<Value> = scored.into_iter().take(10).map(|(_, mut item)| {
-                    if let Some(obj) = item.as_object_mut() {
-                        let essential_keys = [
-                            "id", "productId", "product_id", "name", "title", "price", 
-                            "mrp", "brand", "quantity", "unit", "inStock", "in_stock", 
-                            "available", "availability", "discount", "spinId", "spin_id",
-                            "variantId", "variant_id", "skuId", "sku_id", "itemId",
-                            "item_id", "storeId", "store_id", "selectedAddressId",
-                            "addressId", "restaurantId", "rawProductId", "product_id_v2"
-                        ];
-                        obj.retain(|k, _| essential_keys.contains(&k.as_str()));
-                    }
-                    item
-                }).collect();
+                let top_10: Vec<Value> = scored
+                    .into_iter()
+                    .take(10)
+                    .map(|(_, item)| compact_shopping_search_result(&item, query, critical_keys))
+                    .collect();
 
                 Value::Array(top_10)
             } else {
-                Value::Array(arr.iter().map(|v| compact_shopping_search_result(v, query)).collect())
+                Value::Array(
+                    arr.iter()
+                        .map(|v| compact_shopping_search_result(v, query, critical_keys))
+                        .collect(),
+                )
             }
         }
         Value::Object(obj) => {
+            // Check if there is a query field in this object to update the search term for nested arrays
+            let mut current_query = query.to_string();
+            if let Some(Value::String(q)) = obj.get("query") {
+                if !q.is_empty() {
+                    current_query = q.clone();
+                }
+            }
+
+            // Check if this is an MCP text content object
+            if let (Some(Value::String(mcp_type)), Some(Value::String(text_val))) =
+                (obj.get("type"), obj.get("text"))
+            {
+                if mcp_type == "text" {
+                    // Try parsing the text value as JSON
+                    if let Ok(parsed_json) = serde_json::from_str::<Value>(text_val) {
+                        let compacted_json =
+                            compact_shopping_search_result(&parsed_json, &current_query, critical_keys);
+                        let compacted_str = serde_json::to_string(&compacted_json)
+                            .unwrap_or_else(|_| text_val.clone());
+                        let mut new_obj = obj.clone();
+                        new_obj.insert("text".to_string(), Value::String(compacted_str));
+                        return Value::Object(new_obj);
+                    }
+                }
+            }
+
+            // Normal object pruning
             let mut new_obj = serde_json::Map::new();
             for (k, v) in obj {
-                new_obj.insert(k.clone(), compact_shopping_search_result(v, query));
+                let k_lower = k.to_lowercase();
+
+                // 1. Skip known tracking/analytics/SEO metadata blocks
+                if k_lower.contains("tracking")
+                    || k_lower.contains("analytics")
+                    || k_lower.contains("seo")
+                    || k_lower.contains("badge")
+                    || k_lower.contains("pixel")
+                    || k_lower.contains("clickurl")
+                {
+                    continue;
+                }
+
+                // 2. Keep the key if it matches critical harvested parameter keys
+                // We use case-insensitive, alphanumeric-only normalized check
+                let norm_k: String = k_lower.chars().filter(|c| c.is_alphanumeric()).collect();
+                let matches_critical = critical_keys.iter().any(|ck| {
+                    let norm_ck: String = ck.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect();
+                    norm_k == norm_ck
+                });
+
+                if matches_critical {
+                    new_obj.insert(
+                        k.clone(),
+                        compact_shopping_search_result(v, &current_query, critical_keys),
+                    );
+                    continue;
+                }
+
+                // 3. Keep standard database identifier suffix patterns (e.g. *id, *Id, *ID, *_id, *-id)
+                let is_id_suffix = k_lower.ends_with("id") 
+                    || k_lower.ends_with("_id") 
+                    || k_lower.ends_with("-id");
+
+                // 4. Keep standard commerce descriptive, financial, and availability keys
+                let is_commerce_key = matches!(
+                    k.as_str(),
+                    "id" | "productId" | "product_id" | "name" | "title" | "price" | 
+                    "mrp" | "brand" | "quantity" | "unit" | "inStock" | "in_stock" | 
+                    "available" | "availability" | "discount" | "displayName" | 
+                    "variations" | "quantityDescription" | "brandName" | "offerPrice" | 
+                    "isInStockAndAvailable" | "isAvail" | "isPromoted" | "success" | 
+                    "data" | "products" | "message" | "packSize" | "availableQuantity" |
+                    "productVariantId" | "storeProductId" | "cartProductId" | "variantId" |
+                    "structuredContent" | "content" | "type" | "text"
+                );
+
+                if is_id_suffix || is_commerce_key {
+                    new_obj.insert(
+                        k.clone(),
+                        compact_shopping_search_result(v, &current_query, critical_keys),
+                    );
+                    continue;
+                }
+
+                // 5. Value-based pruning (truncating long strings or replacing image URLs)
+                match v {
+                    Value::String(s) => {
+                        if s.len() > 150 {
+                            new_obj.insert(k.clone(), Value::String(format!("{}...", &s[..147])));
+                        } else if s.starts_with("http") && (
+                            s.ends_with(".png") || s.ends_with(".jpg") || s.ends_with(".jpeg") || 
+                            s.ends_with(".webp") || s.ends_with(".gif") || s.ends_with(".svg") || s.len() > 70
+                        ) {
+                            new_obj.insert(k.clone(), Value::String("[MEDIA_URL]".to_string()));
+                        } else {
+                            new_obj.insert(k.clone(), Value::String(s.clone()));
+                        }
+                    }
+                    other => {
+                        new_obj.insert(
+                            k.clone(),
+                            compact_shopping_search_result(other, &current_query, critical_keys),
+                        );
+                    }
+                }
             }
             Value::Object(new_obj)
         }
