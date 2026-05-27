@@ -1,0 +1,53 @@
+{
+  "active_backend": "openai",
+  "fallback_backends": [
+    "gemini",
+    "anthropic",
+    "ollama"
+  ],
+  "benchmark": {
+    "pinchbench": {
+      "actual_tokens": {
+        "prompt": 0,
+        "completion": 0,
+        "total": 0
+      },
+      "target": {
+        "score": 0.8,
+        "summary": "Match the target PinchBench run.",
+        "suite": "all"
+      }
+    }
+  },
+  "backends": {
+    "ollama": {
+      "model": "gemma4:e4b-mlx",
+      "endpoint": "http://172.20.10.2:8080",
+      "max_tokens": 4096,
+      "num_ctx": 16000,
+      "think": true,
+      "keep_alive": "5m"
+    },
+    "gemini": {
+      "model": "gemini-2.5-flash",
+      "api_key": "TOKEN_API",
+      "endpoint": "https://generativelanguage.googleapis.com/v1beta",
+      "max_tokens": 2048
+    },
+    "openai": {
+      "api_key": "not-empty-placeholder",
+      "model": "gemma-4-e4b-it-OptiQ-4bit",
+      "endpoint": "http://localhost:8080/v1"
+    }
+  },
+  "features": {
+    "image_generation": {
+      "provider": "openai",
+      "api_key": "",
+      "model": "gpt-image-1",
+      "endpoint": "https://openai.com",
+      "size": "1024x1024",
+      "background": "auto"
+    }
+  }
+}

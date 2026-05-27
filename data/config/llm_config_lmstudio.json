@@ -1,0 +1,15 @@
+{
+  "active_backend": "openai",
+  "fallback_backends": [
+    "gemini",
+    "anthropic",
+    "ollama"
+  ],
+  "backends": {
+    "openai": {
+      "api_key": "lm-studio",
+      "model": "your-loaded-model-identifier",
+      "endpoint": "http://localhost:1234/v1"
+    }
+  }
+}
