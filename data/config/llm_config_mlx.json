@@ -22,7 +22,7 @@
   "backends": {
     "ollama": {
       "model": "gemma4:e4b-mlx",
-      "endpoint": "http://172.20.10.2:8080",
+      "endpoint": "http://172.20.10.2:11434",
       "max_tokens": 4096,
       "num_ctx": 16000,
       "think": true,

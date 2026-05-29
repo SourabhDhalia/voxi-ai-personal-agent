@@ -1524,6 +1524,54 @@ async fn api_a2a() -> Json<Value> {
 
 // ─── IPC helper ───────────────────────────────────────────────
 
+unsafe fn get_ipc_addr() -> Result<(libc::sockaddr_un, libc::socklen_t), String> {
+    let mut addr: libc::sockaddr_un = std::mem::zeroed();
+    addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    
+    let mut is_filesystem = false;
+    let mut path_buf = std::path::PathBuf::new();
+
+    if let Ok(socket_path) = std::env::var("VOXI_SOCKET_PATH") {
+        if !socket_path.trim().is_empty() {
+            is_filesystem = true;
+            path_buf = std::path::PathBuf::from(socket_path);
+        }
+    }
+
+    if !is_filesystem && cfg!(target_os = "macos") {
+        is_filesystem = true;
+        let data_dir = if let Ok(path) = std::env::var("VOXI_DATA_DIR") {
+            std::path::PathBuf::from(path)
+        } else if std::path::Path::new("/opt/usr/share/voxi").exists() {
+            std::path::PathBuf::from("/opt/usr/share/voxi")
+        } else {
+            let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+            std::path::PathBuf::from(home).join(".voxi")
+        };
+        path_buf = data_dir.join("run").join("voxi.sock");
+    }
+
+    let addr_len = if is_filesystem {
+        let path_str = path_buf.to_string_lossy();
+        let bytes = path_str.as_bytes();
+        if bytes.len() >= addr.sun_path.len() {
+            return Err(format!("Socket path too long: {}", path_str));
+        }
+        for (i, &b) in bytes.iter().enumerate() {
+            addr.sun_path[i] = b as libc::c_char;
+        }
+        (std::mem::size_of::<libc::sa_family_t>() + bytes.len() + 1) as libc::socklen_t
+    } else {
+        let name = b"voxi.sock";
+        for (i, &b) in name.iter().enumerate() {
+            addr.sun_path[1 + i] = b as libc::c_char;
+        }
+        (std::mem::size_of::<libc::sa_family_t>() + 1 + name.len()) as libc::socklen_t
+    };
+
+    Ok((addr, addr_len))
+}
+
 /// Query live token-usage counters from the agent daemon.
 /// Returns `None` when the agent is unreachable or returns an error.
 fn ipc_get_usage() -> Option<Value> {
@@ -1533,14 +1581,13 @@ fn ipc_get_usage() -> Option<Value> {
             return None;
         }
 
-        let mut addr: libc::sockaddr_un = std::mem::zeroed();
-        addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
-        let name = b"voxi.sock";
-        for (i, b) in name.iter().enumerate() {
-            addr.sun_path[1 + i] = *b as libc::c_char;
-        }
-        let addr_len =
-            (std::mem::size_of::<libc::sa_family_t>() + 1 + name.len()) as libc::socklen_t;
+        let (addr, addr_len) = match get_ipc_addr() {
+            Ok(val) => val,
+            Err(_) => {
+                libc::close(fd);
+                return None;
+            }
+        };
 
         // Short timeout: don't block the metrics endpoint.
         let timeout = libc::timeval {
@@ -1618,14 +1665,13 @@ fn ipc_send_prompt(session_id: &str, prompt: &str, request_id: Option<&str>) -> 
             return Err("Failed to create IPC socket".into());
         }
 
-        let mut addr: libc::sockaddr_un = std::mem::zeroed();
-        addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
-        let name = b"voxi.sock";
-        for (i, b) in name.iter().enumerate() {
-            addr.sun_path[1 + i] = *b as libc::c_char;
-        }
-        let addr_len =
-            (std::mem::size_of::<libc::sa_family_t>() + 1 + name.len()) as libc::socklen_t;
+        let (addr, addr_len) = match get_ipc_addr() {
+            Ok(val) => val,
+            Err(e) => {
+                libc::close(fd);
+                return Err(e);
+            }
+        };
 
         if libc::connect(fd, &addr as *const _ as *const libc::sockaddr, addr_len) < 0 {
             libc::close(fd);
@@ -1703,14 +1749,13 @@ fn ipc_call(method: &str, params: Value) -> Result<Value, String> {
             return Err("Failed to create IPC socket".into());
         }
 
-        let mut addr: libc::sockaddr_un = std::mem::zeroed();
-        addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
-        let name = b"voxi.sock";
-        for (i, b) in name.iter().enumerate() {
-            addr.sun_path[1 + i] = *b as libc::c_char;
-        }
-        let addr_len =
-            (std::mem::size_of::<libc::sa_family_t>() + 1 + name.len()) as libc::socklen_t;
+        let (addr, addr_len) = match get_ipc_addr() {
+            Ok(val) => val,
+            Err(e) => {
+                libc::close(fd);
+                return Err(e);
+            }
+        };
 
         if libc::connect(fd, &addr as *const _ as *const libc::sockaddr, addr_len) < 0 {
             libc::close(fd);
