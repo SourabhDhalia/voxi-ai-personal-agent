@@ -28,6 +28,7 @@ use tower_http::{
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 static DASHBOARD_SESSION_COUNTER: AtomicUsize = AtomicUsize::new(1);
+static START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
 async fn add_no_cache_headers(response: Response) -> Response {
     let mut response = response;
@@ -172,6 +173,7 @@ const MAX_OUTBOUND_MESSAGES: usize = 200;
 
 #[tokio::main]
 async fn main() {
+    START_TIME.set(std::time::Instant::now()).ok();
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Debug);
 
@@ -1940,27 +1942,8 @@ fn parse_loadavg() -> (f64, f64, f64) {
 }
 
 fn get_process_uptime() -> f64 {
-    let sys = std::fs::read_to_string("/proc/uptime")
-        .ok()
-        .and_then(|s| {
-            s.split_whitespace()
-                .next()
-                .and_then(|v| v.parse::<f64>().ok())
-        })
-        .unwrap_or(0.0);
-    let start = std::fs::read_to_string("/proc/self/stat")
-        .ok()
-        .and_then(|s| {
-            let after_comm = s.rfind(')')?;
-            s[after_comm + 2..]
-                .split_whitespace()
-                .nth(19)
-                .and_then(|v| v.parse::<f64>().ok())
-        })
-        .unwrap_or(0.0);
-    let start_secs = start / 100.0;
-    if sys > start_secs {
-        sys - start_secs
+    if let Some(start) = START_TIME.get() {
+        start.elapsed().as_secs_f64()
     } else {
         0.0
     }
