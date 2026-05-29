@@ -259,93 +259,127 @@ impl AgentCore {
         let prompt_trimmed = prompt.trim();
         if prompt_trimmed.starts_with("/mcp") {
             let parts: Vec<&str> = prompt_trimmed.split_whitespace().collect();
-            if parts.len() == 1 || (parts.len() > 1 && parts[1] == "help") {
-                return "MCP Commands:\n\
+            let response = if parts.len() == 1 || (parts.len() > 1 && parts[1] == "help") {
+                "MCP Commands:\n\
                         - `/mcp status`: Show status of configured MCP servers\n\
                         - `/mcp tools`: Show all available MCP tools\n\
                         - `/mcp token <server> <token>`: Set OAuth/access token for a server\n\
                         - `/mcp login <server> <token>`: Set OAuth/access token and log in\n\
-                        - `/mcp test <server> <tool> <args_json>`: Run a test tool call".to_string();
-            }
-            match parts[1] {
-                "status" => {
-                    let mcp = self.mcp_client_manager.read().await;
-                    let mut out = "MCP Servers Status:\n".to_string();
-                    for status in mcp.statuses() {
-                        out.push_str(&format!(
-                            "- **{}**: connected={}, auth_required={}, tools_count={}\n",
-                            status.name,
-                            status.connected,
-                            status.auth_required,
-                            status.tool_count
-                        ));
-                        if let Some(msg) = status.message.as_ref() {
-                            out.push_str(&format!("  * Message: {}\n", msg));
+                        - `/mcp test <server> <tool> <args_json>`: Run a test tool call".to_string()
+            } else {
+                match parts[1] {
+                    "status" => {
+                        let mcp = self.mcp_client_manager.read().await;
+                        let mut out = "MCP Servers Status:\n".to_string();
+                        for status in mcp.statuses() {
+                            out.push_str(&format!(
+                                "- **{}**: connected={}, auth_required={}, tools_count={}\n",
+                                status.name,
+                                status.connected,
+                                status.auth_required,
+                                status.tool_count
+                            ));
+                            if let Some(msg) = status.message.as_ref() {
+                                out.push_str(&format!("  * Message: {}\n", msg));
+                            }
+                        }
+                        out
+                    }
+                    "tools" => {
+                        let mcp = self.mcp_client_manager.read().await;
+                        let tools = mcp.get_all_tool_infos();
+                        if tools.is_empty() {
+                            "No MCP tools discovered.".to_string()
+                        } else {
+                            let mut out = format!("Discovered {} MCP tools:\n", tools.len());
+                            for t in tools {
+                                out.push_str(&format!(
+                                    "- **{}** (from {}): {}\n",
+                                    t.safe_name,
+                                    t.server_name,
+                                    t.description
+                                ));
+                            }
+                            out
                         }
                     }
-                    return out;
-                }
-                "tools" => {
-                    let mcp = self.mcp_client_manager.read().await;
-                    let tools = mcp.get_all_tool_infos();
-                    if tools.is_empty() {
-                        return "No MCP tools discovered.".to_string();
-                    }
-                    let mut out = format!("Discovered {} MCP tools:\n", tools.len());
-                    for t in tools {
-                        out.push_str(&format!(
-                            "- **{}** (from {}): {}\n",
-                            t.safe_name,
-                            t.server_name,
-                            t.description
-                        ));
-                    }
-                    return out;
-                }
-                "token" | "login" => {
-                    if parts.len() < 4 {
-                        return format!("Usage: `/mcp {} <server> <token>`", parts[1]);
-                    }
-                    let server_name = parts[2];
-                    let token = parts[3];
-                    let key_name = format!("{}_access_token", server_name.replace('-', "_").to_lowercase());
-                    let res = {
-                        let ks = self.key_store.lock().unwrap_or_else(|e| e.into_inner());
-                        ks.set(&key_name, token)
-                    };
-                    match res {
-                        Ok(_) => {
-                            // Proactively reload mcp servers so it connects with the new token immediately
-                            let mut mcp = self.mcp_client_manager.write().await;
+                    "token" | "login" => {
+                        if parts.len() < 4 {
+                            format!("Usage: `/mcp {} <server> <token>`", parts[1])
+                        } else {
+                            let server_name = parts[2];
+                            let token = parts[3];
+                            let key_name = format!("{}_access_token", server_name.replace('-', "_").to_lowercase());
+                            let res = {
+                                let ks = self.key_store.lock().unwrap_or_else(|e| e.into_inner());
+                                ks.set(&key_name, token)
+                            };
+
+                            // Save to secrets folder for mcp_client.rs lookup
                             let paths = &self.platform.paths;
-                            let mcp_config_path = paths.config_dir.join("mcp_servers.json");
-                            mcp.load_config_and_connect(&mcp_config_path.to_string_lossy());
-                            return format!("Successfully stored token and reconnected to server '{}'", server_name);
+                            let secrets_dir = paths.data_dir.join("secrets");
+                            let _ = std::fs::create_dir_all(&secrets_dir);
+                            let name_lower = server_name.to_lowercase();
+                            let name_safe = name_lower.replace('-', "_");
+                            let file_variants = [
+                                format!("{}_access_token", name_lower),
+                                format!("{}_access_token", name_safe),
+                                format!("{}_token", name_lower),
+                                format!("{}_token", name_safe),
+                            ];
+                            for val in &file_variants {
+                                let path = secrets_dir.join(val);
+                                if let Err(e) = std::fs::write(&path, token) {
+                                    log::warn!("Failed to write token to secrets file {:?}: {}", path, e);
+                                }
+                            }
+
+                            match res {
+                                Ok(_) => {
+                                    // Proactively reload mcp servers so it connects with the new token immediately
+                                    let mut mcp = self.mcp_client_manager.write().await;
+                                    let mcp_config_path = paths.config_dir.join("mcp_servers.json");
+                                    mcp.load_config_and_connect(&mcp_config_path.to_string_lossy());
+                                    format!("Successfully stored token and reconnected to server '{}'", server_name)
+                                }
+                                Err(e) => format!("Failed to store token: {}", e),
+                            }
                         }
-                        Err(e) => return format!("Failed to store token: {}", e),
+                    }
+                    "test" => {
+                        if parts.len() < 4 {
+                            "Usage: `/mcp test <server> <tool> <args_json>`".to_string()
+                        } else {
+                            let _server = parts[2];
+                            let tool_name = parts[3];
+                            let json_str = parts[4..].join(" ");
+                            let args: Value = match serde_json::from_str(&json_str) {
+                                Ok(v) => v,
+                                Err(e) => return format!("Invalid JSON arguments: {}", e),
+                            };
+                            let mut mcp = self.mcp_client_manager.write().await;
+                            match mcp.call_tool_resolved(tool_name, &args) {
+                                Ok(val) => format!("Tool executed successfully:\n```json\n{}\n```", serde_json::to_string_pretty(&val).unwrap()),
+                                Err(e) => format!("Tool execution failed: {:?}", e),
+                            }
+                        }
+                    }
+                    _ => {
+                        format!("Unknown MCP command: '{}'", parts[1])
                     }
                 }
-                "test" => {
-                    if parts.len() < 4 {
-                        return "Usage: `/mcp test <server> <tool> <args_json>`".to_string();
-                    }
-                    let _server = parts[2];
-                    let tool_name = parts[3];
-                    let json_str = parts[4..].join(" ");
-                    let args: Value = match serde_json::from_str(&json_str) {
-                        Ok(v) => v,
-                        Err(e) => return format!("Invalid JSON arguments: {}", e),
-                    };
-                    let mut mcp = self.mcp_client_manager.write().await;
-                    match mcp.call_tool_resolved(tool_name, &args) {
-                        Ok(val) => return format!("Tool executed successfully:\n```json\n{}\n```", serde_json::to_string_pretty(&val).unwrap()),
-                        Err(e) => return format!("Tool execution failed: {:?}", e),
-                    }
-                }
-                _ => {
-                    return format!("Unknown MCP command: '{}'", parts[1]);
+            };
+
+            // Write user prompt and assistant response to session history
+            if let Ok(ss) = self.session_store.lock() {
+                if let Some(store) = ss.as_ref() {
+                    store.add_message(session_id, "user", prompt);
+                    store.add_structured_user_message(session_id, prompt);
+                    store.add_message(session_id, "assistant", &response);
+                    store.add_structured_assistant_text_message(session_id, &response);
                 }
             }
+            return response;
         }
 
         // Reset circuit breakers at the start of each session so failures
