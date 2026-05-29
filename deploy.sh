@@ -324,15 +324,7 @@ ensure_shell_path() {
     ok "Added PATH export to ~/.bashrc"
   fi
 
-  log "Sourcing ~/.bashrc for the current script shell"
-  if [ "${DRY_RUN}" = false ]; then
-    # shellcheck disable=SC1090
-    set +u
-    source "${BASHRC_PATH}" || true
-    set -u
-  else
-    echo -e "  ${YELLOW}[DRY-RUN]${NC} source '${BASHRC_PATH}'"
-  fi
+  log "Please run 'source ~/.bashrc' or restart your terminal to update your PATH."
 }
 
 # ─────────────────────────────────────────────
@@ -665,8 +657,8 @@ remove_installation() {
     if [ "${DRY_RUN}" = false ]; then
       grep -Fvx "${PATH_EXPORT}" "${BASHRC_PATH}" > "${BASHRC_PATH}.tmp" || true
       mv "${BASHRC_PATH}.tmp" "${BASHRC_PATH}"
-      # shellcheck disable=SC1090
-      source "${BASHRC_PATH}" || true
+      # Sourcing is not needed on uninstall
+      :
     else
       echo -e "  ${YELLOW}[DRY-RUN]${NC} remove '${PATH_EXPORT}' from '${BASHRC_PATH}'"
     fi
