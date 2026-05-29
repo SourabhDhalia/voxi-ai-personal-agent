@@ -256,14 +256,15 @@ impl AgentCore {
         req_state: &RequestState,
         on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
     ) -> String {
-        // Intercept slash commands /mcp
         let prompt_trimmed = prompt.trim();
         if prompt_trimmed.starts_with("/mcp") {
             let parts: Vec<&str> = prompt_trimmed.split_whitespace().collect();
-            if parts.len() == 1 {
+            if parts.len() == 1 || (parts.len() > 1 && parts[1] == "help") {
                 return "MCP Commands:\n\
                         - `/mcp status`: Show status of configured MCP servers\n\
                         - `/mcp tools`: Show all available MCP tools\n\
+                        - `/mcp token <server> <token>`: Set OAuth/access token for a server\n\
+                        - `/mcp login <server> <token>`: Set OAuth/access token and log in\n\
                         - `/mcp test <server> <tool> <args_json>`: Run a test tool call".to_string();
             }
             match parts[1] {
@@ -300,6 +301,29 @@ impl AgentCore {
                         ));
                     }
                     return out;
+                }
+                "token" | "login" => {
+                    if parts.len() < 4 {
+                        return format!("Usage: `/mcp {} <server> <token>`", parts[1]);
+                    }
+                    let server_name = parts[2];
+                    let token = parts[3];
+                    let key_name = format!("{}_access_token", server_name.replace('-', "_").to_lowercase());
+                    let res = {
+                        let ks = self.key_store.lock().unwrap_or_else(|e| e.into_inner());
+                        ks.set(&key_name, token)
+                    };
+                    match res {
+                        Ok(_) => {
+                            // Proactively reload mcp servers so it connects with the new token immediately
+                            let mut mcp = self.mcp_client_manager.write().await;
+                            let paths = &self.platform.paths;
+                            let mcp_config_path = paths.config_dir.join("mcp_servers.json");
+                            mcp.load_config_and_connect(&mcp_config_path.to_string_lossy());
+                            return format!("Successfully stored token and reconnected to server '{}'", server_name);
+                        }
+                        Err(e) => return format!("Failed to store token: {}", e),
+                    }
                 }
                 "test" => {
                     if parts.len() < 4 {
