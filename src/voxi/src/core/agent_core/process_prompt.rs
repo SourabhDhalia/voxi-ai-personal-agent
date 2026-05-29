@@ -30,11 +30,48 @@ impl AgentCore {
         options
     }
 
-    fn resolve_confirmed_option(user_input: &str, options: &[(usize, String)]) -> Option<String> {
+    async fn resolve_confirmed_option(&self, user_input: &str, options: &[(usize, String)]) -> Option<String> {
         let input_lower = user_input.trim().to_lowercase();
         if input_lower.is_empty() || options.is_empty() {
             return None;
         }
+
+        // Get all available tool names dynamically
+        let mut available_tools = Vec::new();
+        {
+            let td = self.tool_dispatcher.read().await;
+            for tool in td.get_tool_declarations() {
+                available_tools.push(tool.name.clone());
+            }
+        }
+        {
+            let mcp = self.mcp_client_manager.read().await;
+            for tool in mcp.get_all_tools() {
+                available_tools.push(tool.name.clone());
+            }
+        }
+        // Add meta tools that are always loaded
+        available_tools.push("request_user_clarification".to_string());
+        available_tools.push("send_outbound_message".to_string());
+        available_tools.push("reload_mcp_servers".to_string());
+
+        // Helper to extract a valid tool name from a descriptive option string
+        let extract_tool_name = |opt_text: &str| -> Option<String> {
+            let opt_lower = opt_text.to_lowercase();
+            // Try to find an exact match first
+            for tool in &available_tools {
+                if tool.to_lowercase() == opt_lower {
+                    return Some(tool.clone());
+                }
+            }
+            // Check if any tool name is a substring of the option text
+            for tool in &available_tools {
+                if opt_lower.contains(&tool.to_lowercase()) {
+                    return Some(tool.clone());
+                }
+            }
+            None
+        };
 
         // 1. Check if the user input is a direct index number (e.g. "1", "1st", "option 1", "choice 1")
         let mut chosen_index = None;
@@ -53,6 +90,9 @@ impl AgentCore {
         if let Some(idx) = chosen_index {
             for &(num, ref text) in options {
                 if num == idx {
+                    if let Some(tool_name) = extract_tool_name(text) {
+                        return Some(tool_name);
+                    }
                     return Some(text.clone());
                 }
             }
@@ -70,6 +110,9 @@ impl AgentCore {
 
         if is_confirmation {
             if let Some(&(_, ref text)) = options.first() {
+                if let Some(tool_name) = extract_tool_name(text) {
+                    return Some(tool_name);
+                }
                 return Some(text.clone());
             }
         }
@@ -77,6 +120,9 @@ impl AgentCore {
         // 3. Check if user input contains the name of any option
         for &(_, ref text) in options {
             if input_lower.contains(&text.to_lowercase()) {
+                if let Some(tool_name) = extract_tool_name(text) {
+                    return Some(tool_name);
+                }
                 return Some(text.clone());
             }
         }
@@ -546,7 +592,7 @@ impl AgentCore {
             if let Some(last_msg) = messages.iter().rfind(|m| m.role == "assistant") {
                 let options = Self::parse_numbered_options(&last_msg.text);
                 if !options.is_empty() {
-                    if let Some(confirmed_option) = Self::resolve_confirmed_option(prompt, &options) {
+                    if let Some(confirmed_option) = self.resolve_confirmed_option(prompt, &options).await {
                         log::info!("[OptionAutoResolve] User confirmed option: '{}'", confirmed_option);
                         confirmed_tool_injection = Some(confirmed_option);
                     }

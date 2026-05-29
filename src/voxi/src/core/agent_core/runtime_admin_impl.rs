@@ -1027,8 +1027,14 @@ If there is nothing new to remember, output exactly: []";
                             || v.contains("session_id")
                             || v.contains("web_");
 
-                        if is_session_specific {
-                            log::debug!("[MemoryExtractor] Filtering out session-specific memory - key: {}, value: {}", k, v);
+                        // Skip low-value generic keys (like workdir references)
+                        let is_low_value = k.contains("workdir")
+                            || k.contains("primary_directory")
+                            || v.contains("workdir")
+                            || v.contains("primary_directory");
+
+                        if is_session_specific || is_low_value {
+                            log::debug!("[MemoryExtractor] Filtering out session-specific or low-value memory - key: {}, value: {}", k, v);
                             continue;
                         }
 

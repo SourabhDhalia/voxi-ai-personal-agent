@@ -42,6 +42,8 @@ DOCS_SRC="${PROJECT_DIR}/data/docs"
 EMBEDDED_TOOLS_SRC="${PROJECT_DIR}/tools/embedded"
 WEB_SRC="${PROJECT_DIR}/data/web"
 BUNDLED_CONFIG_DIR="${PROJECT_DIR}/data/config"
+BUNDLED_WORKFLOWS_DIR="${PROJECT_DIR}/data/workflows"
+WORKFLOWS_DIR="${DATA_DIR}/workflows"
 BASHRC_PATH="${HOME}/.bashrc"
 PATH_EXPORT='export PATH="$HOME/.voxi/bin:$PATH"'
 
@@ -529,6 +531,20 @@ EOF
       fi
     done < <(find "${BUNDLED_CONFIG_DIR}" -maxdepth 1 -type f ! -name '*.sample' | sort)
     ok "Default config seeding complete"
+  fi
+
+  if [ -d "${BUNDLED_WORKFLOWS_DIR}" ]; then
+    log "Seeding default workflows into ${WORKFLOWS_DIR} when missing"
+    run mkdir -p "${WORKFLOWS_DIR}"
+    while IFS= read -r workflow_path; do
+      local file_name
+      file_name="$(basename "${workflow_path}")"
+      local target_path="${WORKFLOWS_DIR}/${file_name}"
+      if [ ! -f "${target_path}" ]; then
+        run install -m 644 "${workflow_path}" "${target_path}"
+      fi
+    done < <(find "${BUNDLED_WORKFLOWS_DIR}" -maxdepth 1 -type f | sort)
+    ok "Default workflow seeding complete"
   fi
 
   normalize_host_dashboard_config

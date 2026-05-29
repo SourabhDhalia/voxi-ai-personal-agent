@@ -10,18 +10,16 @@ use super::wordpiece_tokenizer::WordPieceTokenizer;
 /// Embedding dimension for all-MiniLM-L6-v2.
 pub const EMBEDDING_DIM: usize = 384;
 
-/// Candidate paths for ONNX Runtime shared library, probed in order.
+/// Candidate directories for ONNX Runtime shared library, probed in order.
 /// Covers Ubuntu x86_64 system paths and macOS/Linux system paths.
 /// The app's data_dir/lib/ is prepended at runtime for bundled deployments.
-const SYSTEM_ORT_LIB_PATHS: &[&str] = &[
-    // Ubuntu / generic Linux x86_64
-    "/usr/lib/libonnxruntime.so",
-    "/usr/lib/x86_64-linux-gnu/libonnxruntime.so",
-    "/usr/local/lib/libonnxruntime.so",
-    // Linux armv7l
-    "/usr/lib/libonnxruntime.so",
-    "/usr/lib/arm-linux-gnueabihf/libonnxruntime.so",
-    "/opt/usr/lib/libonnxruntime.so",
+const SYSTEM_ORT_LIB_DIRS: &[&str] = &[
+    "/usr/lib",
+    "/usr/lib/x86_64-linux-gnu",
+    "/usr/local/lib",
+    "/usr/lib/arm-linux-gnueabihf",
+    "/opt/usr/lib",
+    "/opt/homebrew/lib", // macOS homebrew
 ];
 
 // ═══════════════════════════════════════════
@@ -178,9 +176,17 @@ impl OnDeviceEmbedding {
     /// Initialize: load ONNX Runtime, model, and vocab.
     /// `model_dir` should contain `model.onnx` and `vocab.txt`.
     /// `data_dir` is the Voxi data directory; if provided, `<data_dir>/lib/`
-    /// is probed first for a bundled `libonnxruntime.so`.
+    /// is probed first for a bundled platform-specific library.
     pub fn initialize(&mut self, model_dir: &str, data_dir: Option<&str>) -> bool {
-        // Build ordered candidate list for libonnxruntime.so
+        let lib_filename = if cfg!(target_os = "macos") {
+            "libonnxruntime.dylib"
+        } else if cfg!(target_os = "windows") {
+            "onnxruntime.dll"
+        } else {
+            "libonnxruntime.so"
+        };
+
+        // Build ordered candidate list for platform-specific library
         let mut candidates: Vec<std::path::PathBuf> = Vec::new();
 
         // 1. Explicit env override (highest priority)
@@ -190,22 +196,27 @@ impl OnDeviceEmbedding {
 
         // 2. Bundled inside data_dir/lib/ (app-local cache)
         if let Some(dd) = data_dir {
-            candidates.push(std::path::PathBuf::from(dd).join("lib").join("libonnxruntime.so"));
+            candidates.push(std::path::PathBuf::from(dd).join("lib").join(lib_filename));
         }
 
-        // 3. System paths (Ubuntu x86_64 + Linux armv7l)
-        for p in SYSTEM_ORT_LIB_PATHS {
-            let path = std::path::PathBuf::from(p);
+        // 3. System paths
+        for dir in SYSTEM_ORT_LIB_DIRS {
+            let path = std::path::PathBuf::from(dir).join(lib_filename);
             if !candidates.contains(&path) {
                 candidates.push(path);
             }
         }
 
-        // 4. LD_LIBRARY_PATH entries
-        if let Ok(ld_path) = std::env::var("LD_LIBRARY_PATH") {
+        // 4. LD_LIBRARY_PATH (or DYLD_LIBRARY_PATH on mac) entries
+        let env_var_name = if cfg!(target_os = "macos") {
+            "DYLD_LIBRARY_PATH"
+        } else {
+            "LD_LIBRARY_PATH"
+        };
+        if let Ok(ld_path) = std::env::var(env_var_name) {
             for dir in ld_path.split(':') {
                 if !dir.is_empty() {
-                    let path = std::path::PathBuf::from(dir).join("libonnxruntime.so");
+                    let path = std::path::PathBuf::from(dir).join(lib_filename);
                     if !candidates.contains(&path) {
                         candidates.push(path);
                     }
