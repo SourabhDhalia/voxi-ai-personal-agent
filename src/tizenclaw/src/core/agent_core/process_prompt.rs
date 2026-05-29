@@ -568,8 +568,15 @@ impl AgentCore {
             .get_tool_declarations_filtered(&intent_keywords);
         let tools_forbidden = prompt_explicitly_forbids_tools(prompt);
         if !tools_forbidden {
+            let enable_builtins = if let Ok(policy) = self.tool_policy.lock() {
+                policy.enable_builtin_tools()
+            } else {
+                false
+            };
             crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(
-                &mut tools, prompt,
+                &mut tools,
+                prompt,
+                enable_builtins,
             );
 
             // Append MCP tools from client manager
@@ -1729,11 +1736,24 @@ impl AgentCore {
                                 res = compact_shopping_search_result(&res, search_query, &critical_keys);
                             }
                             res
-                        } else if tc_name_clone == "debug_list_tools" {
-                            let mut all_tools = td_guard_ref.get_tool_declarations();
-                            crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_all_builtin_tools(
-                                &mut all_tools,
-                            );
+                        } else {
+                            let is_essential = tc_name == "request_user_clarification"
+                                || tc_name == "send_outbound_message"
+                                || tc_name == "reload_mcp_servers";
+                            let enable_builtins = if let Ok(policy) = self.tool_policy.lock() {
+                                policy.enable_builtin_tools()
+                            } else {
+                                false
+                            };
+
+                            if !is_essential && (!cfg!(feature = "builtin-tools") || !enable_builtins) {
+                                json!({"error": format!("Tool '{}' is disabled or not compiled in this build.", tc_name)})
+                            } else if tc_name_clone == "debug_list_tools" {
+                                let mut all_tools = td_guard_ref.get_tool_declarations();
+                                crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_all_builtin_tools(
+                                    &mut all_tools,
+                                    enable_builtins,
+                                );
                             if let Ok(bridge) = bridge_ref.lock() {
                                 all_tools.extend(bridge.get_action_declarations());
                             }
@@ -1778,6 +1798,7 @@ impl AgentCore {
                             let mut all_tools = td_guard_ref.get_tool_declarations();
                             crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_all_builtin_tools(
                                 &mut all_tools,
+                                enable_builtins,
                             );
                             if let Ok(bridge) = bridge_ref.lock() {
                                 all_tools.extend(bridge.get_action_declarations());
@@ -2279,33 +2300,40 @@ impl AgentCore {
                                 }
                             }
                         } else if tc_name == "run_generated_code" {
-                            let runtime = tc_args.get("runtime").and_then(|v| v.as_str()).unwrap_or("");
-                            let name = tc_args.get("name").and_then(|v| v.as_str());
-                            let code = tc_args.get("code").and_then(|v| v.as_str()).unwrap_or("");
-                            let args = tc_args.get("args").and_then(|v| v.as_str()).unwrap_or("");
-                            match validate_generated_code_grounding(
-                                prompt,
-                                &grounded_paths_snapshot,
-                                &grounded_csv_headers_snapshot,
-                                code,
-                                args,
-                            ) {
-                                Err(reason) => serde_json::json!({ "error": reason }),
-                                Ok(grounding) => {
-                                    let base_dir = self.platform.paths.data_dir.clone();
-                                    run_generated_code_tool(
-                                        runtime,
-                                        name,
-                                        code,
-                                        args,
-                                        &base_dir,
-                                        Some(&session_workdir),
-                                        grounding.declared_output_path.as_deref(),
-                                        grounding.declared_output_level.as_deref(),
-                                        prompt_requires_atomic_level_answer(prompt),
-                                    )
-                                    .await
+                            #[cfg(feature = "builtin-tools")]
+                            {
+                                let runtime = tc_args.get("runtime").and_then(|v| v.as_str()).unwrap_or("");
+                                let name = tc_args.get("name").and_then(|v| v.as_str());
+                                let code = tc_args.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                                let args = tc_args.get("args").and_then(|v| v.as_str()).unwrap_or("");
+                                match validate_generated_code_grounding(
+                                    prompt,
+                                    &grounded_paths_snapshot,
+                                    &grounded_csv_headers_snapshot,
+                                    code,
+                                    args,
+                                ) {
+                                    Err(reason) => serde_json::json!({ "error": reason }),
+                                    Ok(grounding) => {
+                                        let base_dir = self.platform.paths.data_dir.clone();
+                                        run_generated_code_tool(
+                                            runtime,
+                                            name,
+                                            code,
+                                            args,
+                                            &base_dir,
+                                            Some(&session_workdir),
+                                            grounding.declared_output_path.as_deref(),
+                                            grounding.declared_output_level.as_deref(),
+                                            prompt_requires_atomic_level_answer(prompt),
+                                        )
+                                        .await
+                                    }
                                 }
+                            }
+                            #[cfg(not(feature = "builtin-tools"))]
+                            {
+                                serde_json::json!({"error": "Tool run_generated_code is not compiled in this build."})
                             }
                         } else if tc_name == "run_coding_agent" {
                             let prompt = tc_args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
@@ -2356,41 +2384,69 @@ impl AgentCore {
                                 }
                             }
                         } else if tc_name == "manage_generated_code" {
-                            let operation = tc_args.get("operation").and_then(|v| v.as_str()).unwrap_or("");
-                            let name = tc_args.get("name").and_then(|v| v.as_str());
-                            manage_generated_code_tool(operation, name, &session_workdir)
+                            #[cfg(feature = "builtin-tools")]
+                            {
+                                let operation = tc_args.get("operation").and_then(|v| v.as_str()).unwrap_or("");
+                                let name = tc_args.get("name").and_then(|v| v.as_str());
+                                manage_generated_code_tool(operation, name, &session_workdir)
+                            }
+                            #[cfg(not(feature = "builtin-tools"))]
+                            {
+                                serde_json::json!({"error": "Tool manage_generated_code is not compiled in this build."})
+                            }
                         } else if tc_name == "list_tasks" {
-                            let base_dir = self.platform.paths.data_dir.clone();
-                            list_tasks_tool(&base_dir)
+                            #[cfg(feature = "builtin-tools")]
+                            {
+                                let base_dir = self.platform.paths.data_dir.clone();
+                                list_tasks_tool(&base_dir)
+                            }
+                            #[cfg(not(feature = "builtin-tools"))]
+                            {
+                                serde_json::json!({"error": "Tool list_tasks is not compiled in this build."})
+                            }
                         } else if tc_name == "create_task" {
-                            let schedule = tc_args.get("schedule").and_then(|v| v.as_str()).unwrap_or("");
-                            let prompt = tc_args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
-                            let project_dir = tc_args.get("project_dir").and_then(|v| v.as_str());
-                            let coding_backend =
-                                tc_args.get("coding_backend").and_then(|v| v.as_str());
-                            let coding_model =
-                                tc_args.get("coding_model").and_then(|v| v.as_str());
-                            let execution_mode =
-                                tc_args.get("execution_mode").and_then(|v| v.as_str());
-                            let auto_approve = tc_args
-                                .get("auto_approve")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let base_dir = self.platform.paths.data_dir.clone();
-                            create_task_tool(
-                                &base_dir,
-                                schedule,
-                                prompt,
-                                project_dir,
-                                coding_backend,
-                                coding_model,
-                                execution_mode,
-                                auto_approve,
-                            )
+                            #[cfg(feature = "builtin-tools")]
+                            {
+                                let schedule = tc_args.get("schedule").and_then(|v| v.as_str()).unwrap_or("");
+                                let prompt = tc_args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+                                let project_dir = tc_args.get("project_dir").and_then(|v| v.as_str());
+                                let coding_backend =
+                                    tc_args.get("coding_backend").and_then(|v| v.as_str());
+                                let coding_model =
+                                    tc_args.get("coding_model").and_then(|v| v.as_str());
+                                let execution_mode =
+                                    tc_args.get("execution_mode").and_then(|v| v.as_str());
+                                let auto_approve = tc_args
+                                    .get("auto_approve")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                let base_dir = self.platform.paths.data_dir.clone();
+                                create_task_tool(
+                                    &base_dir,
+                                    schedule,
+                                    prompt,
+                                    project_dir,
+                                    coding_backend,
+                                    coding_model,
+                                    execution_mode,
+                                    auto_approve,
+                                )
+                            }
+                            #[cfg(not(feature = "builtin-tools"))]
+                            {
+                                serde_json::json!({"error": "Tool create_task is not compiled in this build."})
+                            }
                         } else if tc_name == "cancel_task" {
-                            let task_id = tc_args.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
-                            let base_dir = self.platform.paths.data_dir.clone();
-                            cancel_task_tool(&base_dir, task_id)
+                            #[cfg(feature = "builtin-tools")]
+                            {
+                                let task_id = tc_args.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
+                                let base_dir = self.platform.paths.data_dir.clone();
+                                cancel_task_tool(&base_dir, task_id)
+                            }
+                            #[cfg(not(feature = "builtin-tools"))]
+                            {
+                                serde_json::json!({"error": "Tool cancel_task is not compiled in this build."})
+                            }
                         } else if tc_name == "generate_image" {
                             let prompt = tc_args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
                             let path = tc_args.get("path").and_then(|v| v.as_str()).unwrap_or("");
@@ -2500,6 +2556,7 @@ impl AgentCore {
                                 Ok(result) => result,
                                 Err(error) => serde_json::json!({ "error": error }),
                             }
+                        }
                         } else {
                             match td_guard_ref
                                 .execute_in_dir(&tc_name, &tc_args, None, Some(&session_workdir))

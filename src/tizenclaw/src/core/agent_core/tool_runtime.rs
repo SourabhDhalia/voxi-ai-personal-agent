@@ -840,6 +840,7 @@ fn canonical_tool_trace(tc: &backend::LlmToolCall) -> Value {
     }
 }
 
+#[cfg(feature = "builtin-tools")]
 fn generated_code_runtime_spec(runtime: &str) -> Option<(&'static str, &'static str)> {
     match runtime.trim().to_ascii_lowercase().as_str() {
         "python" | "python3" => Some(("python3", ".py")),
@@ -849,6 +850,7 @@ fn generated_code_runtime_spec(runtime: &str) -> Option<(&'static str, &'static 
     }
 }
 
+#[cfg(feature = "builtin-tools")]
 fn sanitize_generated_code_name(name: &str) -> String {
     let mut slug = String::with_capacity(name.len());
     let mut previous_was_dash = false;
@@ -875,6 +877,7 @@ fn sanitize_generated_code_name(name: &str) -> String {
     }
 }
 
+#[cfg(feature = "builtin-tools")]
 fn generated_code_date_prefix() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -891,6 +894,7 @@ fn generated_code_date_prefix() -> String {
     )
 }
 
+#[cfg(feature = "builtin-tools")]
 fn generated_code_script_path(base_dir: &Path, runtime: &str, name: &str) -> Option<PathBuf> {
     let (_, suffix) = generated_code_runtime_spec(runtime)?;
     let codes_dir = base_dir.join("codes");
@@ -912,6 +916,7 @@ fn generated_code_script_path(base_dir: &Path, runtime: &str, name: &str) -> Opt
     None
 }
 
+#[cfg(feature = "builtin-tools")]
 fn list_generated_code_entries(codes_dir: &Path) -> Result<Vec<Value>, String> {
     let mut entries = Vec::new();
     let read_dir = std::fs::read_dir(codes_dir).map_err(|err| {
@@ -949,6 +954,7 @@ fn list_generated_code_entries(codes_dir: &Path) -> Result<Vec<Value>, String> {
     Ok(entries)
 }
 
+#[cfg(feature = "builtin-tools")]
 fn validate_generated_code_filename(name: &str) -> Result<&str, String> {
     if name.is_empty() {
         return Err("Missing generated code filename".to_string());
@@ -959,6 +965,7 @@ fn validate_generated_code_filename(name: &str) -> Result<&str, String> {
     Ok(name)
 }
 
+#[cfg(feature = "builtin-tools")]
 fn manage_generated_code_tool(operation: &str, name: Option<&str>, base_dir: &Path) -> Value {
     let codes_dir = base_dir.join("codes");
     if let Err(err) = std::fs::create_dir_all(&codes_dir) {
@@ -1032,10 +1039,12 @@ fn manage_generated_code_tool(operation: &str, name: Option<&str>, base_dir: &Pa
     }
 }
 
+#[cfg(feature = "builtin-tools")]
 fn task_scheduler_dir(base_dir: &Path) -> std::path::PathBuf {
     base_dir.join("tasks")
 }
 
+#[cfg(feature = "builtin-tools")]
 fn list_tasks_tool(base_dir: &Path) -> Value {
     let task_dir = task_scheduler_dir(base_dir);
     match crate::core::task_scheduler::TaskScheduler::list_tasks_from_dir(&task_dir) {
@@ -1062,6 +1071,7 @@ fn list_tasks_tool(base_dir: &Path) -> Value {
     }
 }
 
+#[cfg(feature = "builtin-tools")]
 fn create_task_tool(
     base_dir: &Path,
     schedule: &str,
@@ -1105,6 +1115,7 @@ fn create_task_tool(
     }
 }
 
+#[cfg(feature = "builtin-tools")]
 fn cancel_task_tool(base_dir: &Path, task_id: &str) -> Value {
     let task_dir = task_scheduler_dir(base_dir);
     match crate::core::task_scheduler::TaskScheduler::delete_task_file(&task_dir, task_id) {
@@ -1119,6 +1130,7 @@ fn cancel_task_tool(base_dir: &Path, task_id: &str) -> Value {
     }
 }
 
+#[cfg(feature = "builtin-tools")]
 async fn run_generated_code_tool(
     runtime: &str,
     name: Option<&str>,

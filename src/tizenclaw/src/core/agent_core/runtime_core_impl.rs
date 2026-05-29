@@ -139,11 +139,12 @@ impl AgentCore {
             .unwrap_or_default()
     }
 
-    fn bridge_builtin_tools() -> Vec<backend::LlmToolDecl> {
+    fn bridge_builtin_tools(enable_builtins: bool) -> Vec<backend::LlmToolDecl> {
         let mut builtins = Vec::new();
         crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(
             &mut builtins,
             "workflow memory search",
+            enable_builtins,
         );
         builtins.push(backend::LlmToolDecl {
             name: "execute_cli".into(),
@@ -185,7 +186,12 @@ impl AgentCore {
         allowed_tools: &[String],
     ) -> Vec<backend::LlmToolDecl> {
         let mut tools = self.tool_dispatcher.read().await.get_tool_declarations();
-        tools.extend(Self::bridge_builtin_tools());
+        let enable_builtins = if let Ok(policy) = self.tool_policy.lock() {
+            policy.enable_builtin_tools()
+        } else {
+            false
+        };
+        tools.extend(Self::bridge_builtin_tools(enable_builtins));
         if let Ok(bridge) = self.action_bridge.lock() {
             tools.extend(bridge.get_action_declarations());
         }

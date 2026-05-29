@@ -9,124 +9,114 @@ pub struct ToolDeclarationBuilder;
 impl ToolDeclarationBuilder {
     /// Append built-in tool declarations dynamically based on simple intent heuristics.
     /// This drastically reduces token bloat (Token Optimization via Dynamic Tool Loading).
-    pub fn append_builtin_tools(tools: &mut Vec<LlmToolDecl>, prompt: &str) {
+    pub fn append_builtin_tools(tools: &mut Vec<LlmToolDecl>, prompt: &str, enable_builtins: bool) {
         let p = prompt.to_lowercase();
 
         // 1. Meta / System Tools - always injected
-        Self::push_meta_tools(tools);
+        Self::push_meta_tools(tools, enable_builtins);
 
-        // 2. Task Intent
-        if p.contains("task") || p.contains("schedule") {
-            Self::push_task_tools(tools);
-        }
+        if enable_builtins {
+            #[cfg(feature = "builtin-tools")]
+            {
+                // 2. Task Intent
+                if p.contains("task") || p.contains("schedule") {
+                    Self::push_task_tools(tools);
+                }
 
-        // 3. Memory & Knowledge Intent
-        if p.contains("remember")
-            || p.contains("memory")
-            || p.contains("search")
-            || p.contains("knowledge")
-        {
-            Self::push_memory_tools(tools);
-        }
+                // 3. Memory & Knowledge Intent
+                if p.contains("remember")
+                    || p.contains("memory")
+                    || p.contains("search")
+                    || p.contains("knowledge")
+                {
+                    Self::push_memory_tools(tools);
+                }
 
-        // 4. Session Intent
-        if p.contains("session") || p.contains("switch") || p.contains("user") {
-            Self::push_session_tools(tools);
-        }
+                // 4. Session Intent
+                if p.contains("session") || p.contains("switch") || p.contains("user") {
+                    Self::push_session_tools(tools);
+                }
 
-        // 5. Workflow & Pipeline Intent
-        if p.contains("workflow")
-            || p.contains("pipeline")
-            || p.contains("skill")
-            || p.contains("learn")
-            || p.contains("run")
-        {
-            Self::push_workflow_tools(tools);
-        }
+                // 5. Workflow & Pipeline Intent
+                if p.contains("workflow")
+                    || p.contains("pipeline")
+                    || p.contains("skill")
+                    || p.contains("learn")
+                    || p.contains("run")
+                {
+                    Self::push_workflow_tools(tools);
+                }
 
-        // 6. Agent Role Intent
-        if p.contains("agent") || p.contains("role") || p.contains("supervisor") {
-            Self::push_agent_tools(tools);
-        }
+                // 6. Agent Role Intent
+                if p.contains("agent") || p.contains("role") || p.contains("supervisor") {
+                    Self::push_agent_tools(tools);
+                }
 
-        // 7. Research / Search Intent
-        if p.contains("search")
-            || p.contains("research")
-            || p.contains("weather")
-            || p.contains("stock")
-            || p.contains("news")
-            || p.contains("conference")
-            || p.contains("market")
-        {
-            Self::push_research_tools(tools);
-        }
+                // 7. Research / Search Intent
+                if p.contains("search")
+                    || p.contains("research")
+                    || p.contains("weather")
+                    || p.contains("stock")
+                    || p.contains("news")
+                    || p.contains("conference")
+                    || p.contains("market")
+                {
+                    Self::push_research_tools(tools);
+                }
 
-        // 8. Document / Data Intent
-        if p.contains(".pdf")
-            || p.contains(".csv")
-            || p.contains(".xlsx")
-            || p.contains("spreadsheet")
-            || p.contains("excel")
-            || p.contains("table")
-            || p.contains("document")
-            || p.contains("summary")
-            || p.contains("pdf")
-        {
-            Self::push_document_tools(tools);
-        }
+                // 8. Document / Data Intent
+                if p.contains(".pdf")
+                    || p.contains(".csv")
+                    || p.contains(".xlsx")
+                    || p.contains("spreadsheet")
+                    || p.contains("excel")
+                    || p.contains("table")
+                    || p.contains("document")
+                    || p.contains("summary")
+                    || p.contains("pdf")
+                {
+                    Self::push_document_tools(tools);
+                }
 
-        // 9. Image Intent
-        if p.contains("image")
-            || p.contains("png")
-            || p.contains("jpg")
-            || p.contains("jpeg")
-            || p.contains("draw")
-            || p.contains("illustration")
-            || p.contains("photo")
-        {
-            Self::push_image_tools(tools);
+                // 9. Image Intent
+                if p.contains("image")
+                    || p.contains("png")
+                    || p.contains("jpg")
+                    || p.contains("jpeg")
+                    || p.contains("draw")
+                    || p.contains("illustration")
+                    || p.contains("photo")
+                {
+                    Self::push_image_tools(tools);
+                }
+            }
         }
 
         let mut seen = HashSet::new();
         tools.retain(|tool| seen.insert(tool.name.clone()));
     }
 
-    pub fn append_all_builtin_tools(tools: &mut Vec<LlmToolDecl>) {
-        Self::push_meta_tools(tools);
-        Self::push_task_tools(tools);
-        Self::push_memory_tools(tools);
-        Self::push_session_tools(tools);
-        Self::push_workflow_tools(tools);
-        Self::push_agent_tools(tools);
-        Self::push_research_tools(tools);
-        Self::push_document_tools(tools);
-        Self::push_image_tools(tools);
+    pub fn append_all_builtin_tools(tools: &mut Vec<LlmToolDecl>, enable_builtins: bool) {
+        Self::push_meta_tools(tools, enable_builtins);
+        if enable_builtins {
+            #[cfg(feature = "builtin-tools")]
+            {
+                Self::push_task_tools(tools);
+                Self::push_memory_tools(tools);
+                Self::push_session_tools(tools);
+                Self::push_workflow_tools(tools);
+                Self::push_agent_tools(tools);
+                Self::push_research_tools(tools);
+                Self::push_document_tools(tools);
+                Self::push_image_tools(tools);
+            }
+        }
 
         let mut seen = HashSet::new();
         tools.retain(|tool| seen.insert(tool.name.clone()));
     }
 
-    fn push_meta_tools(tools: &mut Vec<LlmToolDecl>) {
-        tools.push(LlmToolDecl {
-            name: "debug_list_tools".into(),
-            description: "Debug tool to list all registered tools (local, embedded, and MCP).".into(),
-            parameters: json!({"type": "object", "properties": {}, "required": []}),
-        });
-        tools.push(LlmToolDecl {
-            name: "debug_mcp_server_status".into(),
-            description: "Debug tool to inspect the connection and auth statuses of all configured MCP servers.".into(),
-            parameters: json!({"type": "object", "properties": {}, "required": []}),
-        });
-        tools.push(LlmToolDecl {
-            name: "debug_session_context".into(),
-            description: "Debug tool to inspect the current session context details and cumulative stats.".into(),
-            parameters: json!({"type": "object", "properties": {}, "required": []}),
-        });
-        tools.push(LlmToolDecl {
-            name: "get_agent_status".into(),
-            description: "Get current agent system status.".into(),
-            parameters: json!({"type": "object", "properties": {}, "required": []}),
-        });
+    fn push_meta_tools(tools: &mut Vec<LlmToolDecl>, enable_builtins: bool) {
         tools.push(LlmToolDecl {
             name: "request_user_clarification".into(),
             description: "Ask the user a clarifying question when you need choice selection, payment approval, checkout details, or more information to fulfill their request. The execution will pause until the user responds.".into(),
@@ -139,31 +129,6 @@ impl ToolDeclarationBuilder {
                     }
                 },
                 "required": ["question"]
-            }),
-        });
-        tools.push(LlmToolDecl {
-            name: "reload_mcp_servers".into(),
-            description: "Reload configured MCP servers from mcp_servers.json and rediscover their tool metadata without restarting the daemon.".into(),
-            parameters: json!({"type": "object", "properties": {}, "required": []}),
-        });
-        tools.push(LlmToolDecl {
-            name: "list_agents".into(),
-            description: "List all running agents with their status.".into(),
-            parameters: json!({"type": "object", "properties": {}, "required": []}),
-        });
-        tools.push(LlmToolDecl {
-            name: "lookup_web_api".into(),
-            description:
-                "Look up Tizen Web API reference documentation. Use 'list', 'read', or 'search'."
-                    .into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {"type": "string", "enum": ["list", "read", "search"]},
-                    "path": {"type": "string", "description": "Doc path for 'read'"},
-                    "query": {"type": "string", "description": "Keyword for 'search'"}
-                },
-                "required": ["operation"]
             }),
         });
         tools.push(LlmToolDecl {
@@ -198,45 +163,96 @@ impl ToolDeclarationBuilder {
             }),
         });
         tools.push(LlmToolDecl {
-            name: "run_generated_code".into(),
-            description: "Write generated Python, Node.js, or Bash code under the device-owned codes directory and execute it immediately. Use this for executable scripts only. Do not use it for HTML/CSS/JS browser apps or webview content; use generate_web_app for those.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "runtime": {
-                        "type": "string",
-                        "enum": ["python", "python3", "node", "bash"],
-                        "description": "Interpreter used to execute the generated code"
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "Optional human-readable script name used in the saved filename"
-                    },
-                    "code": {"type": "string", "description": "Full source code to write into a reusable script file before execution"},
-                    "args": {"type": "string", "description": "Optional command-line arguments passed to the generated script as a single shell-style string"}
-                },
-                "required": ["runtime", "code"]
-            }),
+            name: "reload_mcp_servers".into(),
+            description: "Reload configured MCP servers from mcp_servers.json and rediscover their tool metadata without restarting the daemon.".into(),
+            parameters: json!({"type": "object", "properties": {}, "required": []}),
         });
-        tools.push(LlmToolDecl {
-            name: "manage_generated_code".into(),
-            description: "List or delete generated code files stored under the device-owned codes directory. Use this when the user asks to inspect, clean up, or remove generated scripts.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "operation": {
-                        "type": "string",
-                        "enum": ["list", "delete", "delete_all"],
-                        "description": "Management action to perform on stored generated code"
-                    },
-                    "name": {
-                        "type": "string",
-                        "description": "Exact filename to delete when operation is 'delete'"
-                    }
-                },
-                "required": ["operation"]
-            }),
-        });
+
+        #[cfg(feature = "builtin-tools")]
+        {
+            if enable_builtins {
+                tools.push(LlmToolDecl {
+                    name: "debug_list_tools".into(),
+                    description: "Debug tool to list all registered tools (local, embedded, and MCP).".into(),
+                    parameters: json!({"type": "object", "properties": {}, "required": []}),
+                });
+                tools.push(LlmToolDecl {
+                    name: "debug_mcp_server_status".into(),
+                    description: "Debug tool to inspect the connection and auth statuses of all configured MCP servers.".into(),
+                    parameters: json!({"type": "object", "properties": {}, "required": []}),
+                });
+                tools.push(LlmToolDecl {
+                    name: "debug_session_context".into(),
+                    description: "Debug tool to inspect the current session context details and cumulative stats.".into(),
+                    parameters: json!({"type": "object", "properties": {}, "required": []}),
+                });
+                tools.push(LlmToolDecl {
+                    name: "get_agent_status".into(),
+                    description: "Get current agent system status.".into(),
+                    parameters: json!({"type": "object", "properties": {}, "required": []}),
+                });
+                tools.push(LlmToolDecl {
+                    name: "list_agents".into(),
+                    description: "List all running agents with their status.".into(),
+                    parameters: json!({"type": "object", "properties": {}, "required": []}),
+                });
+                tools.push(LlmToolDecl {
+                    name: "lookup_web_api".into(),
+                    description:
+                        "Look up Tizen Web API reference documentation. Use 'list', 'read', or 'search'."
+                            .into(),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "operation": {"type": "string", "enum": ["list", "read", "search"]},
+                            "path": {"type": "string", "description": "Doc path for 'read'"},
+                            "query": {"type": "string", "description": "Keyword for 'search'"}
+                        },
+                        "required": ["operation"]
+                    }),
+                });
+                tools.push(LlmToolDecl {
+                    name: "run_generated_code".into(),
+                    description: "Write generated Python, Node.js, or Bash code under the device-owned codes directory and execute it immediately. Use this for executable scripts only. Do not use it for HTML/CSS/JS browser apps or webview content; use generate_web_app for those.".into(),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "runtime": {
+                                "type": "string",
+                                "enum": ["python", "python3", "node", "bash"],
+                                "description": "Interpreter used to execute the generated code"
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Optional human-readable script name used in the saved filename"
+                            },
+                            "code": {"type": "string", "description": "Full source code to write into a reusable script file before execution"},
+                            "args": {"type": "string", "description": "Optional command-line arguments passed to the generated script as a single shell-style string"}
+                        },
+                        "required": ["runtime", "code"]
+                    }),
+                });
+                tools.push(LlmToolDecl {
+                    name: "manage_generated_code".into(),
+                    description: "List or delete generated code files stored under the device-owned codes directory. Use this when the user asks to inspect, clean up, or remove generated scripts.".into(),
+                    parameters: json!({
+                        "type": "object",
+                        "properties": {
+                            "operation": {
+                                "type": "string",
+                                "enum": ["list", "delete", "delete_all"],
+                                "description": "Management action to perform on stored generated code"
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Exact filename to delete when operation is 'delete'"
+                            }
+                        },
+                        "required": ["operation"]
+                    }),
+                });
+            }
+        }
     }
 
     fn push_task_tools(tools: &mut Vec<LlmToolDecl>) {
@@ -646,7 +662,9 @@ impl ToolDeclarationBuilder {
             }),
         });
     }
+}
 
+impl ToolDeclarationBuilder {
     /// Build declarations from system CLI tools.
     pub fn build_from_system_cli(cli_tools: &[(String, String, Value)]) -> Vec<LlmToolDecl> {
         cli_tools
@@ -660,14 +678,14 @@ impl ToolDeclarationBuilder {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "builtin-tools"))]
 mod tests {
     use super::*;
 
     #[test]
     fn test_builtin_tools_dynamic() {
         let mut tools = vec![];
-        ToolDeclarationBuilder::append_builtin_tools(&mut tools, "what is my agent status?");
+        ToolDeclarationBuilder::append_builtin_tools(&mut tools, "what is my agent status?", true);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"get_agent_status"));
         assert!(names.contains(&"send_outbound_message"));
@@ -677,7 +695,7 @@ mod tests {
         assert!(!names.contains(&"create_task"));
 
         let mut tools2 = vec![];
-        ToolDeclarationBuilder::append_builtin_tools(&mut tools2, "create a new task");
+        ToolDeclarationBuilder::append_builtin_tools(&mut tools2, "create a new task", true);
         let names2: Vec<&str> = tools2.iter().map(|t| t.name.as_str()).collect();
         assert!(names2.contains(&"create_task"));
     }

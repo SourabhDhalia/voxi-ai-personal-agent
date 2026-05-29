@@ -37,6 +37,7 @@ struct PolicyConfig {
     aliases: HashMap<String, String>,
     mcp_confirmation_keywords: Vec<String>,
     mcp_confirmation_timeout_ms: u64,
+    enable_builtin_tools: bool,
 }
 
 impl Default for PolicyConfig {
@@ -65,9 +66,11 @@ impl Default for PolicyConfig {
                 "cash".into(),
             ],
             mcp_confirmation_timeout_ms: 300_000,
+            enable_builtin_tools: false,
         }
     }
 }
+
 
 pub struct ToolPolicy {
     config: PolicyConfig,
@@ -107,6 +110,10 @@ impl ToolPolicy {
                 return false;
             }
         };
+
+        if let Some(v) = j.get("enable_builtin_tools").and_then(|v| v.as_bool()) {
+            self.config.enable_builtin_tools = v;
+        }
 
         if let Some(v) = j.get("max_repeat_count").and_then(|v| v.as_u64()) {
             self.config.max_repeat_count = v as usize;
@@ -301,8 +308,13 @@ impl ToolPolicy {
             "aliases": self.config.aliases.clone(),
             "mcp_confirmation_keywords": self.config.mcp_confirmation_keywords.clone(),
             "mcp_confirmation_timeout_ms": self.config.mcp_confirmation_timeout_ms,
+            "enable_builtin_tools": self.config.enable_builtin_tools,
             "status": "ok",
         })
+    }
+
+    pub fn enable_builtin_tools(&self) -> bool {
+        self.config.enable_builtin_tools
     }
 
     pub fn get_max_iterations(&self) -> usize {
