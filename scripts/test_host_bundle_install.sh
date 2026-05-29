@@ -121,8 +121,8 @@ main() {
   log "Inspecting bundle archive contents..."
   local bundle_listing
   bundle_listing="$(tar -tzf "${BUNDLE_ARCHIVE}")"
-  if grep -Fq 'manage/deploy_host.sh' <<< "${bundle_listing}"; then
-    fail "Bundle still contains manage/deploy_host.sh — the source deploy script must not be packaged"
+  if grep -Fq 'manage/deploy.sh' <<< "${bundle_listing}"; then
+    fail "Bundle still contains manage/deploy.sh — the source deploy script must not be packaged"
   fi
   grep -Fq 'manage/voxi-hostctl.sh' <<< "${bundle_listing}" \
     || fail "Bundle is missing manage/voxi-hostctl.sh"
@@ -167,8 +167,8 @@ main() {
   [[ -x "${managed_ctl}" ]] \
     || fail "${managed_ctl} is not executable"
 
-  if [[ -e "${install_root}/manage/deploy_host.sh" ]]; then
-    fail "Installed tree must not contain manage/deploy_host.sh (found $(ls -l "${install_root}/manage/deploy_host.sh"))"
+  if [[ -e "${install_root}/manage/deploy.sh" ]]; then
+    fail "Installed tree must not contain manage/deploy.sh (found $(ls -l "${install_root}/manage/deploy.sh"))"
   fi
 
   log "Verifying lib/ contains runtime libraries..."
@@ -237,7 +237,7 @@ main() {
 
   log "Asserting hostctl does not depend on repo-relative access..."
   # Scan the script content for obviously forbidden operations. We allow the
-  # rejection messages to mention './deploy_host.sh' for user guidance.
+  # rejection messages to mention './deploy.sh' for user guidance.
   if grep -Eq '^[^#]*\bcargo\b' "${managed_ctl}"; then
     fail "hostctl script contains a cargo invocation"
   fi

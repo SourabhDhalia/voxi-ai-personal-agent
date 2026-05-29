@@ -49,7 +49,6 @@ def documented_domain_split(root: Path) -> list[str]:
 def documented_shell_test_roots(root: Path) -> list[str]:
     readme = load_text(root / "README.md")
     paths = {
-        "deploy_host.sh",
         "deploy.sh",
         "tests/system/",
         "rust/scripts/run_mock_parity_harness.sh",
@@ -102,7 +101,7 @@ def rust_surface_names(root: Path) -> list[str]:
 def file_presence(root: Path) -> dict[str, bool]:
     required = [
         "install.sh",
-        "deploy_host.sh",
+        "deploy.sh",
         "rust/scripts/run_mock_parity_harness.sh",
         "rust/scripts/run_mock_parity_diff.py",
         "scripts/verify_doc_architecture.py",

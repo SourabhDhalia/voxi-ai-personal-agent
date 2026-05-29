@@ -1,6 +1,6 @@
 {
   "suite": "offline-contracts",
-  "description": "Offline-safe daemon IPC contract scenarios run automatically by ./deploy_host.sh --test against an isolated temporary runtime root. Do not add network-dependent or LLM-dependent scenarios here. Every scenario listed must carry \"offline_safe\": true; the runner enforces this and fails clearly if the field is absent.",
+  "description": "Offline-safe daemon IPC contract scenarios run automatically by ./deploy.sh --test against an isolated temporary runtime root. Do not add network-dependent or LLM-dependent scenarios here. Every scenario listed must carry \"offline_safe\": true; the runner enforces this and fails clearly if the field is absent.",
   "scenarios": [
     "tests/system/ipc_jsonrpc_contract.json",
     "tests/system/basic_ipc_smoke.json",

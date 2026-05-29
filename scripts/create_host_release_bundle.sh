@@ -163,7 +163,7 @@ main() {
   if [[ "${SKIP_BUILD}" != true ]]; then
     (
       cd "${PROJECT_DIR}"
-      ./deploy_host.sh -b
+      ./deploy.sh -b
     )
   fi
 
@@ -200,19 +200,19 @@ main() {
     "${bundle_root}/lib/libvoxi.rlib"
 
   install -m 644 \
-    "${PROJECT_DIR}/src/libvoxi/include/voxi.h" \
+    "${PROJECT_DIR}/src/voxi-client/include/voxi.h" \
     "${bundle_root}/include/voxi/voxi.h"
   install -m 644 \
-    "${PROJECT_DIR}/src/libvoxi-core/include/voxi_error.h" \
+    "${PROJECT_DIR}/src/voxi-core/include/voxi_error.h" \
     "${bundle_root}/include/voxi/voxi_error.h"
   install -m 644 \
-    "${PROJECT_DIR}/src/libvoxi-core/include/voxi_channel.h" \
+    "${PROJECT_DIR}/src/voxi-core/include/voxi_channel.h" \
     "${bundle_root}/include/voxi/core/voxi_channel.h"
   install -m 644 \
-    "${PROJECT_DIR}/src/libvoxi-core/include/voxi_llm_backend.h" \
+    "${PROJECT_DIR}/src/voxi-core/include/voxi_llm_backend.h" \
     "${bundle_root}/include/voxi/core/voxi_llm_backend.h"
   install -m 644 \
-    "${PROJECT_DIR}/src/libvoxi-core/include/voxi_curl.h" \
+    "${PROJECT_DIR}/src/voxi-core/include/voxi_curl.h" \
     "${bundle_root}/include/voxi/core/voxi_curl.h"
 
   generate_pkgconfig_files "\$HOME/.voxi" "${bundle_root}/lib/pkgconfig"
@@ -234,8 +234,8 @@ main() {
   copy_tree_contents "${PROJECT_DIR}/data/docs" "${bundle_root}/docs"
   copy_tree_contents "${PROJECT_DIR}/tools/embedded" "${bundle_root}/embedded"
   install -m 755 \
-    "${PROJECT_DIR}/deploy_host.sh" \
-    "${bundle_root}/manage/deploy_host.sh"
+    "${PROJECT_DIR}/deploy.sh" \
+    "${bundle_root}/manage/deploy.sh"
 
   write_bundle_manifest "${bundle_root}"
 

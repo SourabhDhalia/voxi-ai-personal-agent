@@ -12,7 +12,7 @@ SOURCE_DIR="${HOME}/.local/src/voxi"
 
 HOST_BASE_DIR="${HOME}/.voxi"
 HOST_BIN_DIR="${HOST_BASE_DIR}/bin"
-HOST_MANAGE_SCRIPT="${HOST_BASE_DIR}/manage/deploy_host.sh"
+HOST_MANAGE_SCRIPT="${HOST_BASE_DIR}/manage/deploy.sh"
 BASHRC_PATH="${HOME}/.bashrc"
 PATH_EXPORT='export PATH="$HOME/.voxi/bin:$PATH"'
 
@@ -53,9 +53,9 @@ Options:
   --dir <path>         Repository clone directory for source install
   --skip-deps          Skip apt and rustup bootstrap steps
   --skip-setup         Skip the interactive post-install setup wizard
-  --debug              Forward --debug to deploy_host.sh in source mode
-  --build-only         Forward --build-only to deploy_host.sh in source mode
-  --test               Forward --test to deploy_host.sh in source mode
+  --debug              Forward --debug to deploy.sh in source mode
+  --build-only         Forward --build-only to deploy.sh in source mode
+  --test               Forward --test to deploy.sh in source mode
   -h, --help           Show this help
 
 Examples:
@@ -319,10 +319,10 @@ restart_host_services() {
     return
   fi
 
-  if [[ -x "${SOURCE_DIR}/deploy_host.sh" ]]; then
+  if [[ -x "${SOURCE_DIR}/deploy.sh" ]]; then
     (
       cd "${SOURCE_DIR}"
-      ./deploy_host.sh --restart-only
+      ./deploy.sh --restart-only
     )
     return
   fi
@@ -378,7 +378,7 @@ install_release_bundle() {
   copy_tree_contents "${bundle_root}/manage" "${HOST_BASE_DIR}/manage"
 
   if [[ -x "${HOST_MANAGE_SCRIPT}" ]]; then
-    ln -sf ../manage/deploy_host.sh "${HOST_BIN_DIR}/voxi-hostctl"
+    ln -sf ../manage/deploy.sh "${HOST_BIN_DIR}/voxi-hostctl"
   fi
 
   seed_config_from_bundle "${bundle_root}"
@@ -492,12 +492,12 @@ prepare_repo() {
 }
 
 run_source_install() {
-  [[ -x "${SOURCE_DIR}/deploy_host.sh" ]] || fail "deploy_host.sh not found"
+  [[ -x "${SOURCE_DIR}/deploy.sh" ]] || fail "deploy.sh not found"
 
-  log "Running deploy_host.sh ${HOST_ARGS[*]:-}"
+  log "Running deploy.sh ${HOST_ARGS[*]:-}"
   (
     cd "${SOURCE_DIR}"
-    ./deploy_host.sh "${HOST_ARGS[@]}"
+    ./deploy.sh "${HOST_ARGS[@]}"
   )
 }
 

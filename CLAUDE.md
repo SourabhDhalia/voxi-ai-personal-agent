@@ -14,7 +14,7 @@ workflow guardrails.
 
 **Voxi** is a Rust-based Autonomous AI Agent daemon for Voxi OS
 (embedded Linux) and Ubuntu/WSL host development. The default workflow
-uses `./deploy_host.sh`; the Voxi GBS workflow uses `./deploy.sh` when
+uses `./deploy.sh`; the Voxi GBS workflow uses `./deploy.sh` when
 explicitly requested. The repository is currently split across:
 
 - the canonical reconstruction workspace under `rust/`
@@ -32,7 +32,7 @@ explicitly requested. The repository is currently split across:
 ### Build & Test
 - **NEVER** run `cargo build`, `cargo check`, `cargo test`, or
   `cargo clippy` directly. Default development builds/tests must go
-  through `./deploy_host.sh`.
+  through `./deploy.sh`.
 - **NEVER** run `cmake .` or any local CMake build.
 - Use `./deploy.sh` only when the user explicitly asks for Voxi,
   emulator, or device validation.
@@ -82,7 +82,7 @@ update `.dev/DASHBOARD.md` with the stage status.
 | 1. Planning | `.agent/skills/planning-project/SKILL.md` | Module objectives, execution mode classification |
 | 2. Design | `.agent/skills/designing-architecture/SKILL.md` | FFI boundaries, async topology docs |
 | 3. Development | `.agent/skills/developing-code/SKILL.md`, `.agent/skills/testing-with-voxi-tests/SKILL.md` | TDD Red→Green→Refactor cycle; system scenario added/updated |
-| 4. Build/Deploy | `.agent/skills/building-deploying/SKILL.md` | `./deploy_host.sh` succeeded, or explicit `./deploy.sh` |
+| 4. Build/Deploy | `.agent/skills/building-deploying/SKILL.md` | `./deploy.sh` succeeded, or explicit `./deploy.sh` |
 | 5. Test/Review | `.agent/skills/reviewing-code/SKILL.md`, `.agent/skills/testing-with-voxi-tests/SKILL.md` | Host or device logs as evidence; `voxi-tests` scenario result |
 | 6. Commit | `.agent/skills/managing-versions/SKILL.md` | Clean commit via `.tmp/commit_msg.txt` |
 
@@ -91,7 +91,7 @@ update `.dev/DASHBOARD.md` with the stage status.
 ## Global Environment Management
 
 - **Primary Shell Context**: The agent runs **directly inside a WSL
-  Ubuntu shell**. All project commands (`./deploy_host.sh`, `git`, etc.)
+  Ubuntu shell**. All project commands (`./deploy.sh`, `git`, etc.)
   are run as plain bash — no `wsl -e bash -c "..."` wrapper needed.
 - **Edge Case — PowerShell**: If the agent is invoked from a Windows
   PowerShell session (e.g., Windows-side IDE), wrap every Linux command
@@ -137,22 +137,22 @@ Do **not** create new workflow or stage artifact documents under `docs/`.
 
 ### Host Linux (default Ubuntu/WSL workflow)
 ```bash
-# Release build + install + run (Generic Linux mode)
-./deploy_host.sh
+# Release build + install + run (Generic Linux / macOS mode)
+./deploy.sh
 
 # Debug build
-./deploy_host.sh -d
+./deploy.sh -d
 
 # Build only (no install/run)
-./deploy_host.sh -b
+./deploy.sh -b
 
 # Run tests (offline, vendored)
-./deploy_host.sh --test
+./deploy.sh --test
 
 # Daemon management
-./deploy_host.sh --status   # check status
-./deploy_host.sh --log      # follow logs
-./deploy_host.sh --stop     # stop daemon
+./deploy.sh --status   # check status
+./deploy.sh --log      # follow logs
+./deploy.sh --stop     # stop daemon
 ```
 
 ---

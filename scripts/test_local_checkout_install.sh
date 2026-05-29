@@ -232,7 +232,7 @@ main() {
   # ── Test 2: implicit auto-detection ───────────────────────────────────────
   # install.sh is invoked via its absolute path (bash <path>), so SCRIPT_DIR
   # inside install.sh resolves to PROJECT_DIR. auto_select_local_checkout then
-  # finds deploy_host.sh and .git there and activates --local-checkout without
+  # finds deploy.sh and .git there and activates --local-checkout without
   # the caller passing the flag. The second run reuses cached Cargo artifacts
   # from build_root so it completes quickly.
   log "=== Test 2: implicit auto-detection (no --local-checkout flag) ==="

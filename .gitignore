@@ -1,5 +1,6 @@
 # Build artifacts (top-level only, not vendor/*/build/)
 /build/
+/dist/
 build_local/
 
 # Rust / Cargo

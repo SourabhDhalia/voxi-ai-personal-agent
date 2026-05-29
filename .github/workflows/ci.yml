@@ -38,7 +38,6 @@ jobs:
           set -euo pipefail
           cd "${WORKDIR}"
           bash -n install.sh
-          bash -n deploy_host.sh
           bash -n deploy.sh
           bash -n scripts/create_host_release_bundle.sh
 
@@ -123,5 +122,5 @@ jobs:
 
           tar -tzf "${archive}" | grep -F 'bin/voxi'
           tar -tzf "${archive}" | grep -F 'bin/voxi-cli'
-          tar -tzf "${archive}" | grep -F 'manage/deploy_host.sh'
+          tar -tzf "${archive}" | grep -F 'manage/deploy.sh'
           tar -tzf "${archive}" | grep -F 'bundle-manifest.json'

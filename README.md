@@ -58,7 +58,7 @@ demo chatbot, this is what Voxi is for.
 | Access surfaces | CLI, web dashboard, Telegram, webhook, Slack, Discord, MCP, and other channel layers present in the workspace |
 | Coding workflow | Telegram can switch into coding mode and drive local `codex`, `gemini`, or `claude` CLIs on the host |
 | Extensibility | Dedicated tool executor, metadata plugins, C-facing library, and dynamic `.so` loading |
-| Deployment story | `deploy.sh` for emulator/device packaging and deployment, `deploy_host.sh` for Ubuntu/WSL host runs |
+| Deployment story | `deploy.sh` for emulator/device packaging and deployment, or generic Linux/macOS host builds/runs |
 
 ## What Makes It Strong
 
@@ -209,16 +209,16 @@ Or run the classic manual flow:
 ```bash
 git clone https://github.com/hjhun/voxi.git
 cd voxi
-./deploy_host.sh
+./deploy.sh
 ```
 
 Useful host commands:
 
 ```bash
-./deploy_host.sh -b
-./deploy_host.sh --status
-./deploy_host.sh --log
-./deploy_host.sh -s
+./deploy.sh -b
+./deploy.sh --status
+./deploy.sh --log
+./deploy.sh -s
 voxi-cli dashboard start
 voxi-cli dashboard status
 ```

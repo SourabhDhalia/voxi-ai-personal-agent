@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run the offline system contract suite against a temporary isolated runtime
-# root. Invoked automatically by ./deploy_host.sh --test after the
+# root. Invoked automatically by ./deploy.sh --test after the
 # cargo/parity/doc checks.
 #
 # Usage: scripts/run_host_system_contracts.sh --bin-dir <dir>
@@ -103,7 +103,7 @@ TESTS_BIN="${BIN_DIR}/voxi-tests"
 for bin in "${DAEMON_BIN}" "${TOOL_EXECUTOR_BIN}" "${TESTS_BIN}"; do
   if [[ ! -x "${bin}" ]]; then
     err "Required binary not found or not executable: ${bin}"
-    err "Run './deploy_host.sh --test' to build before running this script."
+    err "Run './deploy.sh --test' to build before running this script."
     exit 1
   fi
 done
