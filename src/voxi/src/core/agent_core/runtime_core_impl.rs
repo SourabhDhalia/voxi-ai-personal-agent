@@ -1079,12 +1079,6 @@ impl AgentCore {
         }
         log::info!("Tools loaded from {:?}", collect_tool_roots(paths));
 
-        // Load workflows
-        {
-            let mut we = self.workflow_engine.write().await;
-            we.load_workflows_from(&paths.workflows_dir.to_string_lossy());
-        }
-
         // Load MCP config
         {
             let mcp_config_path = paths.config_dir.join("mcp_servers.json");
@@ -1094,6 +1088,15 @@ impl AgentCore {
             } else {
                 log::warn!("MCP Client Manager: failed to load or connect via mcp_servers.json at {:?}", mcp_config_path);
             }
+        }
+
+        // Generate workflows for MCP tools
+        self.generate_mcp_workflows().await;
+
+        // Load workflows (both custom and auto-generated MCP ones)
+        {
+            let mut we = self.workflow_engine.write().await;
+            we.load_workflows_from(&paths.workflows_dir.to_string_lossy());
         }
 
         {
@@ -1247,6 +1250,73 @@ impl AgentCore {
         }
 
         self.publish_runtime_event("reload_backends", self.get_llm_runtime());
+    }
+
+    async fn generate_mcp_workflows(&self) {
+        let paths = &self.platform.paths;
+        let mcp_tools = self.mcp_client_manager.read().await.get_all_tool_infos();
+        if mcp_tools.is_empty() {
+            return;
+        }
+
+        // Group tools by server_name
+        let mut grouped: std::collections::HashMap<String, Vec<crate::channel::mcp_client::McpToolInfo>> =
+            std::collections::HashMap::new();
+        for t in mcp_tools {
+            grouped.entry(t.server_name.clone()).or_default().push(t);
+        }
+
+        let _ = std::fs::create_dir_all(&paths.workflows_dir);
+
+        for (server_name, tools) in grouped {
+            let file_path = paths.workflows_dir.join(format!("mcp_{}.workflow.md", server_name));
+            // Only generate if it does not exist
+            if file_path.exists() {
+                continue;
+            }
+
+            let mut md = String::new();
+            md.push_str("---\n");
+            md.push_str(&format!("id: mcp_{}\n", server_name));
+            md.push_str(&format!("name: MCP {} Auto Workflow\n", server_name));
+            md.push_str(&format!(
+                "description: Automatically generated workflow for MCP server {}\n",
+                server_name
+            ));
+            md.push_str("trigger: manual\n");
+            md.push_str("---\n\n");
+
+            for (idx, tool) in tools.iter().enumerate() {
+                md.push_str(&format!("## Step {}: Invoke {}\n", idx + 1, tool.original_name));
+                md.push_str("- type: tool\n");
+                md.push_str(&format!("- tool_name: {}\n", tool.safe_name));
+
+                // Helper to extract default arguments
+                let mut args_map = serde_json::Map::new();
+                if let Some(properties) = tool.parameters.get("properties").and_then(|p| p.as_object()) {
+                    for (k, v) in properties {
+                        let default_val = match v.get("type").and_then(|t| t.as_str()) {
+                            Some("string") => Value::String("".to_string()),
+                            Some("number") | Some("integer") => serde_json::json!(0),
+                            Some("boolean") => Value::Bool(false),
+                            Some("array") => Value::Array(vec![]),
+                            Some("object") => Value::Object(serde_json::Map::new()),
+                            _ => Value::Null,
+                        };
+                        args_map.insert(k.clone(), default_val);
+                    }
+                }
+                let args_json = serde_json::to_string(&Value::Object(args_map)).unwrap_or_else(|_| "{}".to_string());
+                md.push_str(&format!("- args: {}\n", args_json));
+                md.push_str(&format!("- output_var: {}_res\n\n", tool.safe_name));
+            }
+
+            if let Err(err) = std::fs::write(&file_path, md) {
+                log::warn!("Failed to write auto-generated MCP workflow to {:?}: {}", file_path, err);
+            } else {
+                log::info!("Automatically generated MCP workflow for server '{}' at {:?}", server_name, file_path);
+            }
+        }
     }
 
     /// Create and initialize an LLM backend by name using the provided merged config.
