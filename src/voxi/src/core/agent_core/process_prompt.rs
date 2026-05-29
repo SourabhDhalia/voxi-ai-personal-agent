@@ -749,7 +749,9 @@ impl AgentCore {
         let prefetched_skills = if literal_json_output {
             Vec::new()
         } else {
-            select_relevant_skills(prompt, &textual_skills, MAX_PREFETCHED_SKILLS)
+            let ms_guard = self.memory_store.lock().ok();
+            let ms_ref = ms_guard.as_ref().and_then(|ms| ms.as_ref());
+            select_relevant_skills(prompt, &textual_skills, MAX_PREFETCHED_SKILLS, ms_ref)
         };
         for skill in &prefetched_skills {
             log::info!(

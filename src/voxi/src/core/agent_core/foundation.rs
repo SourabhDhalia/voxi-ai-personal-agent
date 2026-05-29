@@ -950,19 +950,34 @@ fn select_relevant_skills(
     prompt: &str,
     skills: &[TextualSkill],
     limit: usize,
+    memory_store: Option<&crate::storage::memory_store::MemoryStore>,
 ) -> Vec<TextualSkill> {
-    let mut scored: Vec<(usize, TextualSkill)> = skills
+    let prompt_emb = memory_store.and_then(|ms| ms.encode_text_embedding(prompt));
+
+    let mut scored: Vec<(f32, TextualSkill)> = skills
         .iter()
         .cloned()
         .filter_map(|skill| {
-            let score = skill_relevance_score(prompt, &skill);
-            (score > 0).then_some((score, skill))
+            let keyword_score = skill_relevance_score(prompt, &skill);
+            let mut score = keyword_score as f32;
+
+            if let Some(ref p_emb) = prompt_emb {
+                let skill_text = format!("{} {}", skill.description, skill.tags.join(" "));
+                if let Some(s_emb) = memory_store.and_then(|ms| ms.encode_text_embedding(&skill_text)) {
+                    let similarity: f32 = p_emb.iter().zip(s_emb.iter()).map(|(a, b)| a * b).sum();
+                    // Align similarity with keyword scores; similarity is range [-1, 1], usually [0, 1]
+                    score += similarity * 10.0;
+                }
+            }
+
+            (score > 0.0).then_some((score, skill))
         })
         .collect();
 
     scored.sort_by(|(left_score, left_skill), (right_score, right_skill)| {
         right_score
-            .cmp(left_score)
+            .partial_cmp(left_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| left_skill.file_name.cmp(&right_skill.file_name))
     });
 

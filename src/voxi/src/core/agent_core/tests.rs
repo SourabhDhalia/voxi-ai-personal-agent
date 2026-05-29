@@ -2718,7 +2718,7 @@ mod tests {
             },
         ];
 
-        let selected = select_relevant_skills("please check battery status battery", &skills, 2);
+        let selected = select_relevant_skills("please check battery status battery", &skills, 2, None);
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].file_name, "battery_monitor");
