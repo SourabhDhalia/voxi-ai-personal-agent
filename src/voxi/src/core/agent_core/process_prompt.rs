@@ -9,6 +9,82 @@ impl AgentCore {
         }
     }
 
+    fn parse_numbered_options(text: &str) -> Vec<(usize, String)> {
+        static OPTION_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+            regex::Regex::new(r"(?m)^\s*(\d+)[\.\)]\s*(.*)$").unwrap()
+        });
+        
+        let mut options = Vec::new();
+        for line in text.lines() {
+            if let Some(caps) = OPTION_RE.captures(line) {
+                if let (Some(num_match), Some(text_match)) = (caps.get(1), caps.get(2)) {
+                    if let Ok(num) = num_match.as_str().parse::<usize>() {
+                        let cleaned_text = text_match.as_str().trim().trim_matches('`').trim().to_string();
+                        if !cleaned_text.is_empty() {
+                            options.push((num, cleaned_text));
+                        }
+                    }
+                }
+            }
+        }
+        options
+    }
+
+    fn resolve_confirmed_option(user_input: &str, options: &[(usize, String)]) -> Option<String> {
+        let input_lower = user_input.trim().to_lowercase();
+        if input_lower.is_empty() || options.is_empty() {
+            return None;
+        }
+
+        // 1. Check if the user input is a direct index number (e.g. "1", "1st", "option 1", "choice 1")
+        let mut chosen_index = None;
+        if let Some(digit_char) = input_lower.chars().find(|c| c.is_ascii_digit()) {
+            if let Some(digit) = digit_char.to_digit(10) {
+                chosen_index = Some(digit as usize);
+            }
+        } else if input_lower.contains("first") || input_lower.contains("1st") {
+            chosen_index = Some(1);
+        } else if input_lower.contains("second") || input_lower.contains("2nd") {
+            chosen_index = Some(2);
+        } else if input_lower.contains("third") || input_lower.contains("3rd") {
+            chosen_index = Some(3);
+        }
+
+        if let Some(idx) = chosen_index {
+            for &(num, ref text) in options {
+                if num == idx {
+                    return Some(text.clone());
+                }
+            }
+        }
+
+        // 2. Check if user input is a positive confirmation
+        let is_confirmation = input_lower == "yes"
+            || input_lower == "y"
+            || input_lower == "confirm"
+            || input_lower == "proceed"
+            || input_lower.contains("go ahead")
+            || input_lower.contains("yes run")
+            || input_lower.contains("run it")
+            || input_lower.contains("run");
+
+        if is_confirmation {
+            if let Some(&(_, ref text)) = options.first() {
+                return Some(text.clone());
+            }
+        }
+
+        // 3. Check if user input contains the name of any option
+        for &(_, ref text) in options {
+            if input_lower.contains(&text.to_lowercase()) {
+                return Some(text.clone());
+            }
+        }
+
+        None
+    }
+
+
     fn is_zepto_address_selected(messages: &[LlmMessage]) -> bool {
         let mut selected = false;
         for msg in messages {
@@ -465,9 +541,32 @@ impl AgentCore {
         }
         messages = filtered_messages;
 
+        let mut confirmed_tool_injection = None;
+        if !literal_json_output {
+            if let Some(last_msg) = messages.iter().rfind(|m| m.role == "assistant") {
+                let options = Self::parse_numbered_options(&last_msg.text);
+                if !options.is_empty() {
+                    if let Some(confirmed_option) = Self::resolve_confirmed_option(prompt, &options) {
+                        log::info!("[OptionAutoResolve] User confirmed option: '{}'", confirmed_option);
+                        confirmed_tool_injection = Some(confirmed_option);
+                    }
+                }
+            }
+        }
+
         if messages.is_empty() || messages.last().map(|m| m.role.as_str()) != Some("user") {
             messages.push(LlmMessage::user(prompt));
         }
+
+        if let Some(ref tool_name) = confirmed_tool_injection {
+            let injection_text = format!(
+                "System: The user has selected/confirmed option: `{}`. \
+                 Please execute/invoke this tool (`{}`) in this turn to perform the action.",
+                tool_name, tool_name
+            );
+            inject_context_message(&mut messages, injection_text);
+        }
+
         for context in preloaded_context_messages.drain(..) {
             inject_context_message(&mut messages, context);
         }
