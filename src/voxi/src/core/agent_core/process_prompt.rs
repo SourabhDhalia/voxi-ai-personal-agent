@@ -1634,18 +1634,18 @@ impl AgentCore {
                     if loop_state.current_workflow_step >= wf.steps.len() {
                         log::info!("[Workflow] All steps completed for {}", wf.name);
                         loop_state.active_workflow_id = None;
-                        loop_state.transition(AgentPhase::ResultReporting);
                         let text = format!(
-                            "Workflow '{}' completed successfully.\nVariables:\n{:?}",
+                            "System: Workflow '{}' completed successfully. Variables collected: {:?}",
                             wf.name,
                             loop_state.workflow_vars.keys().collect::<Vec<_>>()
                         );
-                        if let Ok(ss) = self.session_store.lock() {
-                            if let Some(store) = ss.as_ref() {
-                                store.add_message(session_id, "assistant", &text);
-                            }
-                        }
-                        return text;
+                        messages.push(LlmMessage {
+                            role: "system".into(),
+                            text,
+                            ..Default::default()
+                        });
+                        loop_state.transition(AgentPhase::RePlanning);
+                        continue;
                     }
 
                     let step = &wf.steps[loop_state.current_workflow_step];
@@ -3445,12 +3445,21 @@ impl AgentCore {
                     let we = self.workflow_engine.read().await;
                     if let Some(wf) = we.get_workflow(wf_id) {
                         let step = &wf.steps[loop_state.current_workflow_step];
-                        loop_state.workflow_vars.insert(
-                            step.output_var.clone(),
-                            serde_json::Value::String(response.text.clone()),
-                        );
-                        loop_state.current_workflow_step += 1;
-                        advance_workflow = true;
+                        let is_last_step = loop_state.current_workflow_step == wf.steps.len() - 1;
+                        if is_last_step || step.step_type != crate::core::workflow_engine::WorkflowStepType::Prompt {
+                            loop_state.workflow_vars.insert(
+                                step.output_var.clone(),
+                                serde_json::Value::String(response.text.clone()),
+                            );
+                            loop_state.current_workflow_step += 1;
+                            advance_workflow = true;
+                        } else {
+                            log::info!(
+                                "[Workflow] Prompt step '{}' of workflow '{}' returned text response. Retaining active step to await user selection.",
+                                step.id,
+                                wf.name
+                            );
+                        }
                     }
                 }
                 if advance_workflow {

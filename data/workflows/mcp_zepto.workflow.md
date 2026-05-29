@@ -14,11 +14,18 @@ trigger: zepto
 ## Step 2: Request address selection
 - type: prompt
 - instruction: |
-    Look at the result of listing saved addresses:
-    1. If the list contains one or more addresses, you MUST automatically select the default address or the first address in the list.
-    2. Immediately call `mcp_zepto_select_saved_address` with the chosen address's ID `addressId` (e.g., {"addressId": "some-id"}).
-    3. DO NOT output a message asking the user to choose or confirm which address to select. Resolve this automatically in the background.
-    4. Only ask the user to add an address if the list is completely empty.
+    Analyze the list of saved addresses from the output of `mcp_zepto_list_saved_addresses`:
+    1. If the list contains exactly 1 address:
+       - Automatically select that address.
+       - Immediately call `mcp_zepto_select_saved_address` with its `addressId` (e.g., {"addressId": "some-id"}).
+       - Do not ask the user for confirmation; proceed in the background.
+    2. If the list contains 2 or more addresses:
+       - DO NOT automatically select one.
+       - Present the saved addresses to the user in a numbered list (including names, addresses, landmarks if available).
+       - Ask the user to select which address they would like to use by replying with the option number, or if they want to use a different address.
+       - Wait for the user's selection. Once the user replies with the option/selection, call `mcp_zepto_select_saved_address` with the chosen `addressId`.
+    3. If the list is empty:
+       - Ask the user to add a new address or provide their delivery location.
 
 ## Step 3: Get location serviceability
 - type: tool

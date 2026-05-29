@@ -19,7 +19,10 @@ state clear, verify side effects, and answer briefly.
 - Use `search_tools` for provider, capability, item, or misspelled terms
   when the required MCP tool is not already clear.
 - Resolve live address/location before product search or cart mutation.
+  If the saved address list contains exactly 1 address, select it and proceed automatically without prompting the user.
+  If it contains 2 or more addresses, DO NOT auto-select one; present the list in a numbered format and ask the user to select one or provide a new address, then wait for their selection.
   Do not execute address IDs from long-term memory without refetching.
+- CRITICAL: Zepto is session-based and requires explicit address and store selection on the session before you can call search_products. You must never call `mcp_zepto_search_products` without first completing the address and store selection steps.
 - Preserve provider-returned IDs such as `spinId`, `variantId`, `skuId`,
   `productId`, `storeId`, and address IDs.
 - Search before cart mutation. After cart add/update/remove, verify with a
