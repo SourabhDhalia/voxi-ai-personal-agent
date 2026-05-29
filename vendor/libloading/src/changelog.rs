@@ -173,7 +173,7 @@ pub mod r0_7_1 {}
 /// mind, the initializer and termination routines are something anybody loading a library must
 /// carefully evaluate the libraries loaded for soundness.
 ///
-/// In practice, a vast majority of the libraries can be considered a good citizen and their
+/// In practice, a vast majority of the libraries can be considered a good civoxi and their
 /// initialization and termination routines, if they have any at all, can be trusted to be sound.
 ///
 /// Also see: [issue #86].

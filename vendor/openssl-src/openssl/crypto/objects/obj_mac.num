@@ -349,7 +349,7 @@ id_pda_dateOfBirth		348
 id_pda_placeOfBirth		349
 id_pda_pseudonym		350
 id_pda_gender		351
-id_pda_countryOfCitizenship		352
+id_pda_countryOfCivoxiship		352
 id_pda_countryOfResidence		353
 id_aca_authenticationInfo		354
 id_aca_accessIdentity		355

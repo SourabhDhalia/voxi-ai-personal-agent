@@ -545,7 +545,7 @@ impl Nid {
     pub const ID_PDA_DATEOFBIRTH: Nid = Nid(ffi::NID_id_pda_dateOfBirth);
     pub const ID_PDA_PLACEOFBIRTH: Nid = Nid(ffi::NID_id_pda_placeOfBirth);
     pub const ID_PDA_GENDER: Nid = Nid(ffi::NID_id_pda_gender);
-    pub const ID_PDA_COUNTRYOFCITIZENSHIP: Nid = Nid(ffi::NID_id_pda_countryOfCitizenship);
+    pub const ID_PDA_COUNTRYOFCIVOXISHIP: Nid = Nid(ffi::NID_id_pda_countryOfCivoxiship);
     pub const ID_PDA_COUNTRYOFRESIDENCE: Nid = Nid(ffi::NID_id_pda_countryOfResidence);
     pub const ID_ACA_AUTHENTICATIONINFO: Nid = Nid(ffi::NID_id_aca_authenticationInfo);
     pub const ID_ACA_ACCESSIDENTITY: Nid = Nid(ffi::NID_id_aca_accessIdentity);

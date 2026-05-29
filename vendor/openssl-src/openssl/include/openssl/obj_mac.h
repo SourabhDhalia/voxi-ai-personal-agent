@@ -2063,9 +2063,9 @@
 #define NID_id_pda_gender               351
 #define OBJ_id_pda_gender               OBJ_id_pda,3L
 
-#define SN_id_pda_countryOfCitizenship          "id-pda-countryOfCitizenship"
-#define NID_id_pda_countryOfCitizenship         352
-#define OBJ_id_pda_countryOfCitizenship         OBJ_id_pda,4L
+#define SN_id_pda_countryOfCivoxiship          "id-pda-countryOfCivoxiship"
+#define NID_id_pda_countryOfCivoxiship         352
+#define OBJ_id_pda_countryOfCivoxiship         OBJ_id_pda,4L
 
 #define SN_id_pda_countryOfResidence            "id-pda-countryOfResidence"
 #define NID_id_pda_countryOfResidence           353

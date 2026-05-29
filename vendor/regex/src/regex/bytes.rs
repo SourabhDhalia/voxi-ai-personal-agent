@@ -283,7 +283,7 @@ impl Regex {
     /// # Example
     ///
     /// Say you have some haystack with movie names and their release years,
-    /// like "'Citizen Kane' (1941)". It'd be nice if we could search for
+    /// like "'Civoxi Kane' (1941)". It'd be nice if we could search for
     /// strings looking like that, while also extracting the movie name and its
     /// release year separately. The example below shows how to do that.
     ///
@@ -291,17 +291,17 @@ impl Regex {
     /// use regex::bytes::Regex;
     ///
     /// let re = Regex::new(r"'([^']+)'\s+\((\d{4})\)").unwrap();
-    /// let hay = b"Not my favorite movie: 'Citizen Kane' (1941).";
+    /// let hay = b"Not my favorite movie: 'Civoxi Kane' (1941).";
     /// let caps = re.captures(hay).unwrap();
-    /// assert_eq!(caps.get(0).unwrap().as_bytes(), b"'Citizen Kane' (1941)");
-    /// assert_eq!(caps.get(1).unwrap().as_bytes(), b"Citizen Kane");
+    /// assert_eq!(caps.get(0).unwrap().as_bytes(), b"'Civoxi Kane' (1941)");
+    /// assert_eq!(caps.get(1).unwrap().as_bytes(), b"Civoxi Kane");
     /// assert_eq!(caps.get(2).unwrap().as_bytes(), b"1941");
     /// // You can also access the groups by index using the Index notation.
     /// // Note that this will panic on an invalid index. In this case, these
     /// // accesses are always correct because the overall regex will only
     /// // match when these capture groups match.
-    /// assert_eq!(&caps[0], b"'Citizen Kane' (1941)");
-    /// assert_eq!(&caps[1], b"Citizen Kane");
+    /// assert_eq!(&caps[0], b"'Civoxi Kane' (1941)");
+    /// assert_eq!(&caps[1], b"Civoxi Kane");
     /// assert_eq!(&caps[2], b"1941");
     /// ```
     ///
@@ -314,17 +314,17 @@ impl Regex {
     /// use regex::bytes::Regex;
     ///
     /// let re = Regex::new(r"'(?<title>[^']+)'\s+\((?<year>\d{4})\)").unwrap();
-    /// let hay = b"Not my favorite movie: 'Citizen Kane' (1941).";
+    /// let hay = b"Not my favorite movie: 'Civoxi Kane' (1941).";
     /// let caps = re.captures(hay).unwrap();
-    /// assert_eq!(caps.get(0).unwrap().as_bytes(), b"'Citizen Kane' (1941)");
-    /// assert_eq!(caps.name("title").unwrap().as_bytes(), b"Citizen Kane");
+    /// assert_eq!(caps.get(0).unwrap().as_bytes(), b"'Civoxi Kane' (1941)");
+    /// assert_eq!(caps.name("title").unwrap().as_bytes(), b"Civoxi Kane");
     /// assert_eq!(caps.name("year").unwrap().as_bytes(), b"1941");
     /// // You can also access the groups by name using the Index notation.
     /// // Note that this will panic on an invalid group name. In this case,
     /// // these accesses are always correct because the overall regex will
     /// // only match when these capture groups match.
-    /// assert_eq!(&caps[0], b"'Citizen Kane' (1941)");
-    /// assert_eq!(&caps["title"], b"Citizen Kane");
+    /// assert_eq!(&caps[0], b"'Civoxi Kane' (1941)");
+    /// assert_eq!(&caps["title"], b"Civoxi Kane");
     /// assert_eq!(&caps["year"], b"1941");
     /// ```
     ///
@@ -343,10 +343,10 @@ impl Regex {
     /// use regex::bytes::Regex;
     ///
     /// let re = Regex::new(r"'([^']+)'\s+\((\d{4})\)").unwrap();
-    /// let hay = b"Not my favorite movie: 'Citizen Kane' (1941).";
+    /// let hay = b"Not my favorite movie: 'Civoxi Kane' (1941).";
     /// let (full, [title, year]) = re.captures(hay).unwrap().extract();
-    /// assert_eq!(full, b"'Citizen Kane' (1941)");
-    /// assert_eq!(title, b"Citizen Kane");
+    /// assert_eq!(full, b"'Civoxi Kane' (1941)");
+    /// assert_eq!(title, b"Civoxi Kane");
     /// assert_eq!(year, b"1941");
     /// ```
     #[inline]
@@ -380,7 +380,7 @@ impl Regex {
     /// use regex::bytes::Regex;
     ///
     /// let re = Regex::new(r"'([^']+)'\s+\(([0-9]{4})\)").unwrap();
-    /// let hay = b"'Citizen Kane' (1941), 'The Wizard of Oz' (1939), 'M' (1931).";
+    /// let hay = b"'Civoxi Kane' (1941), 'The Wizard of Oz' (1939), 'M' (1931).";
     /// let mut movies = vec![];
     /// for (_, [title, year]) in re.captures_iter(hay).map(|c| c.extract()) {
     ///     // OK because [0-9]{4} can only match valid UTF-8.
@@ -388,7 +388,7 @@ impl Regex {
     ///     movies.push((title, year.parse::<i64>()?));
     /// }
     /// assert_eq!(movies, vec![
-    ///     (&b"Citizen Kane"[..], 1941),
+    ///     (&b"Civoxi Kane"[..], 1941),
     ///     (&b"The Wizard of Oz"[..], 1939),
     ///     (&b"M"[..], 1931),
     /// ]);
@@ -401,11 +401,11 @@ impl Regex {
     /// use regex::bytes::Regex;
     ///
     /// let re = Regex::new(r"'(?<title>[^']+)'\s+\((?<year>[0-9]{4})\)").unwrap();
-    /// let hay = b"'Citizen Kane' (1941), 'The Wizard of Oz' (1939), 'M' (1931).";
+    /// let hay = b"'Civoxi Kane' (1941), 'The Wizard of Oz' (1939), 'M' (1931).";
     /// let mut it = re.captures_iter(hay);
     ///
     /// let caps = it.next().unwrap();
-    /// assert_eq!(&caps["title"], b"Citizen Kane");
+    /// assert_eq!(&caps["title"], b"Civoxi Kane");
     /// assert_eq!(&caps["year"], b"1941");
     ///
     /// let caps = it.next().unwrap();

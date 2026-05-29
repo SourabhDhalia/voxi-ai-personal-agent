@@ -332,7 +332,7 @@ static const unsigned char so[9517] = {
     0x2B,0x06,0x01,0x05,0x05,0x07,0x09,0x01,       /* [ 2595] OBJ_id_pda_dateOfBirth */
     0x2B,0x06,0x01,0x05,0x05,0x07,0x09,0x02,       /* [ 2603] OBJ_id_pda_placeOfBirth */
     0x2B,0x06,0x01,0x05,0x05,0x07,0x09,0x03,       /* [ 2611] OBJ_id_pda_gender */
-    0x2B,0x06,0x01,0x05,0x05,0x07,0x09,0x04,       /* [ 2619] OBJ_id_pda_countryOfCitizenship */
+    0x2B,0x06,0x01,0x05,0x05,0x07,0x09,0x04,       /* [ 2619] OBJ_id_pda_countryOfCivoxiship */
     0x2B,0x06,0x01,0x05,0x05,0x07,0x09,0x05,       /* [ 2627] OBJ_id_pda_countryOfResidence */
     0x2B,0x06,0x01,0x05,0x05,0x07,0x0A,0x01,       /* [ 2635] OBJ_id_aca_authenticationInfo */
     0x2B,0x06,0x01,0x05,0x05,0x07,0x0A,0x02,       /* [ 2643] OBJ_id_aca_accessIdentity */
@@ -1704,7 +1704,7 @@ static const ASN1_OBJECT nid_objs[NUM_NID] = {
     {"id-pda-placeOfBirth", "id-pda-placeOfBirth", NID_id_pda_placeOfBirth, 8, &so[2603]},
     { NULL, NULL, NID_undef },
     {"id-pda-gender", "id-pda-gender", NID_id_pda_gender, 8, &so[2611]},
-    {"id-pda-countryOfCitizenship", "id-pda-countryOfCitizenship", NID_id_pda_countryOfCitizenship, 8, &so[2619]},
+    {"id-pda-countryOfCivoxiship", "id-pda-countryOfCivoxiship", NID_id_pda_countryOfCivoxiship, 8, &so[2619]},
     {"id-pda-countryOfResidence", "id-pda-countryOfResidence", NID_id_pda_countryOfResidence, 8, &so[2627]},
     {"id-aca-authenticationInfo", "id-aca-authenticationInfo", NID_id_aca_authenticationInfo, 8, &so[2635]},
     {"id-aca-accessIdentity", "id-aca-accessIdentity", NID_id_aca_accessIdentity, 8, &so[2643]},
@@ -3595,7 +3595,7 @@ static const unsigned int sn_objs[NUM_SN] = {
      347,    /* "id-on-personalData" */
     1209,    /* "id-on-xmppAddr" */
      265,    /* "id-pda" */
-     352,    /* "id-pda-countryOfCitizenship" */
+     352,    /* "id-pda-countryOfCivoxiship" */
      353,    /* "id-pda-countryOfResidence" */
      348,    /* "id-pda-dateOfBirth" */
      351,    /* "id-pda-gender" */
@@ -5229,7 +5229,7 @@ static const unsigned int ln_objs[NUM_LN] = {
      264,    /* "id-on" */
      347,    /* "id-on-personalData" */
      265,    /* "id-pda" */
-     352,    /* "id-pda-countryOfCitizenship" */
+     352,    /* "id-pda-countryOfCivoxiship" */
      353,    /* "id-pda-countryOfResidence" */
      348,    /* "id-pda-dateOfBirth" */
      351,    /* "id-pda-gender" */
@@ -6664,7 +6664,7 @@ static const unsigned int obj_objs[NUM_OBJ] = {
      348,    /* OBJ_id_pda_dateOfBirth           1 3 6 1 5 5 7 9 1 */
      349,    /* OBJ_id_pda_placeOfBirth          1 3 6 1 5 5 7 9 2 */
      351,    /* OBJ_id_pda_gender                1 3 6 1 5 5 7 9 3 */
-     352,    /* OBJ_id_pda_countryOfCitizenship  1 3 6 1 5 5 7 9 4 */
+     352,    /* OBJ_id_pda_countryOfCivoxiship  1 3 6 1 5 5 7 9 4 */
      353,    /* OBJ_id_pda_countryOfResidence    1 3 6 1 5 5 7 9 5 */
      354,    /* OBJ_id_aca_authenticationInfo    1 3 6 1 5 5 7 10 1 */
      355,    /* OBJ_id_aca_accessIdentity        1 3 6 1 5 5 7 10 2 */
