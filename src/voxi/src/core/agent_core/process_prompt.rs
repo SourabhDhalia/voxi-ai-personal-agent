@@ -1491,6 +1491,9 @@ impl AgentCore {
             )
             .await;
 
+        let history_len = messages.len();
+        let mut replans_without_tool = 0;
+
         // ── Phases 4–13: Main agentic loop ───────────────────────────────
         loop {
             if self.is_request_cancelled(request_id) {
@@ -3315,8 +3318,13 @@ impl AgentCore {
                 let prompt_lower = prompt.to_lowercase();
                 let is_shopping = prompt_lower.contains("zepto") || prompt_lower.contains("swiggy") || prompt_lower.contains("instamart") || prompt_lower.contains("cart") || prompt_lower.contains("checkout") || prompt_lower.contains("order") || prompt_lower.contains("groceries") || prompt_lower.contains("food");
 
-                if is_shopping && !was_shopping_tool_executed(&messages) {
+                if is_shopping && !was_shopping_tool_executed(&messages, history_len) {
                     log::info!("[GoalEvaluation] Shopping intent detected, but no shopping tools were executed. Rejecting termination.");
+                    if replans_without_tool >= 2 {
+                        log::warn!("[GoalEvaluation] Too many replans without tool execution. Exiting agent loop.");
+                        break;
+                    }
+                    replans_without_tool += 1;
                     messages.push(LlmMessage {
                         role: "assistant".into(),
                         text: response.text.clone(),
@@ -3477,8 +3485,9 @@ impl AgentCore {
     }
 }
 
-fn was_shopping_tool_executed(messages: &[LlmMessage]) -> bool {
-    for msg in messages {
+fn was_shopping_tool_executed(messages: &[LlmMessage], history_len: usize) -> bool {
+    let start_idx = history_len.min(messages.len());
+    for msg in &messages[start_idx..] {
         if msg.role == "tool" {
             let name = msg.tool_name.to_lowercase();
             if name.contains("zepto") || name.contains("swiggy") || name.contains("instamart") || name.contains("cart") || name.contains("search") {

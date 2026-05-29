@@ -1275,41 +1275,111 @@ impl AgentCore {
                 continue;
             }
 
-            let mut md = String::new();
-            md.push_str("---\n");
-            md.push_str(&format!("id: mcp_{}\n", server_name));
-            md.push_str(&format!("name: MCP {} Auto Workflow\n", server_name));
-            md.push_str(&format!(
-                "description: Automatically generated workflow for MCP server {}\n",
-                server_name
-            ));
-            md.push_str("trigger: manual\n");
-            md.push_str("---\n\n");
+            let trigger = if server_name.contains("swiggy") {
+                "swiggy".to_string()
+            } else if server_name.contains("zepto") {
+                "zepto".to_string()
+            } else {
+                server_name.clone()
+            };
 
-            for (idx, tool) in tools.iter().enumerate() {
-                md.push_str(&format!("## Step {}: Invoke {}\n", idx + 1, tool.original_name));
-                md.push_str("- type: tool\n");
-                md.push_str(&format!("- tool_name: {}\n", tool.safe_name));
-
-                // Helper to extract default arguments
-                let mut args_map = serde_json::Map::new();
-                if let Some(properties) = tool.parameters.get("properties").and_then(|p| p.as_object()) {
-                    for (k, v) in properties {
-                        let default_val = match v.get("type").and_then(|t| t.as_str()) {
-                            Some("string") => Value::String("".to_string()),
-                            Some("number") | Some("integer") => serde_json::json!(0),
-                            Some("boolean") => Value::Bool(false),
-                            Some("array") => Value::Array(vec![]),
-                            Some("object") => Value::Object(serde_json::Map::new()),
-                            _ => Value::Null,
-                        };
-                        args_map.insert(k.clone(), default_val);
-                    }
-                }
-                let args_json = serde_json::to_string(&Value::Object(args_map)).unwrap_or_else(|_| "{}".to_string());
-                md.push_str(&format!("- args: {}\n", args_json));
-                md.push_str(&format!("- output_var: {}_res\n\n", tool.safe_name));
+            let mut tools_desc = String::new();
+            for t in &tools {
+                tools_desc.push_str(&format!(
+                    "Tool Safe Name: {}\nOriginal Name: {}\nDescription: {}\nParameters Schema: {}\n\n",
+                    t.safe_name,
+                    t.original_name,
+                    t.description,
+                    serde_json::to_string(&t.parameters).unwrap_or_default()
+                ));
             }
+
+            let prompt = format!(
+                "You are an expert AI system workflow designer for the Voxi Autonomous Agent.\n\
+                We have connected to an MCP server named '{}' with the following tools:\n\n\
+                {}\n\n\
+                Please generate a structured workflow markdown file (.workflow.md) that defines how to logically execute tasks (such as searching, ordering groceries, address selection, etc.) on this server in the correct order.\n\n\
+                CRITICAL INSTRUCTIONS FOR ORDERING:\n\
+                1. Location/Address Resolution first: If there are tools to list or select saved addresses (like get_addresses, list_saved_addresses), they must run first.\n\
+                2. Serviceability/Store Selection second: If there are tools to select stores or verify location serviceability (like get_location_serviceability, select_store), they must run next.\n\
+                3. Operations/Search third: Searching products, cart operations, or checkout should only happen after location and store are established.\n\n\
+                The workflow MUST be formatted as a valid markdown file with YAML frontmatter like this:\n\
+                ---\n\
+                id: mcp_{}\n\
+                name: {} Shopping Workflow\n\
+                description: Automatically generated workflow for {}\n\
+                trigger: {}\n\
+                ---\n\n\
+                And steps following this format:\n\n\
+                ## Step 1: List saved addresses\n\
+                - type: tool\n\
+                - tool_name: <safe_name of tool>\n\
+                - args: {{}}\n\
+                - output_var: address_list\n\n\
+                ## Step 2: Select Address & Shop\n\
+                - type: prompt\n\
+                - instruction: |\n\
+                    Provide clear instructions here on how the agent should handle address selection (e.g. choose first address or ask user if none) and search products.\n\n\
+                You must output ONLY the raw markdown content. Do NOT wrap it in any markdown code block (no ``` markdown block). Do NOT include any additional explanation or commentary outside of the markdown itself.",
+                server_name,
+                tools_desc,
+                server_name,
+                server_name,
+                server_name,
+                trigger
+            );
+
+            log::info!("Querying LLM to generate workflow for MCP server '{}'...", server_name);
+            let messages = vec![LlmMessage::user(&prompt)];
+            let system_prompt = "You are a workflow design assistant. Output only the requested markdown with frontmatter.";
+            let response = self.chat_with_fallback(&messages, &[], None, system_prompt, None).await;
+
+            let md = if response.success && !response.text.trim().is_empty() {
+                let cleaned = response.text.trim()
+                    .trim_start_matches("```markdown")
+                    .trim_start_matches("```")
+                    .trim_end_matches("```")
+                    .trim()
+                    .to_string();
+                cleaned
+            } else {
+                log::warn!("LLM failed to generate workflow for '{}', generating fallback sequential workflow.", server_name);
+                let mut fallback_md = String::new();
+                fallback_md.push_str("---\n");
+                fallback_md.push_str(&format!("id: mcp_{}\n", server_name));
+                fallback_md.push_str(&format!("name: MCP {} Auto Workflow\n", server_name));
+                fallback_md.push_str(&format!(
+                    "description: Automatically generated workflow for MCP server {}\n",
+                    server_name
+                ));
+                fallback_md.push_str(&format!("trigger: {}\n", trigger));
+                fallback_md.push_str("---\n\n");
+
+                for (idx, tool) in tools.iter().enumerate() {
+                    fallback_md.push_str(&format!("## Step {}: Invoke {}\n", idx + 1, tool.original_name));
+                    fallback_md.push_str("- type: tool\n");
+                    fallback_md.push_str(&format!("- tool_name: {}\n", tool.safe_name));
+
+                    let mut args_map = serde_json::Map::new();
+                    if let Some(properties) = tool.parameters.get("properties").and_then(|p| p.as_object()) {
+                        for (k, v) in properties {
+                            let default_val = match v.get("type").and_then(|t| t.as_str()) {
+                                Some("string") => Value::String("".to_string()),
+                                Some("number") | Some("integer") => serde_json::json!(0),
+                                Some("boolean") => Value::Bool(false),
+                                Some("array") => Value::Array(vec![]),
+                                Some("object") => Value::Object(serde_json::Map::new()),
+                                _ => Value::Null,
+                            };
+                            args_map.insert(k.clone(), default_val);
+                        }
+                    }
+                    let args_json = serde_json::to_string(&Value::Object(args_map)).unwrap_or_else(|_| "{}".to_string());
+                    fallback_md.push_str(&format!("- args: {}\n", args_json));
+                    fallback_md.push_str(&format!("- output_var: {}_res\n\n", tool.safe_name));
+                }
+                fallback_md
+            };
 
             if let Err(err) = std::fs::write(&file_path, md) {
                 log::warn!("Failed to write auto-generated MCP workflow to {:?}: {}", file_path, err);
