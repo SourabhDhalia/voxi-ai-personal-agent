@@ -3238,7 +3238,7 @@ impl AgentCore {
                     continue;
                 }
 
-                // If it was a workflow tool, we just successfully completed it! Save output and advance.
+                // If it was a workflow tool, save output and advance if successful, or abort on failure.
                 if is_workflow_tool {
                     let last_msg = messages.last().unwrap();
                     let output_val = if last_msg.role == "tool" {
@@ -3248,10 +3248,63 @@ impl AgentCore {
                             .unwrap_or(Value::String(last_msg.text.clone()))
                     };
 
+                    let is_failure = match &output_val {
+                        Value::Object(map) => {
+                            map.contains_key("error")
+                                || map.contains_key("failed")
+                                || map.get("status")
+                                    .and_then(|s| s.as_str())
+                                    .map(|s| s == "error" || s == "failed")
+                                    .unwrap_or(false)
+                        }
+                        Value::String(s) => {
+                            let s_lower = s.to_lowercase();
+                            s_lower.contains("error")
+                                || s_lower.contains("failed")
+                                || s_lower.contains("notfound")
+                        }
+                        _ => false,
+                    };
+
                     let we = self.workflow_engine.read().await;
                     if let Some(wf_id) = loop_state.active_workflow_id.clone() {
                         if let Some(wf) = we.get_workflow(&wf_id) {
                             let step = &wf.steps[loop_state.current_workflow_step];
+
+                            if is_failure {
+                                log::warn!(
+                                    "[Workflow] Step {} ('{}') of workflow '{}' failed. Aborting workflow.",
+                                    loop_state.current_workflow_step + 1,
+                                    step.tool_name,
+                                    wf.name
+                                );
+                                let err_msg = match &output_val {
+                                    Value::Object(map) => {
+                                        map.get("error")
+                                            .and_then(|e| e.as_str())
+                                            .unwrap_or("Unknown tool failure")
+                                            .to_string()
+                                    }
+                                    Value::String(s) => s.clone(),
+                                    _ => format!("{:?}", output_val),
+                                };
+                                loop_state.active_workflow_id = None;
+                                let text = format!(
+                                    "Workflow '{}' failed at step {} ('{}') because: {}",
+                                    wf.name,
+                                    loop_state.current_workflow_step + 1,
+                                    step.tool_name,
+                                    err_msg
+                                );
+                                if let Ok(ss) = self.session_store.lock() {
+                                    if let Some(store) = ss.as_ref() {
+                                        store.add_message(session_id, "assistant", &text);
+                                        store.add_structured_assistant_text_message(session_id, &text);
+                                    }
+                                }
+                                return text;
+                            }
+
                             loop_state
                                 .workflow_vars
                                 .insert(step.output_var.clone(), output_val);
