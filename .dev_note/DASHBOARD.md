@@ -447,5 +447,15 @@
 | macOS Status Fix | Supervisor Gate 5 | PASS | Output format is clean. |
 | macOS Status Fix | 6. Commit | PASS | Staged and committed changes locally, then pushed. |
 | macOS Status Fix | Supervisor Gate 6 | PASS | Pushed commit 75cff388 successfully. |
-
-
+| macOS Dashboard Socket Fix | 1. Planning | PASS | Plan dynamic socket connection based on OS target. |
+| macOS Dashboard Socket Fix | Supervisor Gate 1 | PASS | Change is isolated to Unix domain socket connection helper. |
+| macOS Dashboard Socket Fix | 2. Design | PASS | Designed `get_ipc_addr` returning target-specific address structures. |
+| macOS Dashboard Socket Fix | Supervisor Gate 2 | PASS | No dependencies added, architecture clean. |
+| macOS Dashboard Socket Fix | 3. Development | PASS | Implemented `get_ipc_addr` and updated socket helpers in main.rs. |
+| macOS Dashboard Socket Fix | Supervisor Gate 3 | PASS | Compiles cleanly and functions perfectly. |
+| macOS Dashboard Socket Fix | 4. Build/Deploy | PASS | Rebuilt and deployed dashboard to host using deploy.sh. |
+| macOS Dashboard Socket Fix | Supervisor Gate 4 | PASS | Build and run validated. |
+| macOS Dashboard Socket Fix | 5. Test/Review | PASS | Verified `agent_connected` is true on macOS via curl metrics API. |
+| macOS Dashboard Socket Fix | Supervisor Gate 5 | PASS | Dashboard metrics endpoint works correctly. |
+| macOS Dashboard Socket Fix | 6. Commit | PASS | Staged and committed changes locally, then pushed. |
+| macOS Dashboard Socket Fix | Supervisor Gate 6 | PASS | Pushed commit 5422c8d8 successfully. |
