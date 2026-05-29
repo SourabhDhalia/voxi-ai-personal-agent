@@ -3290,19 +3290,19 @@ impl AgentCore {
                                 };
                                 loop_state.active_workflow_id = None;
                                 let text = format!(
-                                    "Workflow '{}' failed at step {} ('{}') because: {}",
+                                    "System Error: Workflow '{}' failed at step {} ('{}') because: {}. The workflow is aborted. Please report this error to the user and guide them on what to do (e.g. if Swiggy Instamart is not authenticated, suggest running `/mcp login swiggy-instamart <token>`). If Zepto is available, you may offer to search on Zepto instead.",
                                     wf.name,
                                     loop_state.current_workflow_step + 1,
                                     step.tool_name,
                                     err_msg
                                 );
-                                if let Ok(ss) = self.session_store.lock() {
-                                    if let Some(store) = ss.as_ref() {
-                                        store.add_message(session_id, "assistant", &text);
-                                        store.add_structured_assistant_text_message(session_id, &text);
-                                    }
-                                }
-                                return text;
+                                messages.push(LlmMessage {
+                                    role: "system".into(),
+                                    text,
+                                    ..Default::default()
+                                });
+                                loop_state.transition(AgentPhase::RePlanning);
+                                continue;
                             }
 
                             loop_state
