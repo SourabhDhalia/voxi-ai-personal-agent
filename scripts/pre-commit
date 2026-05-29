@@ -1,5 +1,5 @@
 #!/bin/bash
-# Git pre-commit hook for TizenClaw
+# Git pre-commit hook for Voxi
 # Install: ./scripts/setup-hooks.sh
 
 set -euo pipefail

@@ -14,7 +14,7 @@ fn parses_plugin_manifest_with_permissions_and_commands() {
             "summary": "Metadata plugin",
             "metadata": {
                 "version": "1.0.0",
-                "authors": ["TizenClaw"]
+                "authors": ["Voxi"]
             },
             "permissions": [
                 {

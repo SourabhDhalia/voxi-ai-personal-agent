@@ -1,5 +1,5 @@
 #!/bin/bash
-# TizenClaw Git Hooks Setup Script
+# Voxi Git Hooks Setup Script
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HOOKS_DIR="${PROJECT_DIR}/.git/hooks"
@@ -17,7 +17,7 @@ cat << 'EOF' > "$PRE_COMMIT_HOOK"
 # Ensure standard paths are available (especially cargo)
 export PATH=$PATH:/usr/local/cargo/bin:${HOME}/.cargo/bin
 
-echo "🔄 Running TizenClaw Workflow checks (pre-commit hook)..."
+echo "🔄 Running Voxi Workflow checks (pre-commit hook)..."
 python3 .agents/skills/workflow_manager/workflow_manager.py --action verify_status
 if [ $? -ne 0 ]; then
     echo ""

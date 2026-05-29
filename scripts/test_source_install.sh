@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Uses a local bare-repo file:// remote so no network access is needed.
 # All output is directed to isolated temporary directories so the real
-# ~/.tizenclaw, ~/.bashrc, and Cargo build cache are never touched.
+# ~/.voxi, ~/.bashrc, and Cargo build cache are never touched.
 #
 # Tests:
 #   1. Fresh clone + build/install from a local bare repo.
@@ -31,9 +31,9 @@ fail() { printf '[source-install-smoke][fail] %s\n' "$*" >&2; exit 1; }
 cleanup() {
   if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
     if [[ -n "${INSTALL_ROOT}" ]]; then
-      local hostctl="${INSTALL_ROOT}/bin/tizenclaw-hostctl"
+      local hostctl="${INSTALL_ROOT}/bin/voxi-hostctl"
       if [[ -x "${hostctl}" ]]; then
-        TIZENCLAW_INSTALL_ROOT="${INSTALL_ROOT}" \
+        VOXI_INSTALL_ROOT="${INSTALL_ROOT}" \
           "${hostctl}" --stop >/dev/null 2>&1 || true
       fi
       pkill -u "$(id -u)" -f "${INSTALL_ROOT}/bin/" >/dev/null 2>&1 || true
@@ -126,10 +126,10 @@ run_source_install() {
   HOME="${fake_home}" \
   CARGO_HOME="${real_cargo_home}" \
   RUSTUP_HOME="${real_rustup_home}" \
-  TIZENCLAW_INSTALL_ROOT="${install_root}" \
-  TIZENCLAW_BASHRC_PATH="${fake_home}/.bashrc" \
-  TIZENCLAW_SKIP_SERVICES="1" \
-  TIZENCLAW_NO_NETWORK_FALLBACK="1" \
+  VOXI_INSTALL_ROOT="${install_root}" \
+  VOXI_BASHRC_PATH="${fake_home}/.bashrc" \
+  VOXI_SKIP_SERVICES="1" \
+  VOXI_NO_NETWORK_FALLBACK="1" \
     bash "${PROJECT_DIR}/install.sh" \
       --source-install \
       --repo "${repo_url}" \
@@ -147,17 +147,17 @@ verify_installed_tree() {
   log "[${label}] Verifying required binaries..."
   local b
   for b in \
-      "${install_root}/bin/tizenclaw" \
-      "${install_root}/bin/tizenclaw-cli" \
-      "${install_root}/bin/tizenclaw-tool-executor" \
-      "${install_root}/bin/tizenclaw-web-dashboard"; do
+      "${install_root}/bin/voxi" \
+      "${install_root}/bin/voxi-cli" \
+      "${install_root}/bin/voxi-tool-executor" \
+      "${install_root}/bin/voxi-web-dashboard"; do
     [[ -f "${b}" ]] || fail "[${label}] Missing: ${b}"
     [[ -x "${b}" ]] || fail "[${label}] Not executable: ${b}"
   done
 
-  [[ -L "${install_root}/bin/tizenclaw-hostctl" \
-     || -f "${install_root}/bin/tizenclaw-hostctl" ]] \
-    || fail "[${label}] Missing ${install_root}/bin/tizenclaw-hostctl"
+  [[ -L "${install_root}/bin/voxi-hostctl" \
+     || -f "${install_root}/bin/voxi-hostctl" ]] \
+    || fail "[${label}] Missing ${install_root}/bin/voxi-hostctl"
 
   log "[${label}] Verifying config/ is seeded..."
   local config_count
@@ -181,11 +181,11 @@ verify_installed_tree() {
     fi
   done
 
-  log "[${label}] Checking tizenclaw-cli --help is runnable..."
-  assert_runnable "${install_root}/bin/tizenclaw-cli" --help
+  log "[${label}] Checking voxi-cli --help is runnable..."
+  assert_runnable "${install_root}/bin/voxi-cli" --help
 
-  log "[${label}] Checking tizenclaw-hostctl --help is runnable..."
-  assert_runnable "${install_root}/bin/tizenclaw-hostctl" --help
+  log "[${label}] Checking voxi-hostctl --help is runnable..."
+  assert_runnable "${install_root}/bin/voxi-hostctl" --help
 }
 
 main() {
@@ -201,7 +201,7 @@ main() {
   # project's current branch state (handles detached HEAD in CI too).
   local test_ref="smoke-test"
 
-  INSTALL_ROOT="${fake_home}/.tizenclaw"
+  INSTALL_ROOT="${fake_home}/.voxi"
   mkdir -p "${fake_home}" "${build_root}"
 
   make_bare_repo "${bare_repo}" "${test_ref}"
@@ -257,10 +257,10 @@ main() {
     HOME="${fake_home}" \
     CARGO_HOME="${CARGO_HOME:-${HOME}/.cargo}" \
     RUSTUP_HOME="${RUSTUP_HOME:-${HOME}/.rustup}" \
-    TIZENCLAW_INSTALL_ROOT="${INSTALL_ROOT}" \
-    TIZENCLAW_BASHRC_PATH="${fake_home}/.bashrc" \
-    TIZENCLAW_SKIP_SERVICES="1" \
-    TIZENCLAW_NO_NETWORK_FALLBACK="1" \
+    VOXI_INSTALL_ROOT="${INSTALL_ROOT}" \
+    VOXI_BASHRC_PATH="${fake_home}/.bashrc" \
+    VOXI_SKIP_SERVICES="1" \
+    VOXI_NO_NETWORK_FALLBACK="1" \
       bash "${PROJECT_DIR}/install.sh" \
         --source-install \
         --repo "${bare_url}" \
@@ -321,10 +321,10 @@ main() {
     HOME="${fake_home}" \
     CARGO_HOME="${CARGO_HOME:-${HOME}/.cargo}" \
     RUSTUP_HOME="${RUSTUP_HOME:-${HOME}/.rustup}" \
-    TIZENCLAW_INSTALL_ROOT="${INSTALL_ROOT}" \
-    TIZENCLAW_BASHRC_PATH="${fake_home}/.bashrc" \
-    TIZENCLAW_SKIP_SERVICES="1" \
-    TIZENCLAW_NO_NETWORK_FALLBACK="1" \
+    VOXI_INSTALL_ROOT="${INSTALL_ROOT}" \
+    VOXI_BASHRC_PATH="${fake_home}/.bashrc" \
+    VOXI_SKIP_SERVICES="1" \
+    VOXI_NO_NETWORK_FALLBACK="1" \
       bash "${PROJECT_DIR}/install.sh" \
         --source-install \
         --repo "${bare_url}" \
@@ -361,7 +361,7 @@ main() {
 
   local source_dir_wt="${TMP_DIR}/source-wt"
   local fake_home_wt="${TMP_DIR}/home-wt"
-  local install_root_wt="${fake_home_wt}/.tizenclaw"
+  local install_root_wt="${fake_home_wt}/.voxi"
   local locked_wt="${TMP_DIR}/locked-wt"
   mkdir -p "${fake_home_wt}"
 
@@ -393,10 +393,10 @@ main() {
     HOME="${fake_home_wt}" \
     CARGO_HOME="${CARGO_HOME:-${HOME}/.cargo}" \
     RUSTUP_HOME="${RUSTUP_HOME:-${HOME}/.rustup}" \
-    TIZENCLAW_INSTALL_ROOT="${install_root_wt}" \
-    TIZENCLAW_BASHRC_PATH="${fake_home_wt}/.bashrc" \
-    TIZENCLAW_SKIP_SERVICES="1" \
-    TIZENCLAW_NO_NETWORK_FALLBACK="1" \
+    VOXI_INSTALL_ROOT="${install_root_wt}" \
+    VOXI_BASHRC_PATH="${fake_home_wt}/.bashrc" \
+    VOXI_SKIP_SERVICES="1" \
+    VOXI_NO_NETWORK_FALLBACK="1" \
       bash "${PROJECT_DIR}/install.sh" \
         --source-install \
         --repo "${bare_url}" \

@@ -14,7 +14,7 @@
     },
     {
       "name": "device_controller",
-      "system_prompt": "You are a Tizen device controller. Execute device operations precisely and report results concisely. Always verify operation success.",
+      "system_prompt": "You are a Voxi device controller. Execute device operations precisely and report results concisely. Always verify operation success.",
       "allowed_tools": [],
       "max_iterations": 5
     }

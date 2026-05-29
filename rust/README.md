@@ -1,6 +1,6 @@
 # Canonical Rust Workspace
 
-This directory is the forward-looking production workspace for TizenClaw.
+This directory is the forward-looking production workspace for Voxi.
 
 - `crates/tclaw-runtime` owns runtime orchestration
 - `crates/tclaw-api` owns shared contracts

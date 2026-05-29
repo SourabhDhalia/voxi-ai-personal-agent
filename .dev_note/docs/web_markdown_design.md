@@ -1,9 +1,9 @@
 # Design Document — Web Markdown Rendering Support
 
-This document details the architectural and implementation design for rendering Markdown content natively on the TizenClaw web dashboard.
+This document details the architectural and implementation design for rendering Markdown content natively on the Voxi web dashboard.
 
 ## 1. Architectural Architecture & Offline Support
-TizenClaw runs in constrained, often offline environments (Tizen OS / Embedded Linux). Therefore:
+Voxi runs in constrained, often offline environments (Voxi OS / Embedded Linux). Therefore:
 - External CDN script loading is prohibited for core operations.
 - `marked.min.js` will be stored locally inside the `data/web/` directory.
 - Axum will serve this file statically along with other dashboard files.

@@ -1,0 +1,15 @@
+[package]
+name = "voxi-client"
+version = "1.0.0"
+edition = "2021"
+description = "Voxi C API client library — Rust internals with C FFI"
+
+[lib]
+name = "voxi"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde_json = "1"
+log = "0.4"
+libc = "0.2"
+uuid = { version = "1", features = ["v4"] }

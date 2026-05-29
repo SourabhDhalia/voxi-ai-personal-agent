@@ -48,7 +48,7 @@ def _format_inventory(root: Path, section: str) -> dict[str, object]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m src.main",
-        description="TizenClaw repository support CLI",
+        description="Voxi repository support CLI",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

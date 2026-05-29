@@ -51,7 +51,7 @@
   - `/mcp zepto`, `/mcp status zepto`, and `/mcp tools zepto` return deterministic status/help.
 - Target validation only:
   - Ubuntu x86_64: `./deploy_host.sh --test`
-  - TizenOS armv7l: `./deploy.sh`
+  - VoxiOS armv7l: `./deploy.sh`
 - Manual Zepto flow:
   - Pull latest code, start daemon, run `/mcp status zepto`.
   - Ask: `use zepto address-id <real-id>: find 500ml Amul milk price`.

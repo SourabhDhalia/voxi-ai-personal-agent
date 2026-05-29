@@ -1,17 +1,17 @@
-# TizenClaw Usage Guide
+# Voxi Usage Guide
 
 ## Purpose
 
-This guide explains how to build, deploy, operate, and inspect TizenClaw using
+This guide explains how to build, deploy, operate, and inspect Voxi using
 the repository's supported workflow. It is written for developers and operators
 who want to use the current Rust workspace as an embedded agent runtime rather
 than treat it as a generic local Rust application.
 
 ## Operating Model
 
-TizenClaw is designed to run as a long-lived daemon. The normal flow is:
+Voxi is designed to run as a long-lived daemon. The normal flow is:
 
-1. build the Tizen packages through `deploy.sh`
+1. build the Voxi packages through `deploy.sh`
 2. deploy to an emulator or device
 3. restart the service
 4. interact through the CLI, dashboard, or configured channels
@@ -24,15 +24,15 @@ host loop.
 
 You should have the following available before you begin:
 
-- Tizen Studio tooling with `sdb`
-- Tizen GBS build support
-- a reachable Tizen emulator or physical device
+- Voxi Studio tooling with `sdb`
+- Voxi GBS build support
+- a reachable Voxi emulator or physical device
 - a shell environment that can run repository scripts
 
 It also helps to know the target device serial if more than one emulator or
 device is connected.
 
-If your target is a Tizen TV / DTV device that uses `ssh` instead of `sdb`,
+If your target is a Voxi TV / DTV device that uses `ssh` instead of `sdb`,
 see [DTV_USAGE.md](DTV_USAGE.md) for the manual SSH-based deployment flow.
 
 ## Core Command: `deploy.sh`
@@ -93,12 +93,12 @@ If you need to pin deployment to a specific target:
 ./deploy.sh -a x86_64 -d emulator-26101
 ```
 
-For SSH-based Tizen TV / DTV deployments, use
+For SSH-based Voxi TV / DTV deployments, use
 [DTV_USAGE.md](DTV_USAGE.md) instead of the `sdb`-driven `deploy.sh` flow.
 
 ## Service Lifecycle
 
-After deployment, TizenClaw runs as a device service. In practice, useful
+After deployment, Voxi runs as a device service. In practice, useful
 checks usually include:
 
 - verifying that the main daemon is active
@@ -116,28 +116,28 @@ The CLI is the most direct operator surface for the daemon.
 ### Send a prompt
 
 ```bash
-tizenclaw-cli "What is the current system status?"
+voxi-cli "What is the current system status?"
 ```
 
 ### Stream a response
 
 ```bash
-tizenclaw-cli --stream "Explain the active channels"
+voxi-cli --stream "Explain the active channels"
 ```
 
 ### Use interactive mode
 
 ```bash
-tizenclaw-cli
+voxi-cli
 ```
 
 ### Manage the dashboard channel
 
 ```bash
-tizenclaw-cli dashboard start
-tizenclaw-cli dashboard start --port 9091
-tizenclaw-cli dashboard stop
-tizenclaw-cli dashboard status
+voxi-cli dashboard start
+voxi-cli dashboard start --port 9091
+voxi-cli dashboard stop
+voxi-cli dashboard status
 ```
 
 ## Using the Web Dashboard
@@ -146,17 +146,17 @@ The standalone dashboard binary serves both the UI and HTTP API.
 
 Based on the current code:
 
-- Tizen runtime default port: `9090`
-- non-Tizen host default port: `8080`
+- Voxi runtime default port: `9090`
+- non-Voxi host default port: `8080`
 
 The dashboard binary accepts runtime options such as:
 
 ```bash
-tizenclaw-web-dashboard --port 9090
-tizenclaw-web-dashboard --web-root <path>
-tizenclaw-web-dashboard --config-dir <path>
-tizenclaw-web-dashboard --data-dir <path>
-tizenclaw-web-dashboard --localhost-only
+voxi-web-dashboard --port 9090
+voxi-web-dashboard --web-root <path>
+voxi-web-dashboard --config-dir <path>
+voxi-web-dashboard --data-dir <path>
+voxi-web-dashboard --localhost-only
 ```
 
 In normal deployments the daemon or deployment flow is expected to manage the
@@ -166,7 +166,7 @@ bring-up.
 ## Runtime Paths and Data
 
 The codebase uses runtime path detection so the daemon can behave sensibly on
-Tizen and non-Tizen environments.
+Voxi and non-Voxi environments.
 
 Examples of what gets stored under runtime-managed directories include:
 
@@ -195,7 +195,7 @@ especially when reproducing issues between emulator, host, and device setups.
 
 ## Extension Model
 
-TizenClaw supports extension through a mix of runtime modules and metadata
+Voxi supports extension through a mix of runtime modules and metadata
 plugins.
 
 Important extension paths include:
@@ -217,7 +217,7 @@ If the daemon does not behave as expected, start with these checks:
 2. Re-run `./deploy.sh -a x86_64` or `./deploy.sh -a x86_64 -n`.
 3. Verify the main service restarted successfully.
 4. Check the dashboard port and whether the dashboard process is alive.
-5. Use `tizenclaw-cli dashboard status` to confirm dashboard state.
+5. Use `voxi-cli dashboard status` to confirm dashboard state.
 6. Inspect device logs for daemon boot failures or configuration issues.
 
 ## Recommended Reading Order
@@ -227,6 +227,6 @@ To go deeper after using the project:
 1. [README.md](../README.md)
 2. [STRUCTURE.md](STRUCTURE.md)
 3. `deploy.sh`
-4. `src/tizenclaw/src/main.rs`
-5. `src/tizenclaw-cli/src/main.rs`
-6. `src/tizenclaw-web-dashboard/src/main.rs`
+4. `src/voxi/src/main.rs`
+5. `src/voxi-cli/src/main.rs`
+6. `src/voxi-web-dashboard/src/main.rs`

@@ -80,18 +80,18 @@ src_bak/
 
 # RAG generated data (only data/rag/*.zip is committed)
 /rag/
-test/unit_tests/tizenclaw-unittests
+test/unit_tests/voxi-unittests
 tools/cli/aurum-cli/aurum-cli
-tools/cli/tizen-app-manager-cli/tizen-app-manager-cli
-tools/cli/tizen-device-info-cli/tizen-device-info-cli
-tools/cli/tizen-file-manager-cli/tizen-file-manager-cli
-tools/cli/tizen-hardware-control-cli/tizen-hardware-control-cli
-tools/cli/tizen-network-info-cli/tizen-network-info-cli
-tools/cli/tizen-notification-cli/tizen-notification-cli
-tools/cli/tizen-sensor-cli/tizen-sensor-cli
-tools/cli/tizen-sound-cli/tizen-sound-cli
-tools/cli/tizen-vconf-cli/tizen-vconf-cli
-tools/cli/tizen-web-search-cli/tizen-web-search-cli
+tools/cli/voxi-app-manager-cli/voxi-app-manager-cli
+tools/cli/voxi-device-info-cli/voxi-device-info-cli
+tools/cli/voxi-file-manager-cli/voxi-file-manager-cli
+tools/cli/voxi-hardware-control-cli/voxi-hardware-control-cli
+tools/cli/voxi-network-info-cli/voxi-network-info-cli
+tools/cli/voxi-notification-cli/voxi-notification-cli
+tools/cli/voxi-sensor-cli/voxi-sensor-cli
+tools/cli/voxi-sound-cli/voxi-sound-cli
+tools/cli/voxi-vconf-cli/voxi-vconf-cli
+tools/cli/voxi-web-search-cli/voxi-web-search-cli
 tools/skills_backup/
 cli_res.txt
 journal.txt
@@ -109,7 +109,7 @@ docs/
 docs/*
 !docs/llm_config_benchmark_design.md
 !docs/llm_cache_telemetry_design.md
-!docs/tizenclaw_cli_pinchbench_guide_ko.md
+!docs/voxi_cli_pinchbench_guide_ko.md
 !docs/STRUCTURE.md
 !docs/USAGE.md
 !docs/DTV_USAGE.md
@@ -118,7 +118,7 @@ docs/*
 
 # Temporary files
 /.tmp/
-src/tizenclaw/error.log
+src/voxi/error.log
 
 # Prompts
 .prompt

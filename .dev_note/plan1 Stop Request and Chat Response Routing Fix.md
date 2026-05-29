@@ -71,7 +71,7 @@
 - Do not run local `cargo build`, `cargo check`, `cargo test`, or `cargo clippy`.
 - Validation commands for the target machines:
   - Ubuntu x86_64: `./deploy_host.sh --test`
-  - TizenOS armv7l: `./deploy.sh`
+  - VoxiOS armv7l: `./deploy.sh`
 - Manual verification:
   - Send two web chat prompts rapidly in different sessions; each answer appears only in its originating chat.
   - Send two prompts in the same chat; transcript order remains deterministic.

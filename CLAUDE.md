@@ -1,4 +1,4 @@
-# TizenClaw — Claude Code Project Rules
+# Voxi — Claude Code Project Rules
 
 This file is the entrypoint for Claude-oriented repository guidance.
 The durable project instructions now live in `.claude/CLAUDE.md`.
@@ -12,15 +12,15 @@ workflow guardrails.
 
 ## Project Overview
 
-**TizenClaw** is a Rust-based Autonomous AI Agent daemon for Tizen OS
+**Voxi** is a Rust-based Autonomous AI Agent daemon for Voxi OS
 (embedded Linux) and Ubuntu/WSL host development. The default workflow
-uses `./deploy_host.sh`; the Tizen GBS workflow uses `./deploy.sh` when
+uses `./deploy_host.sh`; the Voxi GBS workflow uses `./deploy.sh` when
 explicitly requested. The repository is currently split across:
 
 - the canonical reconstruction workspace under `rust/`
 - the repository support tools under `src/` and
   `tests/test_porting_workspace.py`
-- the still-active legacy Rust implementation under `src/tizenclaw*`
+- the still-active legacy Rust implementation under `src/voxi*`
 
 **Active branch**: `develRust`  
 **Target device**: `emulator-26101` (x86_64) — auto-detected via `sdb`
@@ -34,7 +34,7 @@ explicitly requested. The repository is currently split across:
   `cargo clippy` directly. Default development builds/tests must go
   through `./deploy_host.sh`.
 - **NEVER** run `cmake .` or any local CMake build.
-- Use `./deploy.sh` only when the user explicitly asks for Tizen,
+- Use `./deploy.sh` only when the user explicitly asks for Voxi,
   emulator, or device validation.
 - Architecture focus: **x86_64 only**.
 
@@ -81,9 +81,9 @@ update `.dev/DASHBOARD.md` with the stage status.
 |-------|----------|------------|
 | 1. Planning | `.agent/skills/planning-project/SKILL.md` | Module objectives, execution mode classification |
 | 2. Design | `.agent/skills/designing-architecture/SKILL.md` | FFI boundaries, async topology docs |
-| 3. Development | `.agent/skills/developing-code/SKILL.md`, `.agent/skills/testing-with-tizenclaw-tests/SKILL.md` | TDD Red→Green→Refactor cycle; system scenario added/updated |
+| 3. Development | `.agent/skills/developing-code/SKILL.md`, `.agent/skills/testing-with-voxi-tests/SKILL.md` | TDD Red→Green→Refactor cycle; system scenario added/updated |
 | 4. Build/Deploy | `.agent/skills/building-deploying/SKILL.md` | `./deploy_host.sh` succeeded, or explicit `./deploy.sh` |
-| 5. Test/Review | `.agent/skills/reviewing-code/SKILL.md`, `.agent/skills/testing-with-tizenclaw-tests/SKILL.md` | Host or device logs as evidence; `tizenclaw-tests` scenario result |
+| 5. Test/Review | `.agent/skills/reviewing-code/SKILL.md`, `.agent/skills/testing-with-voxi-tests/SKILL.md` | Host or device logs as evidence; `voxi-tests` scenario result |
 | 6. Commit | `.agent/skills/managing-versions/SKILL.md` | Clean commit via `.tmp/commit_msg.txt` |
 
 ---
@@ -117,7 +117,7 @@ Do **not** create new workflow or stage artifact documents under `docs/`.
 
 ## Deploy Commands
 
-### Tizen (GBS build → emulator/device)
+### Voxi (GBS build → emulator/device)
 ```bash
 # Full build + deploy (auto-detect arch)
 ./deploy.sh -d emulator-26101
@@ -163,8 +163,8 @@ Do **not** create new workflow or stage artifact documents under `docs/`.
   level. Do not suppress with `#![allow(...)]` except for C bindgen FFI.
 - **No `.unwrap()` in production paths**: Use proper error propagation.
 - **Minimal FFI**: Core AGI logic must be pure Rust. FFI only where
-  Tizen-specific hardware/API is unavoidable.
-- **Dynamic loading**: Tizen `.so` symbols must be loaded via `libloading`.
+  Voxi-specific hardware/API is unavoidable.
+- **Dynamic loading**: Voxi `.so` symbols must be loaded via `libloading`.
   The daemon must never panic if a native library is absent — always fall back
   gracefully.
 - **`Send + Sync` on all async types**: Explicitly declare ownership bounds.
@@ -189,12 +189,12 @@ Do **not** create new workflow or stage artifact documents under `docs/`.
 
 | Crate | Role |
 |-------|------|
-| `tizenclaw` | Main daemon — AgentCore, PromptBuilder, IPC |
-| `tizenclaw-cli` | User-facing CLI (stdio → IPC) |
-| `tizenclaw-tool-executor` | Secure native tool runner daemon |
-| `libtizenclaw` | C-ABI bridge for legacy C/C++ callers |
-| `libtizenclaw-core` | Core shared library |
-| `tizenclaw-metadata-*` | Plugin metadata crates |
+| `voxi` | Main daemon — AgentCore, PromptBuilder, IPC |
+| `voxi-cli` | User-facing CLI (stdio → IPC) |
+| `voxi-tool-executor` | Secure native tool runner daemon |
+| `libvoxi` | C-ABI bridge for legacy C/C++ callers |
+| `libvoxi-core` | Core shared library |
+| `voxi-metadata-*` | Plugin metadata crates |
 
 ---
 
@@ -214,11 +214,11 @@ the next stage. See `.agent/skills/supervising-workflow/SKILL.md`.
 
 | Stage | Critical Pass/Fail Criteria |
 |-------|----------------------------|
-| **1. Planning** | Execution mode classified (host-default vs explicit Tizen); DASHBOARD updated |
+| **1. Planning** | Execution mode classified (host-default vs explicit Voxi); DASHBOARD updated |
 | **2. Design** | FFI boundaries defined; `Send+Sync` specs present; `libloading` strategy documented; DASHBOARD updated |
 | **3. Development** | No direct `cargo`/`cmake`; TDD cycle followed; system scenario added/updated; DASHBOARD updated |
 | **4. Build/Deploy** | Correct script used for cycle; no direct `cargo build`; runtime install/deploy confirmed |
-| **5. Test & Review** | Runtime logs captured; PASS/FAIL verdict issued with evidence; `tizenclaw-tests` result recorded |
+| **5. Test & Review** | Runtime logs captured; PASS/FAIL verdict issued with evidence; `voxi-tests` result recorded |
 | **6. Commit & Push** | `commit_msg.txt` used (no `-m` flag); workspace cleaned; no extraneous artifacts staged |
 
 ### Rollback Protocol

@@ -57,7 +57,7 @@
   - `/mcp test zepto search ...` reports each step.
 - Target validation only:
   - Ubuntu x86_64: `./deploy_host.sh --test`
-  - TizenOS armv7l: `./deploy.sh`
+  - VoxiOS armv7l: `./deploy.sh`
 - Manual check:
   - Run `/mcp status zepto`.
   - Run `/mcp tools zepto`.

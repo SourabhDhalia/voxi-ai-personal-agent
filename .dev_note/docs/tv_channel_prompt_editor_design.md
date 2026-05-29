@@ -5,7 +5,7 @@ This document details the architecture and design changes to register and launch
 ## 1. TV Channel Daemon Integration
 
 ### Default Channel Registration (`main.rs`)
-In `src/tizenclaw/src/main.rs`, we need to check if the `tv` channel is registered in the channel registry. If not, we will register it with default settings (port 9092, auto_start = true, and localhost_only = false):
+In `src/voxi/src/main.rs`, we need to check if the `tv` channel is registered in the channel registry. If not, we will register it with default settings (port 9092, auto_start = true, and localhost_only = false):
 ```rust
 if !reg.has_channel("tv") {
     let web_root = platform.paths.web_root.to_string_lossy().to_string();
@@ -33,7 +33,7 @@ if !reg.has_channel("tv") {
 ## 2. Standalone Dashboard CLI and Outbound Queue Separation
 
 ### `--name` CLI Parameter
-In `src/tizenclaw-web-dashboard/src/main.rs`, we will introduce a `--name <NAME>` parameter. This will default to `"web_dashboard"`.
+In `src/voxi-web-dashboard/src/main.rs`, we will introduce a `--name <NAME>` parameter. This will default to `"web_dashboard"`.
 ```rust
 let mut channel_name = "web_dashboard".to_string();
 ...
@@ -72,7 +72,7 @@ fn outbound_queue_path(data_dir: &std::path::Path, channel_name: &str) -> PathBu
 ## 3. System Prompt Editor in Admin Panel
 
 ### Config Allowlist Expansion
-We will add `"system_prompt.txt"` to `ALLOWED_CONFIGS` in `src/tizenclaw-web-dashboard/src/main.rs`:
+We will add `"system_prompt.txt"` to `ALLOWED_CONFIGS` in `src/voxi-web-dashboard/src/main.rs`:
 ```rust
 const ALLOWED_CONFIGS: &[&str] = &[
     "llm_config.json",

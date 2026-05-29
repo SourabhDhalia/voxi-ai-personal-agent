@@ -1,14 +1,14 @@
 #!/bin/bash
 #
-# TizenClaw PinchBench setup helper
+# Voxi PinchBench setup helper
 #
-# Wraps the most common `tizenclaw-cli config ...` flows from
-# docs/tizenclaw_cli_pinchbench_guide_ko.md into a simple shell interface.
+# Wraps the most common `voxi-cli config ...` flows from
+# docs/voxi_cli_pinchbench_guide_ko.md into a simple shell interface.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DEFAULT_CLI="${HOME}/.tizenclaw/bin/tizenclaw-cli"
+DEFAULT_CLI="${HOME}/.voxi/bin/voxi-cli"
 
 DRY_RUN=false
 CLI_BIN=""
@@ -20,7 +20,7 @@ Usage:
 
 Global options:
   --dry-run              Print planned changes without applying them
-  --cli <path>           Use a specific tizenclaw-cli binary
+  --cli <path>           Use a specific voxi-cli binary
   -h, --help             Show this help
 
 Commands:
@@ -31,7 +31,7 @@ Commands:
   clear-target           Remove benchmark.pinchbench.target fields
   record-usage           Store current --usage totals into benchmark metadata
   clear-usage            Remove benchmark.pinchbench.actual_tokens fields
-  reload                 Trigger tizenclaw-cli config reload
+  reload                 Trigger voxi-cli config reload
 
 anthropic options:
   --model <id>           Default: claude-sonnet-4-20250514
@@ -79,12 +79,12 @@ resolve_cli() {
     return
   fi
 
-  if command -v tizenclaw-cli >/dev/null 2>&1; then
-    CLI_BIN="$(command -v tizenclaw-cli)"
+  if command -v voxi-cli >/dev/null 2>&1; then
+    CLI_BIN="$(command -v voxi-cli)"
     return
   fi
 
-  [ -x "${DEFAULT_CLI}" ] || fail "tizenclaw-cli not found; use --cli <path>"
+  [ -x "${DEFAULT_CLI}" ] || fail "voxi-cli not found; use --cli <path>"
   CLI_BIN="${DEFAULT_CLI}"
 }
 

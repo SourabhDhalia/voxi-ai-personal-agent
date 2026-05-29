@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Exercises both the explicit (--local-checkout) and implicit (auto-detected)
 # install modes. All output is directed to isolated temporary directories so
-# the real ~/.tizenclaw, ~/.bashrc, and Cargo build cache are never touched.
+# the real ~/.voxi, ~/.bashrc, and Cargo build cache are never touched.
 #
 # The test also proves the checkout path never falls back to bundle-download
 # by shadowing curl with a failing stub before either install run. Any bundle
@@ -49,9 +49,9 @@ cleanup() {
     local root
     for root in "${INSTALL_ROOT_EXPLICIT}" "${INSTALL_ROOT_IMPLICIT}" "${INSTALL_ROOT_WORKTREE}"; do
       [[ -n "${root}" ]] || continue
-      local hostctl="${root}/bin/tizenclaw-hostctl"
+      local hostctl="${root}/bin/voxi-hostctl"
       if [[ -x "${hostctl}" ]]; then
-        TIZENCLAW_INSTALL_ROOT="${root}" \
+        VOXI_INSTALL_ROOT="${root}" \
           "${hostctl}" --stop >/dev/null 2>&1 || true
       fi
       pkill -u "$(id -u)" -f "${root}/bin/" >/dev/null 2>&1 || true
@@ -86,7 +86,7 @@ any_stray_for_root() {
   while IFS= read -r line; do
     [[ -n "${line}" ]] || continue
     cmdline="${line#* }"
-    for pname in tizenclaw tizenclaw-tool-executor tizenclaw-web-dashboard; do
+    for pname in voxi voxi-tool-executor voxi-web-dashboard; do
       if [[ "${cmdline}" == "${root}/bin/${pname}" ]] \
          || [[ "${cmdline}" == "${root}/bin/${pname} "* ]]; then
         return 0
@@ -130,10 +130,10 @@ run_install_from_dir() {
   HOME="${fake_home}" \
   CARGO_HOME="${real_cargo_home}" \
   RUSTUP_HOME="${real_rustup_home}" \
-  TIZENCLAW_INSTALL_ROOT="${install_root}" \
-  TIZENCLAW_BASHRC_PATH="${fake_home}/.bashrc" \
-  TIZENCLAW_SKIP_SERVICES="1" \
-  TIZENCLAW_NO_NETWORK_FALLBACK="1" \
+  VOXI_INSTALL_ROOT="${install_root}" \
+  VOXI_BASHRC_PATH="${fake_home}/.bashrc" \
+  VOXI_SKIP_SERVICES="1" \
+  VOXI_NO_NETWORK_FALLBACK="1" \
     bash "${script_dir}/install.sh" \
       --skip-deps \
       --skip-setup \
@@ -157,17 +157,17 @@ verify_installed_tree() {
   log "[${label}] Verifying required binaries..."
   local b
   for b in \
-      "${install_root}/bin/tizenclaw" \
-      "${install_root}/bin/tizenclaw-cli" \
-      "${install_root}/bin/tizenclaw-tool-executor" \
-      "${install_root}/bin/tizenclaw-web-dashboard"; do
+      "${install_root}/bin/voxi" \
+      "${install_root}/bin/voxi-cli" \
+      "${install_root}/bin/voxi-tool-executor" \
+      "${install_root}/bin/voxi-web-dashboard"; do
     [[ -f "${b}" ]] || fail "[${label}] Missing: ${b}"
     [[ -x "${b}" ]] || fail "[${label}] Not executable: ${b}"
   done
 
-  [[ -L "${install_root}/bin/tizenclaw-hostctl" \
-     || -f "${install_root}/bin/tizenclaw-hostctl" ]] \
-    || fail "[${label}] Missing ${install_root}/bin/tizenclaw-hostctl"
+  [[ -L "${install_root}/bin/voxi-hostctl" \
+     || -f "${install_root}/bin/voxi-hostctl" ]] \
+    || fail "[${label}] Missing ${install_root}/bin/voxi-hostctl"
 
   log "[${label}] Verifying config/ is seeded..."
   local config_count
@@ -191,11 +191,11 @@ verify_installed_tree() {
     fi
   done
 
-  log "[${label}] Checking tizenclaw-cli --help is runnable..."
-  assert_runnable "${install_root}/bin/tizenclaw-cli" --help
+  log "[${label}] Checking voxi-cli --help is runnable..."
+  assert_runnable "${install_root}/bin/voxi-cli" --help
 
-  log "[${label}] Checking tizenclaw-hostctl --help is runnable..."
-  assert_runnable "${install_root}/bin/tizenclaw-hostctl" --help
+  log "[${label}] Checking voxi-hostctl --help is runnable..."
+  assert_runnable "${install_root}/bin/voxi-hostctl" --help
 }
 
 main() {
@@ -204,9 +204,9 @@ main() {
 
   local build_root="${TMP_DIR}/build"
   local fake_home_explicit="${TMP_DIR}/home-explicit"
-  INSTALL_ROOT_EXPLICIT="${fake_home_explicit}/.tizenclaw"
+  INSTALL_ROOT_EXPLICIT="${fake_home_explicit}/.voxi"
   local fake_home_implicit="${TMP_DIR}/home-implicit"
-  INSTALL_ROOT_IMPLICIT="${fake_home_implicit}/.tizenclaw"
+  INSTALL_ROOT_IMPLICIT="${fake_home_implicit}/.voxi"
   local fake_curl_dir="${TMP_DIR}/fake-bin"
 
   mkdir -p "${fake_home_explicit}" "${fake_home_implicit}" "${build_root}"
@@ -254,8 +254,8 @@ main() {
   local worktree_dir="${TMP_DIR}/worktree"
   local fake_home_worktree="${TMP_DIR}/home-worktree"
   local fake_home_worktree_implicit="${TMP_DIR}/home-worktree-implicit"
-  INSTALL_ROOT_WORKTREE="${fake_home_worktree}/.tizenclaw"
-  local install_root_worktree_implicit="${fake_home_worktree_implicit}/.tizenclaw"
+  INSTALL_ROOT_WORKTREE="${fake_home_worktree}/.voxi"
+  local install_root_worktree_implicit="${fake_home_worktree_implicit}/.voxi"
   mkdir -p "${fake_home_worktree}" "${fake_home_worktree_implicit}"
 
   git -C "${PROJECT_DIR}" worktree add --detach "${worktree_dir}" \

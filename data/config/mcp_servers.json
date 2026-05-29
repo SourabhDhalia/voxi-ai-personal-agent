@@ -29,7 +29,7 @@
       "timeout_ms": 60000
     },
     "swiggy-instamart_python": {
-      "command": "/root/.tizenclaw/bin/mcp_http_bridge.py",
+      "command": "/root/.voxi/bin/mcp_http_bridge.py",
       "args": [
         "https://mcp.swiggy.com/im"
       ],
@@ -39,7 +39,7 @@
       "timeout_ms": 60000
     },
     "zepto_python": {
-      "command": "/root/.tizenclaw/bin/mcp_http_bridge.py",
+      "command": "/root/.voxi/bin/mcp_http_bridge.py",
       "args": [
         "https://mcp.zepto.co.in/mcp"
       ],

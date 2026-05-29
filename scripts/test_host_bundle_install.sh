@@ -4,7 +4,7 @@ set -euo pipefail
 # Non-interactive installer smoke test for the host bundle path.
 # Creates a local bundle (or reuses one passed via --bundle), installs it
 # into an isolated temporary HOME, verifies the installed tree, and
-# exercises tizenclaw-hostctl lifecycle (restart-only -> status -> stop)
+# exercises voxi-hostctl lifecycle (restart-only -> status -> stop)
 # against the installed bundle without any repository-checkout access.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,10 +18,10 @@ fail() { printf '[smoke][fail] %s\n' "$*" >&2; exit 1; }
 cleanup() {
   if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
     # Best-effort: always try to stop stray services before removing the tree.
-    local hostctl="${TMP_DIR}/home/.tizenclaw/bin/tizenclaw-hostctl"
+    local hostctl="${TMP_DIR}/home/.voxi/bin/voxi-hostctl"
     if [[ -x "${hostctl}" ]]; then
       HOME="${TMP_DIR}/home" \
-      TIZENCLAW_INSTALL_ROOT="${TMP_DIR}/home/.tizenclaw" \
+      VOXI_INSTALL_ROOT="${TMP_DIR}/home/.voxi" \
         "${hostctl}" --stop >/dev/null 2>&1 || true
     fi
     rm -rf "${TMP_DIR}"
@@ -78,7 +78,7 @@ any_stray_for_root() {
   local current_uid
   current_uid="$(id -u)"
   # Use bash-level cmdline matching so that control scripts such as
-  # tizenclaw-hostctl are not falsely treated as daemon processes.  pgrep ERE
+  # voxi-hostctl are not falsely treated as daemon processes.  pgrep ERE
   # suffix patterns like ([[:space:]]|$) behave inconsistently across procps
   # versions; reading /proc/<pid>/cmdline in bash is authoritative.
   # A process is stray only when its cmdline STARTS WITH the daemon binary
@@ -89,7 +89,7 @@ any_stray_for_root() {
     [[ -n "${line}" ]] || continue
     pid="${line%% *}"
     cmdline="${line#* }"
-    for pname in tizenclaw tizenclaw-tool-executor tizenclaw-web-dashboard; do
+    for pname in voxi voxi-tool-executor voxi-web-dashboard; do
       if [[ "${cmdline}" == "${root}/bin/${pname}" ]] \
          || [[ "${cmdline}" == "${root}/bin/${pname} "* ]]; then
         return 0
@@ -112,7 +112,7 @@ main() {
     bash "${PROJECT_DIR}/scripts/create_host_release_bundle.sh" \
       --version "smoke-test" \
       --output-dir "${dist_dir}"
-    BUNDLE_ARCHIVE="${dist_dir}/tizenclaw-host-bundle-smoke-test-linux-x86_64.tar.gz"
+    BUNDLE_ARCHIVE="${dist_dir}/voxi-host-bundle-smoke-test-linux-x86_64.tar.gz"
   fi
 
   [[ -f "${BUNDLE_ARCHIVE}" ]] \
@@ -124,18 +124,18 @@ main() {
   if grep -Fq 'manage/deploy_host.sh' <<< "${bundle_listing}"; then
     fail "Bundle still contains manage/deploy_host.sh — the source deploy script must not be packaged"
   fi
-  grep -Fq 'manage/tizenclaw-hostctl.sh' <<< "${bundle_listing}" \
-    || fail "Bundle is missing manage/tizenclaw-hostctl.sh"
+  grep -Fq 'manage/voxi-hostctl.sh' <<< "${bundle_listing}" \
+    || fail "Bundle is missing manage/voxi-hostctl.sh"
 
   local fake_home="${TMP_DIR}/home"
   mkdir -p "${fake_home}"
-  local install_root="${fake_home}/.tizenclaw"
+  local install_root="${fake_home}/.voxi"
 
   log "Installing bundle into ${install_root} ..."
   HOME="${fake_home}" \
-  TIZENCLAW_INSTALL_ROOT="${install_root}" \
-  TIZENCLAW_BASHRC_PATH="${fake_home}/.bashrc" \
-  TIZENCLAW_SKIP_SERVICES="1" \
+  VOXI_INSTALL_ROOT="${install_root}" \
+  VOXI_BASHRC_PATH="${fake_home}/.bashrc" \
+  VOXI_SKIP_SERVICES="1" \
     bash "${PROJECT_DIR}/install.sh" \
       --asset-url "file://${BUNDLE_ARCHIVE}" \
       --skip-deps \
@@ -143,25 +143,25 @@ main() {
 
   log "Verifying installed binaries..."
   local required_bins=(
-    "${install_root}/bin/tizenclaw"
-    "${install_root}/bin/tizenclaw-cli"
-    "${install_root}/bin/tizenclaw-tool-executor"
-    "${install_root}/bin/tizenclaw-web-dashboard"
+    "${install_root}/bin/voxi"
+    "${install_root}/bin/voxi-cli"
+    "${install_root}/bin/voxi-tool-executor"
+    "${install_root}/bin/voxi-web-dashboard"
   )
   for b in "${required_bins[@]}"; do
     [[ -f "${b}" ]] || fail "Missing binary: ${b}"
     [[ -x "${b}" ]] || fail "Binary not executable: ${b}"
   done
 
-  [[ -L "${install_root}/bin/tizenclaw-hostctl" || -f "${install_root}/bin/tizenclaw-hostctl" ]] \
-    || fail "Missing tizenclaw-hostctl in bin/"
+  [[ -L "${install_root}/bin/voxi-hostctl" || -f "${install_root}/bin/voxi-hostctl" ]] \
+    || fail "Missing voxi-hostctl in bin/"
 
   log "Verifying bundle-manifest.json..."
   [[ -f "${install_root}/bundle-manifest.json" ]] \
     || fail "Missing bundle-manifest.json at install root"
 
-  log "Verifying manage/tizenclaw-hostctl.sh..."
-  local managed_ctl="${install_root}/manage/tizenclaw-hostctl.sh"
+  log "Verifying manage/voxi-hostctl.sh..."
+  local managed_ctl="${install_root}/manage/voxi-hostctl.sh"
   [[ -f "${managed_ctl}" ]] \
     || fail "Missing ${managed_ctl}"
   [[ -x "${managed_ctl}" ]] \
@@ -175,7 +175,7 @@ main() {
   local lib_count
   lib_count="$(find "${install_root}/lib" -maxdepth 1 \( -name '*.so' -o -name '*.rlib' \) | wc -l)"
   [[ "${lib_count}" -gt 0 ]] \
-    || fail "lib/ is empty — expected at least libtizenclaw.so or libtizenclaw.rlib"
+    || fail "lib/ is empty — expected at least libvoxi.so or libvoxi.rlib"
 
   log "Verifying config/ is non-empty..."
   local config_count
@@ -197,27 +197,27 @@ main() {
     fi
   done
 
-  log "Checking tizenclaw-cli --help is runnable..."
-  assert_runnable "${install_root}/bin/tizenclaw-cli" --help
+  log "Checking voxi-cli --help is runnable..."
+  assert_runnable "${install_root}/bin/voxi-cli" --help
 
   # Build a sanitized environment for hostctl runs. Masking HOME, PATH, and
   # cwd to the installed tree ensures hostctl cannot accidentally reach any
   # source checkout (no git, no cargo, no cwd-relative repo paths).
-  local hostctl="${install_root}/bin/tizenclaw-hostctl"
+  local hostctl="${install_root}/bin/voxi-hostctl"
   run_hostctl() {
     (
       cd "${fake_home}"
       env -i \
         HOME="${fake_home}" \
         PATH="${install_root}/bin:/usr/bin:/bin" \
-        TIZENCLAW_INSTALL_ROOT="${install_root}" \
+        VOXI_INSTALL_ROOT="${install_root}" \
         "${hostctl}" "$@"
     )
   }
 
-  log "Checking tizenclaw-hostctl --help works in the isolated bundle..."
+  log "Checking voxi-hostctl --help works in the isolated bundle..."
   run_hostctl --help >/dev/null \
-    || fail "tizenclaw-hostctl --help failed"
+    || fail "voxi-hostctl --help failed"
 
   log "Asserting source-only flags fail fast with a clear error..."
   local source_only_flags=(--release --debug -d --build-only -b --no-restart \
@@ -245,14 +245,14 @@ main() {
     fail "hostctl script contains a git invocation"
   fi
 
-  log "Starting installed daemon via tizenclaw-hostctl --restart-only..."
+  log "Starting installed daemon via voxi-hostctl --restart-only..."
   if ! run_hostctl --restart-only; then
-    fail "tizenclaw-hostctl --restart-only failed"
+    fail "voxi-hostctl --restart-only failed"
   fi
 
   log "Waiting for daemon PID to stabilize..."
-  local pid_file="${install_root}/run/tizenclaw-host.pid"
-  local tool_pid_file="${install_root}/run/tizenclaw-tool-executor-host.pid"
+  local pid_file="${install_root}/run/voxi-host.pid"
+  local tool_pid_file="${install_root}/run/voxi-tool-executor-host.pid"
   local deadline=$((SECONDS + 5))
   while [[ "${SECONDS}" -lt "${deadline}" ]]; do
     if [[ -f "${pid_file}" && -f "${tool_pid_file}" ]]; then
@@ -272,17 +272,17 @@ main() {
   [[ -n "${pid}" ]] && kill -0 "${pid}" 2>/dev/null \
     || fail "Daemon process ${pid:-(empty)} is not alive after --restart-only"
 
-  log "Running tizenclaw-hostctl --status against the live daemon..."
+  log "Running voxi-hostctl --status against the live daemon..."
   local status_output
   status_output="$(run_hostctl --status 2>&1 || true)"
-  if ! grep -Fq "${PKG_NAME:-tizenclaw} is running" <<< "${status_output}" \
-    && ! grep -Fq "tizenclaw is running" <<< "${status_output}"; then
+  if ! grep -Fq "${PKG_NAME:-voxi} is running" <<< "${status_output}" \
+    && ! grep -Fq "voxi is running" <<< "${status_output}"; then
     printf '%s\n' "${status_output}" >&2
-    fail "--status did not confirm a running tizenclaw process"
+    fail "--status did not confirm a running voxi process"
   fi
 
-  log "Probing daemon IPC readiness via tizenclaw-tests ping..."
-  local test_bin="${install_root}/bin/tizenclaw-tests"
+  log "Probing daemon IPC readiness via voxi-tests ping..."
+  local test_bin="${install_root}/bin/voxi-tests"
   if [[ -x "${test_bin}" ]]; then
     local ipc_deadline=$((SECONDS + 10))
     local ipc_ok=false
@@ -292,7 +292,7 @@ main() {
         env -i \
           HOME="${fake_home}" \
           PATH="${install_root}/bin:/usr/bin:/bin" \
-          TIZENCLAW_INSTALL_ROOT="${install_root}" \
+          VOXI_INSTALL_ROOT="${install_root}" \
           "${test_bin}" call --method ping >/dev/null 2>&1
       ); then
         ipc_ok=true
@@ -304,11 +304,11 @@ main() {
       || fail "Daemon IPC did not respond to ping within 10s — daemon is not operational"
     log "Daemon IPC is responding."
   else
-    log "tizenclaw-tests not found in bundle; skipping IPC ping probe"
+    log "voxi-tests not found in bundle; skipping IPC ping probe"
   fi
 
   log "Waiting for daemon to create runtime log file..."
-  local daemon_log="${install_root}/logs/tizenclaw.log"
+  local daemon_log="${install_root}/logs/voxi.log"
   local log_deadline=$((SECONDS + 8))
   while [[ "${SECONDS}" -lt "${log_deadline}" ]]; do
     [[ -f "${daemon_log}" ]] && break
@@ -317,35 +317,35 @@ main() {
   [[ -f "${daemon_log}" ]] \
     || fail "Daemon did not create ${daemon_log} — runtime logging is not working"
 
-  log "Checking tizenclaw-hostctl --log stays alive against the installed log..."
+  log "Checking voxi-hostctl --log stays alive against the installed log..."
   local log_check_pid=""
   run_hostctl --log >/dev/null 2>&1 &
   log_check_pid=$!
   sleep 0.5
   if ! kill -0 "${log_check_pid}" 2>/dev/null; then
-    fail "tizenclaw-hostctl --log exited prematurely — expected tail -f to remain running"
+    fail "voxi-hostctl --log exited prematurely — expected tail -f to remain running"
   fi
   kill "${log_check_pid}" 2>/dev/null || true
-  # The subshell wrapper may have spawned a child bash running tizenclaw-hostctl
+  # The subshell wrapper may have spawned a child bash running voxi-hostctl
   # that is not a direct child of log_check_pid after exec; kill it explicitly.
-  pkill -u "$(id -u)" -f "${install_root}/bin/tizenclaw-hostctl" 2>/dev/null || true
+  pkill -u "$(id -u)" -f "${install_root}/bin/voxi-hostctl" 2>/dev/null || true
   wait "${log_check_pid}" 2>/dev/null || true
   # Reap any remaining hostctl --log children before the stray-process check.
   # SIGTERM via pkill is asynchronous; poll until the process is gone, then
   # escalate to SIGKILL if it lingers.
   local _log_kill_deadline=$((SECONDS + 5))
-  while pgrep -u "$(id -u)" -f "${install_root}/bin/tizenclaw-hostctl" >/dev/null 2>&1; do
+  while pgrep -u "$(id -u)" -f "${install_root}/bin/voxi-hostctl" >/dev/null 2>&1; do
     if [[ "${SECONDS}" -ge "${_log_kill_deadline}" ]]; then
-      pkill -9 -u "$(id -u)" -f "${install_root}/bin/tizenclaw-hostctl" 2>/dev/null || true
+      pkill -9 -u "$(id -u)" -f "${install_root}/bin/voxi-hostctl" 2>/dev/null || true
       sleep 0.2
       break
     fi
     sleep 0.1
   done
 
-  log "Stopping installed daemon via tizenclaw-hostctl --stop..."
+  log "Stopping installed daemon via voxi-hostctl --stop..."
   run_hostctl --stop \
-    || fail "tizenclaw-hostctl --stop failed"
+    || fail "voxi-hostctl --stop failed"
 
   log "Verifying daemon processes have exited..."
   local wait_deadline=$((SECONDS + 10))

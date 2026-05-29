@@ -172,12 +172,12 @@ class PinchBenchRunnerBlackBoxTest(unittest.TestCase):
                         return _RUNTIME_SKILLS
 
 
-                    def _cleanup_tizenclaw_session(session_id):
+                    def _cleanup_voxi_session(session_id):
                         _USAGE.pop(session_id, None)
                         _TRANSCRIPTS.pop(session_id, None)
 
 
-                    def _tizenclaw_workdir(session_id):
+                    def _voxi_workdir(session_id):
                         return _ROOT / "sessions" / session_id
 
 
@@ -189,19 +189,19 @@ class PinchBenchRunnerBlackBoxTest(unittest.TestCase):
                         return str(value)
 
 
-                    def _load_tizenclaw_transcript(session_id):
+                    def _load_voxi_transcript(session_id):
                         return list(_TRANSCRIPTS.get(session_id, []))
 
 
-                    def _wait_for_tizenclaw_transcript_slice(session_id, start_index):
-                        return _load_tizenclaw_transcript(session_id)[start_index:]
+                    def _wait_for_voxi_transcript_slice(session_id, start_index):
+                        return _load_voxi_transcript(session_id)[start_index:]
 
 
                     def _transcript_has_agent_activity(transcript):
                         return bool(transcript)
 
 
-                    def _read_tizenclaw_usage(session_id, baseline=None):
+                    def _read_voxi_usage(session_id, baseline=None):
                         current = dict(_USAGE.get(session_id, {{
                             "input_tokens": 0,
                             "output_tokens": 0,
@@ -219,7 +219,7 @@ class PinchBenchRunnerBlackBoxTest(unittest.TestCase):
                         return delta
 
 
-                    def _run_tizenclaw_message(session_id, prompt, workspace, timeout_seconds):
+                    def _run_voxi_message(session_id, prompt, workspace, timeout_seconds):
                         global _EXECUTION_ATTEMPTS, _JUDGE_ATTEMPTS
 
                         if session_id.startswith("judge_"):
@@ -239,7 +239,7 @@ class PinchBenchRunnerBlackBoxTest(unittest.TestCase):
                                     {{"role": "assistant", "content": "judge backend retry"}}
                                 ]
                                 raise subprocess.TimeoutExpired(
-                                    cmd=["tizenclaw-cli"],
+                                    cmd=["voxi-cli"],
                                     timeout=timeout_seconds,
                                     output="HTTP 503 temporary outage\\n",
                                     stderr="",
@@ -279,7 +279,7 @@ class PinchBenchRunnerBlackBoxTest(unittest.TestCase):
                                 {{"role": "assistant", "content": "transient runtime failure"}}
                             ]
                             raise subprocess.TimeoutExpired(
-                                cmd=["tizenclaw-cli"],
+                                cmd=["voxi-cli"],
                                 timeout=timeout_seconds,
                                 output="HTTP 429 retry me\\n",
                                 stderr="",
@@ -304,7 +304,7 @@ class PinchBenchRunnerBlackBoxTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            cli_path = bin_dir / "tizenclaw-cli"
+            cli_path = bin_dir / "voxi-cli"
             cli_path.write_text(
                 "\n".join(
                     [
@@ -333,7 +333,7 @@ class PinchBenchRunnerBlackBoxTest(unittest.TestCase):
 
             env = dict(os.environ)
             env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
-            env["TIZENCLAW_CLI"] = str(cli_path)
+            env["VOXI_CLI"] = str(cli_path)
 
             result = subprocess.run(
                 [

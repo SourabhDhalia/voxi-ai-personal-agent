@@ -58,7 +58,7 @@ class WritePinchBenchScoreTest(unittest.TestCase):
     def test_build_ledger_uses_dashboard_stage_verdicts(self) -> None:
         payload = {
             "run_id": "0001",
-            "runtime": "tizenclaw",
+            "runtime": "voxi",
             "model": "openai-codex/gpt-5.4",
             "timestamp": "2026-04-15 08:19:07 +0000",
             "suite": "all",
@@ -93,7 +93,7 @@ class WritePinchBenchScoreTest(unittest.TestCase):
             )
 
             ledger = WRITER.build_ledger(
-                Path(".tmp/pinchbench_oauth/results/0001_tizenclaw_active-oauth.json"),
+                Path(".tmp/pinchbench_oauth/results/0001_voxi_active-oauth.json"),
                 payload,
                 commit_sha="",
                 dashboard_path=dashboard,

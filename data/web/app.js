@@ -1,4 +1,4 @@
-// TizenClaw Dashboard — Vanilla JS SPA
+// Voxi Dashboard — Vanilla JS SPA
 (function () {
     'use strict';
 
@@ -952,7 +952,7 @@
         chatMessages.innerHTML =
             '<div class="chat-welcome">' +
             'Type a message to start chatting ' +
-            'with TizenClaw.</div>';
+            'with Voxi.</div>';
     }
 
     function updateChatSelectionMeta() {

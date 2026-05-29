@@ -793,28 +793,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libtizenclaw"
-version = "1.0.0"
-dependencies = [
- "libc",
- "log",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "libtizenclaw-core"
-version = "1.0.0"
-dependencies = [
- "libc",
- "libloading",
- "log",
- "reqwest",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1464,102 +1442,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tizenclaw"
-version = "1.0.0"
-dependencies = [
- "async-trait",
- "axum",
- "base64",
- "futures-util",
- "libc",
- "libloading",
- "libtizenclaw-core",
- "log",
- "mdns-sd",
- "openssl",
- "regex",
- "reqwest",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tower-http 0.5.2",
- "uuid",
- "zip",
-]
-
-[[package]]
-name = "tizenclaw-cli"
-version = "1.0.0"
-dependencies = [
- "libtizenclaw",
- "serde_json",
-]
-
-[[package]]
-name = "tizenclaw-metadata-cli-plugin"
-version = "0.1.0"
-dependencies = [
- "tizenclaw-metadata-plugin",
-]
-
-[[package]]
-name = "tizenclaw-metadata-llm-backend-plugin"
-version = "0.1.0"
-dependencies = [
- "tizenclaw-metadata-plugin",
-]
-
-[[package]]
-name = "tizenclaw-metadata-plugin"
-version = "0.1.0"
-
-[[package]]
-name = "tizenclaw-metadata-skill-plugin"
-version = "0.1.0"
-dependencies = [
- "tizenclaw-metadata-plugin",
-]
-
-[[package]]
-name = "tizenclaw-tests"
-version = "1.0.0"
-dependencies = [
- "libc",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "tizenclaw-tool-executor"
-version = "1.0.0"
-dependencies = [
- "futures",
- "libc",
- "libtizenclaw-core",
- "log",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "tizenclaw-web-dashboard"
-version = "1.0.0"
-dependencies = [
- "axum",
- "libc",
- "log",
- "serde",
- "serde_json",
- "tokio",
- "tower-http 0.5.2",
- "uuid",
-]
-
-[[package]]
 name = "tokio"
 version = "1.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1770,6 +1652,99 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "voxi"
+version = "1.0.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64",
+ "futures-util",
+ "libc",
+ "libloading",
+ "log",
+ "mdns-sd",
+ "openssl",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tower-http 0.5.2",
+ "uuid",
+ "voxi-core",
+ "zip",
+]
+
+[[package]]
+name = "voxi-cli"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "voxi-client",
+]
+
+[[package]]
+name = "voxi-client"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "log",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "voxi-core"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "libloading",
+ "log",
+ "reqwest",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "voxi-tests"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "voxi-tool-executor"
+version = "1.0.0"
+dependencies = [
+ "futures",
+ "libc",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+ "voxi-core",
+]
+
+[[package]]
+name = "voxi-web-dashboard"
+version = "1.0.0"
+dependencies = [
+ "axum",
+ "libc",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http 0.5.2",
+ "uuid",
+]
 
 [[package]]
 name = "want"

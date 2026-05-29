@@ -96,7 +96,7 @@ fn prompt_builder_renders_deterministic_fragments() {
 
     let project_context = ProjectContext::discover(&root).expect("discover project context");
     let prompt = PromptBuilder::new()
-        .with_system_prompt("You are TizenClaw.")
+        .with_system_prompt("You are Voxi.")
         .with_runtime_config(RuntimeConfig {
             profile: RuntimeProfile::Host,
             permission_mode: PermissionMode::Ask,

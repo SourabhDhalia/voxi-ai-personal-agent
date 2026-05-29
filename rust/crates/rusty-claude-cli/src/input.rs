@@ -63,7 +63,7 @@ impl std::fmt::Display for CliInputError {
             Self::MissingValue { flag } => write!(f, "missing value for `{flag}`"),
             Self::UnknownFlag { flag } => write!(f, "unknown flag `{flag}`"),
             Self::InvalidProfile { value } => {
-                write!(f, "invalid profile `{value}`; expected host, tizen, or test")
+                write!(f, "invalid profile `{value}`; expected host, voxi, or test")
             }
             Self::InvalidPermissionMode { value } => write!(
                 f,
@@ -193,7 +193,7 @@ pub fn merge_prompt_and_stdin(prompt: Option<&str>, stdin: Option<&str>) -> Opti
 fn parse_profile(value: &str) -> Result<RuntimeProfile, CliInputError> {
     match value {
         "host" => Ok(RuntimeProfile::Host),
-        "tizen" => Ok(RuntimeProfile::Tizen),
+        "voxi" => Ok(RuntimeProfile::Voxi),
         "test" => Ok(RuntimeProfile::Test),
         _ => Err(CliInputError::InvalidProfile {
             value: value.to_string(),

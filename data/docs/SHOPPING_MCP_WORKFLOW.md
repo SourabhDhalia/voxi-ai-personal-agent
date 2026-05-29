@@ -1,12 +1,12 @@
 # Shopping MCP Workflow
 
-Use this reference when the user asks TizenClaw to shop, manage a cart,
+Use this reference when the user asks Voxi to shop, manage a cart,
 order restaurant food, reorder items, plan groceries from a recipe, or
 book a restaurant table through configured MCP providers.
 
 ## Runtime Targets
 
-- Production target: Tizen DTV on armv7l.
+- Production target: Voxi DTV on armv7l.
 - Test target: Ubuntu x86_64 host environment.
 - Shopping MCP servers are configured in `config/mcp_servers.json`.
 - Discovered tools are exposed with sanitized provider-prefixed names

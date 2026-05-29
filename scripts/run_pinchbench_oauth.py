@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run PinchBench on TizenClaw using the active OpenAI OAuth config."""
+"""Run PinchBench on Voxi using the active OpenAI OAuth config."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ TRANSIENT_RETRY_DELAY_SECONDS = 2.0
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run PinchBench with TizenClaw's active OpenAI OAuth backend.",
+        description="Run PinchBench with Voxi's active OpenAI OAuth backend.",
     )
     parser.add_argument(
         "--skill-root",
@@ -180,7 +180,7 @@ def read_usage_delta(
         }
     try:
         return {
-            "usage": lib_agent._read_tizenclaw_usage(session_id, baseline),
+            "usage": lib_agent._read_voxi_usage(session_id, baseline),
             "accounting_complete": True,
             "warnings": [],
         }
@@ -401,8 +401,8 @@ def load_pinchbench_modules(skill_root: Path):
     return lib_agent, lib_grading, Task, TaskLoader
 
 
-def tizenclaw_cli_command(*args: str) -> list[str]:
-    cli_binary = os.environ.get("TIZENCLAW_CLI", "tizenclaw-cli")
+def voxi_cli_command(*args: str) -> list[str]:
+    cli_binary = os.environ.get("VOXI_CLI", "voxi-cli")
     return [cli_binary, *args]
 
 
@@ -425,7 +425,7 @@ def run_json_command(cmd: list[str]) -> dict[str, Any]:
 
 
 def read_config_value(path: str) -> Any:
-    payload = run_json_command(tizenclaw_cli_command("config", "get", path))
+    payload = run_json_command(voxi_cli_command("config", "get", path))
     if payload.get("status") != "ok":
         raise RuntimeError(f"Failed to read config path {path}: {payload}")
     return payload.get("value")
@@ -434,7 +434,7 @@ def read_config_value(path: str) -> Any:
 def read_active_runtime_snapshot() -> dict[str, Any]:
     active_backend = read_config_value("active_backend")
     if not isinstance(active_backend, str) or not active_backend:
-        raise RuntimeError("TizenClaw active_backend is not configured")
+        raise RuntimeError("Voxi active_backend is not configured")
     if active_backend != "openai-codex":
         raise RuntimeError(
             f"Active backend must be openai-codex for this run, found {active_backend}"
@@ -442,10 +442,10 @@ def read_active_runtime_snapshot() -> dict[str, Any]:
 
     model_name = read_config_value(f"backends.{active_backend}.model")
     fallback_backends = read_config_value("fallback_backends")
-    auth_status = run_json_command(tizenclaw_cli_command("auth", "openai-codex", "status", "--json"))
+    auth_status = run_json_command(voxi_cli_command("auth", "openai-codex", "status", "--json"))
     if auth_status.get("status") != "ok" or not auth_status.get("linked"):
         raise RuntimeError(
-            "OpenAI Codex OAuth is not linked; run `tizenclaw-cli auth openai-codex login` first"
+            "OpenAI Codex OAuth is not linked; run `voxi-cli auth openai-codex login` first"
         )
 
     return {
@@ -548,7 +548,7 @@ def stream_runtime_io(stdout: str, stderr: str) -> None:
         print(stderr, end="" if stderr.endswith("\n") else "\n", file=sys.stderr)
 
 
-def execute_tizenclaw_task_active_config(
+def execute_voxi_task_active_config(
     *,
     lib_agent: Any,
     task: Any,
@@ -600,8 +600,8 @@ def execute_tizenclaw_task_active_config(
 
         if current_session_id is None or new_session:
             next_session_id = f"{task.task_id}_{int(time.time() * 1000)}_{index}"
-            lib_agent._cleanup_tizenclaw_session(next_session_id)
-            next_workspace = lib_agent._tizenclaw_workdir(next_session_id)
+            lib_agent._cleanup_voxi_session(next_session_id)
+            next_workspace = lib_agent._voxi_workdir(next_session_id)
 
             if seed_workspace is None:
                 seed_workspace = prepare_task_workspace_local(
@@ -610,7 +610,7 @@ def execute_tizenclaw_task_active_config(
                     scratch_root=scratch_root,
                     run_id=run_id,
                     task=task,
-                    runtime="tizenclaw",
+                    runtime="voxi",
                     logger=logger,
                 )
                 source_workspace = seed_workspace
@@ -635,9 +635,9 @@ def execute_tizenclaw_task_active_config(
         baseline: dict[str, Any] | None = None
 
         try:
-            baseline = lib_agent._read_tizenclaw_usage(current_session_id)
-            transcript_start_index = len(lib_agent._load_tizenclaw_transcript(current_session_id))
-            result = lib_agent._run_tizenclaw_message(
+            baseline = lib_agent._read_voxi_usage(current_session_id)
+            transcript_start_index = len(lib_agent._load_voxi_transcript(current_session_id))
+            result = lib_agent._run_voxi_message(
                 session_id=current_session_id,
                 prompt=session_prompt,
                 workspace=current_workspace,
@@ -650,7 +650,7 @@ def execute_tizenclaw_task_active_config(
             exit_code = result.returncode
 
             transcript.extend(
-                lib_agent._wait_for_tizenclaw_transcript_slice(
+                lib_agent._wait_for_voxi_transcript_slice(
                     current_session_id,
                     transcript_start_index,
                 )
@@ -672,10 +672,10 @@ def execute_tizenclaw_task_active_config(
             usage_delta = read_usage_delta(lib_agent, current_session_id, baseline)
             add_usage(usage, usage_delta.get("usage"))
             usage_accounting_warnings.extend(usage_delta.get("warnings", []))
-            transcript = lib_agent._load_tizenclaw_transcript(current_session_id)
+            transcript = lib_agent._load_voxi_transcript(current_session_id)
             break
         except (FileNotFoundError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
-            stderr += f"tizenclaw runtime error: {exc}"
+            stderr += f"voxi runtime error: {exc}"
             break
 
     execution_time = time.time() - start_time
@@ -688,7 +688,7 @@ def execute_tizenclaw_task_active_config(
         status = "error"
     if not lib_agent._transcript_has_agent_activity(transcript):
         status = "error"
-    if "tizenclaw runtime error:" in stderr:
+    if "voxi runtime error:" in stderr:
         status = "error"
 
     return {
@@ -707,7 +707,7 @@ def execute_tizenclaw_task_active_config(
     }
 
 
-def run_tizenclaw_judge_active_config(
+def run_voxi_judge_active_config(
     *,
     lib_agent: Any,
     prompt: str,
@@ -717,8 +717,8 @@ def run_tizenclaw_judge_active_config(
 ) -> dict[str, Any]:
     start_time = time.time()
     session_id = f"judge_{int(time.time() * 1000)}"
-    lib_agent._cleanup_tizenclaw_session(session_id)
-    actual_workspace = lib_agent._tizenclaw_workdir(session_id)
+    lib_agent._cleanup_voxi_session(session_id)
+    actual_workspace = lib_agent._voxi_workdir(session_id)
     actual_workspace.mkdir(parents=True, exist_ok=True)
 
     if workspace.exists():
@@ -738,9 +738,9 @@ def run_tizenclaw_judge_active_config(
     usage_accounting_warnings: list[str] = []
 
     try:
-        baseline = lib_agent._read_tizenclaw_usage(session_id)
-        transcript_start_index = len(lib_agent._load_tizenclaw_transcript(session_id))
-        result = lib_agent._run_tizenclaw_message(
+        baseline = lib_agent._read_voxi_usage(session_id)
+        transcript_start_index = len(lib_agent._load_voxi_transcript(session_id))
+        result = lib_agent._run_voxi_message(
             session_id=session_id,
             prompt=prompt,
             workspace=actual_workspace,
@@ -751,7 +751,7 @@ def run_tizenclaw_judge_active_config(
         stdout = result.stdout
         stderr = result.stderr
         exit_code = result.returncode
-        transcript = lib_agent._wait_for_tizenclaw_transcript_slice(
+        transcript = lib_agent._wait_for_voxi_transcript_slice(
             session_id,
             transcript_start_index,
         )
@@ -764,13 +764,13 @@ def run_tizenclaw_judge_active_config(
         stderr = lib_agent._coerce_subprocess_output(exc.stderr)
         if stream_io:
             stream_runtime_io(stdout, stderr)
-        transcript = lib_agent._load_tizenclaw_transcript(session_id)
+        transcript = lib_agent._load_voxi_transcript(session_id)
         usage_delta = read_usage_delta(lib_agent, session_id, baseline)
         add_usage(usage, usage_delta.get("usage"))
         usage_accounting_warnings.extend(usage_delta.get("warnings", []))
     except (FileNotFoundError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
-        stderr = f"tizenclaw runtime error: {exc}"
-        transcript = lib_agent._load_tizenclaw_transcript(session_id)
+        stderr = f"voxi runtime error: {exc}"
+        transcript = lib_agent._load_voxi_transcript(session_id)
 
     execution_time = time.time() - start_time
     status = "success"
@@ -780,11 +780,11 @@ def run_tizenclaw_judge_active_config(
         status = "error"
     if not lib_agent._transcript_has_agent_activity(transcript):
         status = "error"
-    if "tizenclaw runtime error:" in stderr:
+    if "voxi runtime error:" in stderr:
         status = "error"
 
     return {
-        "agent_id": "tizenclaw-judge",
+        "agent_id": "voxi-judge",
         "status": status,
         "transcript": transcript,
         "workspace": str(actual_workspace),
@@ -822,7 +822,7 @@ def grade_task_active_config(
         judge_attempts: list[dict[str, Any]] = []
 
         for attempt in range(1, TRANSIENT_RETRY_LIMIT + 1):
-            judge_result = run_tizenclaw_judge_active_config(
+            judge_result = run_voxi_judge_active_config(
                 lib_agent=lib_agent,
                 prompt=prompt,
                 workspace=judge_workspace,
@@ -995,7 +995,7 @@ def main() -> int:
     output_dir = args.output_dir.resolve()
     cleanup_summary = cleanup_benchmark_artifacts(scratch_root, output_dir, logger)
     run_id = next_run_id(output_dir)
-    agent_id = "bench-tizenclaw-active-oauth"
+    agent_id = "bench-voxi-active-oauth"
     runs_per_task = max(1, args.runs)
 
     task_entries: list[dict[str, Any]] = []
@@ -1020,7 +1020,7 @@ def main() -> int:
 
             execution_attempts: list[dict[str, Any]] = []
             for execution_attempt in range(1, TRANSIENT_RETRY_LIMIT + 1):
-                result = execute_tizenclaw_task_active_config(
+                result = execute_voxi_task_active_config(
                     lib_agent=lib_agent,
                     task=task,
                     agent_id=agent_id,
@@ -1112,7 +1112,7 @@ def main() -> int:
     pass_rate = (total_score / max_score) * 100.0
 
     aggregate = {
-        "runtime": "tizenclaw",
+        "runtime": "voxi",
         "model": model_label,
         "benchmark_version": git_short_rev(skill_root),
         "run_id": run_id,
@@ -1137,7 +1137,7 @@ def main() -> int:
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{run_id}_tizenclaw_active-oauth.json"
+    output_path = output_dir / f"{run_id}_voxi_active-oauth.json"
     output_path.write_text(json.dumps(aggregate, indent=2), encoding="utf-8")
 
     logger.info("%s", "=" * 80)

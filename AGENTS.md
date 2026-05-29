@@ -1,17 +1,17 @@
 ---
-description: TizenClaw Development Overarching Management Document
+description: Voxi Development Overarching Management Document
 ---
 
 This root copy exists so tools that auto-detect `AGENTS.md` from the
 repository root can load the project rules. The canonical source remains
 `.agent/rules/AGENTS.md`.
 
-# TizenClaw Development Agent Operation Rules
+# Voxi Development Agent Operation Rules
 
 This document is the **top-level operational rule** representing the
-comprehensive management of the `tizenclaw` project's development process.
+comprehensive management of the `voxi` project's development process.
 The agent (you) must strictly adhere to the procedures defined in this
-document to develop TizenClaw.
+document to develop Voxi.
 
 > [!IMPORTANT]
 > **Language Rule**: You must plan and report in the same language as the
@@ -21,8 +21,8 @@ document to develop TizenClaw.
 
 ## Project Overview
 
-**TizenClaw** is a Rust-based, high-performance Autonomous AI Agent daemon
-operating within the Embedded Linux (Tizen OS) environment.
+**Voxi** is a Rust-based, high-performance Autonomous AI Agent daemon
+operating within the Embedded Linux (Voxi OS) environment.
 The core goal is to build an ecosystem that operates autonomously,
 asynchronously, and flawlessly with optimal resource efficiency.
 The fundamental development principles are as follows:
@@ -34,13 +34,13 @@ The fundamental development principles are as follows:
   Local `cargo test` execution is **prohibited**.
 - **Embedded Target Exclusive Build**: Unless requested otherwise,
   do not execute `cargo build` locally. All builds target the constrained
-  Tizen device (emulator) via `./deploy.sh` (GBS Build), maximizing
+  Voxi device (emulator) via `./deploy.sh` (GBS Build), maximizing
   release performance optimizations.
-- **Target Runtime Policy**: Actual production usage targets **Tizen DTV
+- **Target Runtime Policy**: Actual production usage targets **Voxi DTV
   armv7l**. Ubuntu **x86_64** is used as the host-side test and iteration
   environment.
 - **Architecture Validation Priority**: Validate Ubuntu x86_64 behavior
-  during development, then verify armv7l on the Tizen DTV/device path for
+  during development, then verify armv7l on the Voxi DTV/device path for
   real usage before considering release work complete.
 - **Execution Centric**: Do not stop at just writing documents;
   physically execute the actual terminal commands (e.g., `./deploy.sh`,
@@ -77,7 +77,7 @@ prohibited.** Development must follow a rigid, step-by-step process.
 ### Stage 1: Planning
 - **Role**: Analyze requirements and define the scope of the autonomous
   agent behavior.
-- **Activity**: Analyze Tizen Device API and daemon feature requirements
+- **Activity**: Analyze Voxi Device API and daemon feature requirements
   to systematically organize the agent's perception, logic, and
   asynchronous action capabilities.
 - **Artifact**: Update stage status in `.dev_note/DASHBOARD.md`
@@ -86,9 +86,9 @@ prohibited.** Development must follow a rigid, step-by-step process.
 
 ### Stage 2: Design
 - **Role**: Design the optimized Rust architecture.
-- **Activity**: Analyze Tizen C-API integration points and define robust
+- **Activity**: Analyze Voxi C-API integration points and define robust
   async traits (Tokio), FFI boundaries, and zero-cost abstraction rules
-  maximizing embedded performance. Tizen `.so` files rely on `libloading`
+  maximizing embedded performance. Voxi `.so` files rely on `libloading`
   based dynamic loading.
 - **Artifact**: Update stage status in `.dev_note/DASHBOARD.md`
 - **Skill Usage**:
@@ -115,7 +115,7 @@ prohibited.** Development must follow a rigid, step-by-step process.
 > Code not proven by device testing must be rejected.
 
 - **Prerequisite**: You **must validate Ubuntu x86_64 for host testing**
-  and **armv7l for actual Tizen DTV usage** whenever the environment
+  and **armv7l for actual Voxi DTV usage** whenever the environment
   provides the required GBS/sdb targets.
 - **Artifact**: Update stage status in `.dev_note/DASHBOARD.md`
 - **Skill Usage**:

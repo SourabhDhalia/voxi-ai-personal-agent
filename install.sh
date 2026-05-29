@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RELEASE_REPO="hjhun/tizenclaw"
+RELEASE_REPO="hjhun/voxi"
 RELEASE_VERSION="latest"
 ASSET_URL=""
 SOURCE_INSTALL=false
 
-REPO_URL="https://github.com/hjhun/tizenclaw.git"
+REPO_URL="https://github.com/hjhun/voxi.git"
 REPO_REF="develRust"
-SOURCE_DIR="${HOME}/.local/src/tizenclaw"
+SOURCE_DIR="${HOME}/.local/src/voxi"
 
-HOST_BASE_DIR="${HOME}/.tizenclaw"
+HOST_BASE_DIR="${HOME}/.voxi"
 HOST_BIN_DIR="${HOST_BASE_DIR}/bin"
 HOST_MANAGE_SCRIPT="${HOST_BASE_DIR}/manage/deploy_host.sh"
 BASHRC_PATH="${HOME}/.bashrc"
-PATH_EXPORT='export PATH="$HOME/.tizenclaw/bin:$PATH"'
+PATH_EXPORT='export PATH="$HOME/.voxi/bin:$PATH"'
 
 SKIP_DEPS=false
 SKIP_SETUP=false
@@ -35,14 +35,14 @@ fail() {
 
 usage() {
   cat <<'EOF'
-TizenClaw host installer
+Voxi host installer
 
 Usage:
   ./install.sh [options] [-- deploy_host_args...]
 
 Default mode:
   Download a prebuilt host bundle from GitHub Releases and install it
-  under ~/.tizenclaw.
+  under ~/.voxi.
 
 Options:
   --version <tag>      Release tag to install (default: latest)
@@ -61,7 +61,7 @@ Options:
 Examples:
   ./install.sh
   ./install.sh --version v1.0.0
-  ./install.sh --asset-url file:///tmp/tizenclaw-host-bundle.tar.gz
+  ./install.sh --asset-url file:///tmp/voxi-host-bundle.tar.gz
   ./install.sh --source-install --ref develRust
 EOF
 }
@@ -350,17 +350,17 @@ stop_host_services_if_present() {
   if [[ -x "${HOST_MANAGE_SCRIPT}" ]]; then
     "${HOST_MANAGE_SCRIPT}" --stop || true
   else
-    pkill -f "${HOST_BIN_DIR}/tizenclaw-tool-executor" >/dev/null 2>&1 || true
-    pkill -f "${HOST_BIN_DIR}/tizenclaw-web-dashboard" >/dev/null 2>&1 || true
-    pkill -f "${HOST_BIN_DIR}/tizenclaw" >/dev/null 2>&1 || true
-    pkill -x tizenclaw-tool-executor >/dev/null 2>&1 || true
-    pkill -x tizenclaw-web-dashboard >/dev/null 2>&1 || true
-    pkill -x tizenclaw >/dev/null 2>&1 || true
+    pkill -f "${HOST_BIN_DIR}/voxi-tool-executor" >/dev/null 2>&1 || true
+    pkill -f "${HOST_BIN_DIR}/voxi-web-dashboard" >/dev/null 2>&1 || true
+    pkill -f "${HOST_BIN_DIR}/voxi" >/dev/null 2>&1 || true
+    pkill -x voxi-tool-executor >/dev/null 2>&1 || true
+    pkill -x voxi-web-dashboard >/dev/null 2>&1 || true
+    pkill -x voxi >/dev/null 2>&1 || true
   fi
 
-  wait_for_exit "tizenclaw-tool-executor"
-  wait_for_exit "tizenclaw-web-dashboard"
-  wait_for_exit "tizenclaw"
+  wait_for_exit "voxi-tool-executor"
+  wait_for_exit "voxi-web-dashboard"
+  wait_for_exit "voxi"
 }
 
 install_release_bundle() {
@@ -378,7 +378,7 @@ install_release_bundle() {
   copy_tree_contents "${bundle_root}/manage" "${HOST_BASE_DIR}/manage"
 
   if [[ -x "${HOST_MANAGE_SCRIPT}" ]]; then
-    ln -sf ../manage/deploy_host.sh "${HOST_BIN_DIR}/tizenclaw-hostctl"
+    ln -sf ../manage/deploy_host.sh "${HOST_BIN_DIR}/voxi-hostctl"
   fi
 
   seed_config_from_bundle "${bundle_root}"
@@ -401,7 +401,7 @@ resolve_latest_asset_url() {
 import json, pathlib, re, sys
 
 data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
-pattern = re.compile(r"^tizenclaw-host-bundle-.*-linux-x86_64\.tar\.gz$")
+pattern = re.compile(r"^voxi-host-bundle-.*-linux-x86_64\.tar\.gz$")
 
 for asset in data.get("assets") or []:
     name = asset.get("name", "")
@@ -430,7 +430,7 @@ resolve_release_asset_url() {
     return
   fi
 
-  ASSET_URL="https://github.com/${RELEASE_REPO}/releases/download/${RELEASE_VERSION}/tizenclaw-host-bundle-${RELEASE_VERSION}-linux-x86_64.tar.gz"
+  ASSET_URL="https://github.com/${RELEASE_REPO}/releases/download/${RELEASE_VERSION}/voxi-host-bundle-${RELEASE_VERSION}-linux-x86_64.tar.gz"
 }
 
 download_release_bundle() {
@@ -452,7 +452,7 @@ install_from_release_asset() {
   local bundle_root
 
   temp_dir="$(mktemp -d)"
-  archive_path="${temp_dir}/tizenclaw-host-bundle.tar.gz"
+  archive_path="${temp_dir}/voxi-host-bundle.tar.gz"
 
   download_release_bundle "${archive_path}"
   tar -xzf "${archive_path}" -C "${temp_dir}"
@@ -532,7 +532,7 @@ config_fingerprint() {
 }
 
 run_setup_wizard() {
-  local cli_bin="${HOST_BIN_DIR}/tizenclaw-cli"
+  local cli_bin="${HOST_BIN_DIR}/voxi-cli"
   local before_fingerprint
   local after_fingerprint
 
@@ -542,7 +542,7 @@ run_setup_wizard() {
   fi
 
   before_fingerprint="$(config_fingerprint)"
-  log "Launching the interactive TizenClaw setup wizard"
+  log "Launching the interactive Voxi setup wizard"
   "${cli_bin}" setup
   after_fingerprint="$(config_fingerprint)"
 
@@ -578,7 +578,7 @@ main() {
     log "Skipping interactive setup wizard"
   fi
 
-  log "TizenClaw host install complete"
+  log "Voxi host install complete"
 }
 
 main "$@"

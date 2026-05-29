@@ -1,0 +1,5 @@
+[alias]
+# With claw-platform, no mock-sys feature needed — just build normally
+test-local = "test --workspace"
+run-local = "run -p voxi"
+build-local = "build --workspace"

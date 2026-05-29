@@ -1,23 +1,19 @@
 [workspace]
 resolver = "2"
 members = [
-    "src/libtizenclaw",
-    "src/libtizenclaw-core",
-    "src/tizenclaw",
-    "src/tizenclaw-cli",
-    "src/tizenclaw-tests",
-    "src/tizenclaw-web-dashboard",
-    "src/tizenclaw-tool-executor",
-    "src/tizenclaw-metadata-plugin",
-    "src/tizenclaw-metadata-llm-backend-plugin",
-    "src/tizenclaw-metadata-skill-plugin",
-    "src/tizenclaw-metadata-cli-plugin",
+    "src/voxi-client",
+    "src/voxi-core",
+    "src/voxi",
+    "src/voxi-cli",
+    "src/voxi-tests",
+    "src/voxi-web-dashboard",
+    "src/voxi-tool-executor",
 ]
 
 [profile.release]
 opt-level = "s"  # Optimize for size
 debug = 2        # Preserve debuginfo for RPM split-debug extraction
-# lto = true       # Disabled: Causes undefined references to vendored C libs in Tizen armv7l GCC ld.
+# lto = true       # Disabled: Causes undefined references to vendored C libs in Voxi armv7l GCC ld.
 panic = "abort"  # Abort on panic for smaller binary size
 # codegen-units = 1 # Disabled: Can interfere with cross-language linking on ARM.
 

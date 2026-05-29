@@ -1,6 +1,6 @@
 # Workspace Optimization and Build-Time Reduction for Shopping Agent
 
-This plan outlines how to clean up the TizenClaw codebase to act as a dedicated shopping agent running on Tizen DTV or Ubuntu. It strips out developer FFI validation plugins and unused built-in tools, and fixes the 30-minute build-time bottleneck.
+This plan outlines how to clean up the Voxi codebase to act as a dedicated shopping agent running on Voxi DTV or Ubuntu. It strips out developer FFI validation plugins and unused built-in tools, and fixes the 30-minute build-time bottleneck.
 
 ## User Review Required
 
@@ -8,10 +8,10 @@ This plan outlines how to clean up the TizenClaw codebase to act as a dedicated 
 > **Build-Time Bottleneck Root Cause**: The 30-minute build time is caused by compiling the OpenSSL C source library from scratch (`native-tls-vendored` feature in `reqwest`) and compiling SQLite from scratch (`bundled` feature in `rusqlite`) inside a QEMU-emulated `gbs build` environment.
 > We propose:
 > 1. Replacing `native-tls-vendored` with pure Rust `rustls-tls-native-roots`, which compiles 10x faster and doesn't require any C compiler emulation.
-> 2. Removing `bundled` from `rusqlite`, linking dynamically against the target system's native `sqlite3` library (which is pre-installed on both Tizen DTV and Ubuntu).
+> 2. Removing `bundled` from `rusqlite`, linking dynamically against the target system's native `sqlite3` library (which is pre-installed on both Voxi DTV and Ubuntu).
 
 > [!WARNING]
-> **Code Removal**: This change will remove the 4 metadata plugin packages and the FFI validation shared libraries (`libtizenclaw-metadata-plugin`, etc.). These are only used for dynamic third-party Tizen RPM package injection and are not needed for a dedicated shopping daemon.
+> **Code Removal**: This change will remove the 4 metadata plugin packages and the FFI validation shared libraries (`libvoxi-metadata-plugin`, etc.). These are only used for dynamic third-party Voxi RPM package injection and are not needed for a dedicated shopping daemon.
 
 ---
 
@@ -19,27 +19,27 @@ This plan outlines how to clean up the TizenClaw codebase to act as a dedicated 
 
 ### 1. Build-Time Optimization & Cargo Workspace Cleanup
 
-#### [MODIFY] [Cargo.toml](file:///Users/sdhalia/Developer/githubRepo/tizenClaw-rust/Cargo.toml)
+#### [MODIFY] [Cargo.toml](file:///Users/sdhalia/Developer/githubRepo/voxi-rust/Cargo.toml)
 - Remove the following members from the workspace list to stop compiling them:
-  - `"src/libtizenclaw"`
-  - `"src/tizenclaw-metadata-plugin"`
-  - `"src/tizenclaw-metadata-llm-backend-plugin"`
-  - `"src/tizenclaw-metadata-skill-plugin"`
-  - `"src/tizenclaw-metadata-cli-plugin"`
+  - `"src/libvoxi"`
+  - `"src/voxi-metadata-plugin"`
+  - `"src/voxi-metadata-llm-backend-plugin"`
+  - `"src/voxi-metadata-skill-plugin"`
+  - `"src/voxi-metadata-cli-plugin"`
 
-#### [MODIFY] [Cargo.toml](file:///Users/sdhalia/Developer/githubRepo/tizenClaw-rust/src/tizenclaw/Cargo.toml)
+#### [MODIFY] [Cargo.toml](file:///Users/sdhalia/Developer/githubRepo/voxi-rust/src/voxi/Cargo.toml)
 - Update `reqwest` dependency: replace `native-tls-vendored` with `rustls-tls-native-roots`.
 - Update `rusqlite` dependency: remove `features = ["bundled"]` to dynamically link against system SQLite.
 - Remove the `openssl` crate dependency as it is no longer required.
 
-#### [MODIFY] [Cargo.toml](file:///Users/sdhalia/Developer/githubRepo/tizenClaw-rust/src/libtizenclaw-core/Cargo.toml)
+#### [MODIFY] [Cargo.toml](file:///Users/sdhalia/Developer/githubRepo/voxi-rust/src/libvoxi-core/Cargo.toml)
 - Update `reqwest` dependency: replace `native-tls-vendored` with `rustls-tls-native-roots` and `rustls-tls`.
 
 ---
 
 ### 2. Stripping Unnecessary Built-In Tools
 
-#### [MODIFY] [tool_declaration_builder.rs](file:///Users/sdhalia/Developer/githubRepo/tizenClaw-rust/src/tizenclaw/src/core/tool_declaration_builder.rs)
+#### [MODIFY] [tool_declaration_builder.rs](file:///Users/sdhalia/Developer/githubRepo/voxi-rust/src/voxi/src/core/tool_declaration_builder.rs)
 - Keep only core shopping/interaction/search tools:
   - `remember`, `recall`, `forget` (Memory)
   - `send_outbound_message` (Interaction/Telemetry)
@@ -54,7 +54,7 @@ This plan outlines how to clean up the TizenClaw codebase to act as a dedicated 
   - Remove: `run_supervisor`, `list_agent_roles`, `spawn_agent`
   - Remove: `extract_document_text`, `inspect_tabular_data`, `generate_image`
 
-#### [MODIFY] [agent_core.rs](file:///Users/sdhalia/Developer/githubRepo/tizenClaw-rust/src/tizenclaw/src/core/agent_core.rs)
+#### [MODIFY] [agent_core.rs](file:///Users/sdhalia/Developer/githubRepo/voxi-rust/src/voxi/src/core/agent_core.rs)
 - Remove the matching execution branches in `AgentCore::execute_tool` and the chat loops for the deleted tools.
 - Keep execution logic only for `remember`, `recall`, `forget`, `send_outbound_message`, `request_user_clarification`, `web_search`, and `validate_web_search`.
 
@@ -67,7 +67,7 @@ This plan outlines how to clean up the TizenClaw codebase to act as a dedicated 
   ```bash
   gbs build --arch x86_64
   # or local cargo compile for Ubuntu target:
-  cargo check --bin tizenclaw
+  cargo check --bin voxi
   ```
 - Measure compilation time to confirm it has been reduced from ~30 minutes to under 3 minutes.
 

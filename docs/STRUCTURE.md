@@ -1,8 +1,8 @@
-# TizenClaw Structure Guide
+# Voxi Structure Guide
 
 ## Purpose
 
-This guide explains how the TizenClaw repository is organized and how the
+This guide explains how the Voxi repository is organized and how the
 major binaries, libraries, and subsystem directories fit together. It is aimed
 at contributors, reviewers, and operators who need a quick mental model of the
 workspace before making changes or deploying the daemon.
@@ -10,12 +10,12 @@ workspace before making changes or deploying the daemon.
 ## Top-Level Layout
 
 ```text
-tizenclaw/
+voxi/
 ├── .agent/                 Agent workflow rules and stage skills
 ├── .dev_note/              Internal planning, design, and dashboard tracking
 ├── data/                   Static assets, including dashboard resources
 ├── docs/                   Public documentation
-├── packaging/              Tizen packaging and build metadata
+├── packaging/              Voxi packaging and build metadata
 ├── src/                    Rust workspace members
 ├── third_party/            Vendored third-party sources
 ├── Cargo.toml              Workspace definition
@@ -27,7 +27,7 @@ tizenclaw/
 The root `Cargo.toml` defines a multi-crate workspace. Each member exists for
 an operational reason rather than convenience alone.
 
-### `src/tizenclaw`
+### `src/voxi`
 
 This is the main daemon binary. It is responsible for:
 
@@ -42,7 +42,7 @@ This is the main daemon binary. It is responsible for:
 
 This crate is where the long-running service comes together.
 
-### `src/tizenclaw-cli`
+### `src/voxi-cli`
 
 This crate provides the command-line client that talks to the daemon over the
 IPC socket. It is the most direct way to:
@@ -54,7 +54,7 @@ IPC socket. It is the most direct way to:
 
 It behaves like a thin operational client rather than a second agent runtime.
 
-### `src/tizenclaw-web-dashboard`
+### `src/voxi-web-dashboard`
 
 This is the standalone HTTP dashboard service. It serves the web UI, exposes
 REST endpoints, and bridges browser interactions back to the daemon. It also
@@ -66,13 +66,13 @@ owns dashboard-specific concerns such as:
 - outbound message polling
 - bridge-style APIs for app and tool interactions
 
-### `src/tizenclaw-tool-executor`
+### `src/voxi-tool-executor`
 
 This sidecar binary handles tool execution separately from the main daemon.
 That separation keeps the daemon focused on orchestration while the executor
 owns the lower-level responsibility of running approved tools safely.
 
-### `src/libtizenclaw-core`
+### `src/libvoxi-core`
 
 This shared library crate provides reusable framework pieces that other parts
 of the workspace depend on. It includes:
@@ -80,39 +80,39 @@ of the workspace depend on. It includes:
 - platform and path detection
 - loader and plugin support
 - curl and network-related helpers
-- Tizen system bindings support modules
+- Voxi system bindings support modules
 
 It is a key boundary between the application layer and lower-level integration
 details.
 
-### `src/libtizenclaw`
+### `src/libvoxi`
 
 This crate is the C-facing library surface. It exists so external consumers can
-interact with TizenClaw through a stable foreign-function boundary rather than
+interact with Voxi through a stable foreign-function boundary rather than
 linking directly against daemon internals.
 
-### `src/tizenclaw-metadata-plugin`
+### `src/voxi-metadata-plugin`
 
 This base metadata crate is shared by plugin-specific metadata crates.
 
-### `src/tizenclaw-metadata-llm-backend-plugin`
+### `src/voxi-metadata-llm-backend-plugin`
 
 Plugin metadata for LLM backend extensions.
 
-### `src/tizenclaw-metadata-skill-plugin`
+### `src/voxi-metadata-skill-plugin`
 
 Plugin metadata for skill extensions.
 
-### `src/tizenclaw-metadata-cli-plugin`
+### `src/voxi-metadata-cli-plugin`
 
 Plugin metadata for CLI-oriented extensions.
 
 ## Main Daemon Source Layout
 
-Inside `src/tizenclaw/src`, the daemon code is grouped by responsibility:
+Inside `src/voxi/src`, the daemon code is grouped by responsibility:
 
 ```text
-src/tizenclaw/src/
+src/voxi/src/
 ├── channel/
 ├── common/
 ├── core/
@@ -121,7 +121,7 @@ src/tizenclaw/src/
 ├── llm/
 ├── network/
 ├── storage/
-├── tizen/
+├── voxi/
 └── main.rs
 ```
 
@@ -165,7 +165,7 @@ If you only have time to understand one subsystem, start here.
 ### `generic/`
 
 Generic Linux-compatible infrastructure and fallback integrations live here.
-This is useful for environments that are not running the full Tizen stack but
+This is useful for environments that are not running the full Voxi stack but
 still need the daemon to behave sensibly.
 
 ### `infra/`
@@ -202,10 +202,10 @@ Current modules indicate support for:
 - embedding storage
 - audit logging
 
-### `tizen/`
+### `voxi/`
 
-Tizen-specific code is isolated here so platform logic stays visible and
-contained. This includes Tizen-facing core actions and infrastructure adapters
+Voxi-specific code is isolated here so platform logic stays visible and
+contained. This includes Voxi-facing core actions and infrastructure adapters
 for things like application or package lifecycle handling.
 
 ## Runtime Relationships
@@ -225,7 +225,7 @@ The major runtime relationships look like this:
 Several non-source paths matter operationally:
 
 - `deploy.sh`: the primary command for build and deployment
-- `packaging/`: spec and package-related assets used by the Tizen flow
+- `packaging/`: spec and package-related assets used by the Voxi flow
 - `data/`: web assets and related bundled resources
 - `third_party/openssl-src`: vendored OpenSSL source used by the workspace
 
@@ -235,11 +235,11 @@ For a practical code walk, this order works well:
 
 1. `Cargo.toml`
 2. `deploy.sh`
-3. `src/tizenclaw/src/main.rs`
-4. `src/tizenclaw/src/core/agent_core.rs`
-5. `src/tizenclaw/src/core/agent_factory.rs`
-6. `src/tizenclaw-web-dashboard/src/main.rs`
-7. `src/tizenclaw-cli/src/main.rs`
+3. `src/voxi/src/main.rs`
+4. `src/voxi/src/core/agent_core.rs`
+5. `src/voxi/src/core/agent_factory.rs`
+6. `src/voxi-web-dashboard/src/main.rs`
+7. `src/voxi-cli/src/main.rs`
 
 That sequence gives you the workspace layout, operational entry point,
 orchestration center, and the two most visible client surfaces.

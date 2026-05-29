@@ -1,4 +1,4 @@
-name: TizenClaw CI
+name: Voxi CI
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          workdir="${RUNNER_TEMP}/tizenclaw"
+          workdir="${RUNNER_TEMP}/voxi"
           repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
           rm -rf "${workdir}"
@@ -65,7 +65,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          workdir="${RUNNER_TEMP}/tizenclaw"
+          workdir="${RUNNER_TEMP}/voxi"
           repo_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
 
           rm -rf "${workdir}"
@@ -115,13 +115,13 @@ jobs:
           set -euo pipefail
           cd "${WORKDIR}"
 
-          archive="dist/tizenclaw-host-bundle-ci-${GITHUB_SHA::7}-linux-x86_64.tar.gz"
+          archive="dist/voxi-host-bundle-ci-${GITHUB_SHA::7}-linux-x86_64.tar.gz"
           checksum="${archive}.sha256"
 
           test -f "${archive}"
           test -f "${checksum}"
 
-          tar -tzf "${archive}" | grep -F 'bin/tizenclaw'
-          tar -tzf "${archive}" | grep -F 'bin/tizenclaw-cli'
+          tar -tzf "${archive}" | grep -F 'bin/voxi'
+          tar -tzf "${archive}" | grep -F 'bin/voxi-cli'
           tar -tzf "${archive}" | grep -F 'manage/deploy_host.sh'
           tar -tzf "${archive}" | grep -F 'bundle-manifest.json'

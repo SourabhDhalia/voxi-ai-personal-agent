@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Cross-compile TizenClaw for aarch64-unknown-linux-gnu on an x86_64 Ubuntu host.
+# Cross-compile Voxi for aarch64-unknown-linux-gnu on an x86_64 Ubuntu host.
 #
 # Usage:
 #   ./scripts/cross-build-aarch64.sh                # build release
@@ -12,13 +12,13 @@
 #   rustup target add aarch64-unknown-linux-gnu
 #
 # Output binaries:
-#   target/aarch64-unknown-linux-gnu/release/tizenclaw
-#   target/aarch64-unknown-linux-gnu/release/tizenclaw-cli
-#   target/aarch64-unknown-linux-gnu/release/tizenclaw-tool-executor
-#   target/aarch64-unknown-linux-gnu/release/tizenclaw-web-dashboard
+#   target/aarch64-unknown-linux-gnu/release/voxi
+#   target/aarch64-unknown-linux-gnu/release/voxi-cli
+#   target/aarch64-unknown-linux-gnu/release/voxi-tool-executor
+#   target/aarch64-unknown-linux-gnu/release/voxi-web-dashboard
 #
 # Install on target (Jetson / aarch64 Linux):
-#   scp target/aarch64-unknown-linux-gnu/release/tizenclaw* user@jetson:~/.tizenclaw/bin/
+#   scp target/aarch64-unknown-linux-gnu/release/voxi* user@jetson:~/.voxi/bin/
 
 set -euo pipefail
 
@@ -27,7 +27,7 @@ cd "$(dirname "$0")/.."
 TARGET="aarch64-unknown-linux-gnu"
 LINKER="aarch64-linux-gnu-gcc"
 PROFILE="release"
-BINARIES=(tizenclaw tizenclaw-cli tizenclaw-tool-executor tizenclaw-web-dashboard)
+BINARIES=(voxi voxi-cli voxi-tool-executor voxi-web-dashboard)
 
 # ── Install dependencies if requested ────────────────────────────────
 if [[ "${1:-}" == "--install" ]]; then
@@ -70,7 +70,7 @@ fi
 MIN_RUSTC="1.87"
 RUSTC_VER="$(rustc --version | grep -oP '\d+\.\d+\.\d+' | head -1)"
 if [ "$(printf '%s\n' "$MIN_RUSTC" "$RUSTC_VER" | sort -V | head -1)" != "$MIN_RUSTC" ]; then
-    echo "ERROR: rustc $RUSTC_VER is too old. TizenClaw requires >= $MIN_RUSTC" >&2
+    echo "ERROR: rustc $RUSTC_VER is too old. Voxi requires >= $MIN_RUSTC" >&2
     echo "   Run: rustup update stable" >&2
     exit 1
 fi
@@ -83,15 +83,15 @@ export CC_aarch64_unknown_linux_gnu="aarch64-linux-gnu-gcc"
 export CXX_aarch64_unknown_linux_gnu="aarch64-linux-gnu-g++"
 export AR_aarch64_unknown_linux_gnu="aarch64-linux-gnu-ar"
 
-echo "==> Cross-compiling TizenClaw for $TARGET ($PROFILE)..."
-# Build only the main binaries — metadata plugin crates require Tizen-only
+echo "==> Cross-compiling Voxi for $TARGET ($PROFILE)..."
+# Build only the main binaries — metadata plugin crates require Voxi-only
 # native libraries (pkgmgr_installer, dlog) that are unavailable in a
 # standard cross-compilation environment.
 cargo build --release --target "$TARGET" \
-    -p tizenclaw \
-    -p tizenclaw-cli \
-    -p tizenclaw-tool-executor \
-    -p tizenclaw-web-dashboard
+    -p voxi \
+    -p voxi-cli \
+    -p voxi-tool-executor \
+    -p voxi-web-dashboard
 
 echo ""
 echo "==> Build complete. Binaries:"
@@ -106,5 +106,5 @@ done
 
 echo ""
 echo "==> To install on aarch64 target:"
-echo "    scp target/${TARGET}/release/tizenclaw* user@jetson:~/.tizenclaw/bin/"
+echo "    scp target/${TARGET}/release/voxi* user@jetson:~/.voxi/bin/"
 echo "    Or use: ./scripts/install-remote.sh user@jetson"

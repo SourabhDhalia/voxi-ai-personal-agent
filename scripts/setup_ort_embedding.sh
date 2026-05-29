@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # setup_ort_embedding.sh — Downloads ONNX Runtime + MiniLM model files
-# into the TizenClaw data directory for on-device embedding support.
+# into the Voxi data directory for on-device embedding support.
 #
 # Usage:
 #   ./scripts/setup_ort_embedding.sh              # auto-detect platform
-#   ./scripts/setup_ort_embedding.sh --data-dir /opt/usr/share/tizenclaw
+#   ./scripts/setup_ort_embedding.sh --data-dir /opt/usr/share/voxi
 #
 # Supports:
 #   - Ubuntu x86_64  (host test environment)
-#   - Tizen armv7l   (production target)
+#   - Voxi armv7l   (production target)
 
 set -euo pipefail
 
@@ -29,7 +29,7 @@ esac
 echo "[INFO] Detected architecture: $ARCH → ORT package: linux-$ORT_ARCH"
 
 # ── Determine data directory ─────────────────────────────────────────
-DATA_DIR="${TIZENCLAW_DATA_DIR:-}"
+DATA_DIR="${VOXI_DATA_DIR:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,10 +39,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "$DATA_DIR" ]]; then
-  if [[ -f /etc/tizen-release ]] || [[ -d /opt/usr/share/tizenclaw ]]; then
-    DATA_DIR="/opt/usr/share/tizenclaw"
+  if [[ -f /etc/voxi-release ]] || [[ -d /opt/usr/share/voxi ]]; then
+    DATA_DIR="/opt/usr/share/voxi"
   else
-    DATA_DIR="${HOME}/.tizenclaw"
+    DATA_DIR="${HOME}/.voxi"
   fi
 fi
 
@@ -89,7 +89,7 @@ fi
 
 echo ""
 echo "═══════════════════════════════════════════════════"
-echo "  Setup complete! Restart the TizenClaw daemon."
+echo "  Setup complete! Restart the Voxi daemon."
 echo "  Expected log on startup:"
 echo "    ONNX Runtime found at: ${LIB_DIR}/libonnxruntime.so"
 echo "    OnDeviceEmbedding initialized (dim=384)"

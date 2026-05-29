@@ -382,7 +382,7 @@ mod tests {
                 SessionContentBlock::ToolCall {
                     id: "call-1".to_string(),
                     name: "search".to_string(),
-                    input: json!({ "q": "TizenClaw" }),
+                    input: json!({ "q": "Voxi" }),
                 },
             ],
             name: Some("planner".to_string()),

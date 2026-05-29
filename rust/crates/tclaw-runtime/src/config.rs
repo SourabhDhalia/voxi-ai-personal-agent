@@ -8,7 +8,7 @@ use crate::{
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RuntimeProfile {
     Host,
-    Tizen,
+    Voxi,
     Test,
 }
 

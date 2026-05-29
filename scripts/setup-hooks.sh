@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install TizenClaw git hooks
+# Install Voxi git hooks
 # Usage: ./scripts/setup-hooks.sh
 
 set -euo pipefail

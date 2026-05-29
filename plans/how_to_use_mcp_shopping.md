@@ -1,6 +1,6 @@
-# How to Use TizenClaw as an Autonomous Shopping Agent
+# How to Use Voxi as an Autonomous Shopping Agent
 
-This guide explains how to configure, run, and test TizenClaw with multiple shopping MCP servers (Zepto and Swiggy) and handle back-and-forth user clarifications.
+This guide explains how to configure, run, and test Voxi with multiple shopping MCP servers (Zepto and Swiggy) and handle back-and-forth user clarifications.
 
 ---
 
@@ -40,12 +40,12 @@ Ensure your `mcp_servers.json` contains the following structure:
 ## 2. Deploy and Run the Daemon
 Since you are testing on a target machine, run:
 ```bash
-# Clean, compile, and deploy to Tizen (emulator/device)
+# Clean, compile, and deploy to Voxi (emulator/device)
 ./deploy.sh
 ```
 When the daemon boots up, it will check the `mcp_servers.json` file, auto-wrap the HTTP servers in `npx mcp-remote` processes, perform initialize handshakes, and discover all shopping tools.
 
-Verify in the logs (`tizenclaw.log`) that the connection is successful:
+Verify in the logs (`voxi.log`) that the connection is successful:
 ```
 [INFO] MCP Client Manager loaded configuration and connected to servers
 [DEBUG] MCP Client: 'zepto' connected (4 tools)

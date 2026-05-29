@@ -1,4 +1,4 @@
-"""Repository support tools for TizenClaw.
+"""Repository support tools for Voxi.
 
 This package provides lightweight audit, manifest, and analysis helpers used
 to inspect the repository layout. It is not a supported runtime surface.

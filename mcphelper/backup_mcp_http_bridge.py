@@ -20,7 +20,7 @@ if not TOKEN:
     if not token_file:
         token_file = os.environ.get(
             "SWIGGY_MCP_TOKEN_FILE",
-            "/root/.tizenclaw/secrets/swiggy_food_token",
+            "/root/.voxi/secrets/swiggy_food_token",
         )
     try:
         with open(token_file, "r", encoding="utf-8") as f:
@@ -48,7 +48,7 @@ def post_jsonrpc(payload: dict):
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
         "MCP-Protocol-Version": "2025-11-25",
-        "User-Agent": "tizenclaw-mcp-http-bridge/1.0",
+        "User-Agent": "voxi-mcp-http-bridge/1.0",
     }
 
     if TOKEN:

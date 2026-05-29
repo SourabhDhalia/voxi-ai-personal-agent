@@ -6,7 +6,7 @@
   "metadata": {
     "version": "1.0.0",
     "description": "Sample hook-only bundled plugin for tests.",
-    "authors": ["TizenClaw"],
+    "authors": ["Voxi"],
     "tags": ["bundled", "hooks"]
   },
   "lifecycle": {

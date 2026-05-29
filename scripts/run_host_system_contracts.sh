@@ -4,18 +4,18 @@
 # cargo/parity/doc checks.
 #
 # Usage: scripts/run_host_system_contracts.sh --bin-dir <dir>
-#   --bin-dir: directory containing tizenclaw, tizenclaw-tool-executor,
-#              tizenclaw-web-dashboard, and tizenclaw-tests binaries
+#   --bin-dir: directory containing voxi, voxi-tool-executor,
+#              voxi-web-dashboard, and voxi-tests binaries
 #
 # Environment variables honoured:
-#   TIZENCLAW_CONTRACT_TIMEOUT  seconds to wait for IPC readiness (default 20)
+#   VOXI_CONTRACT_TIMEOUT  seconds to wait for IPC readiness (default 20)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 SUITE_MANIFEST="${PROJECT_DIR}/tests/system/offline_suite.json"
-IPC_TIMEOUT="${TIZENCLAW_CONTRACT_TIMEOUT:-20}"
+IPC_TIMEOUT="${VOXI_CONTRACT_TIMEOUT:-20}"
 
 # ─────────────────────────────────────────────
 # Log helpers
@@ -50,15 +50,15 @@ err()  { echo -e "${RED}[ FAIL ]${NC} $*"; }
 # is not acceptable because it cannot enforce the hermetic no-network guarantee
 # required by the offline contract acceptance criteria.
 # ─────────────────────────────────────────────
-if [[ -z "${_TIZENCLAW_NET_NS:-}" ]]; then
+if [[ -z "${_VOXI_NET_NS:-}" ]]; then
   if command -v unshare >/dev/null 2>&1; then
     # Path 1: privileged network namespace (root / CAP_NET_ADMIN).
     if unshare --net true 2>/dev/null; then
-      exec env _TIZENCLAW_NET_NS=1 unshare --net -- bash -- "$0" "$@"
+      exec env _VOXI_NET_NS=1 unshare --net -- bash -- "$0" "$@"
     fi
     # Path 2: unprivileged user+network namespace (normal user, Ubuntu/WSL2).
     if unshare --user --map-root-user --net true 2>/dev/null; then
-      exec env _TIZENCLAW_NET_NS=1 \
+      exec env _VOXI_NET_NS=1 \
         unshare --user --map-root-user --net -- bash -- "$0" "$@"
     fi
   fi
@@ -72,7 +72,7 @@ fi
 
 # Bring up the loopback interface when running inside a fresh network
 # namespace so localhost TCP (dashboard) and Unix sockets continue to work.
-if [[ -n "${_TIZENCLAW_NET_NS:-}" ]] && command -v ip >/dev/null 2>&1; then
+if [[ -n "${_VOXI_NET_NS:-}" ]] && command -v ip >/dev/null 2>&1; then
   ip link set lo up 2>/dev/null || true
 fi
 
@@ -96,9 +96,9 @@ if [[ -z "${BIN_DIR}" ]]; then
   exit 1
 fi
 
-DAEMON_BIN="${BIN_DIR}/tizenclaw"
-TOOL_EXECUTOR_BIN="${BIN_DIR}/tizenclaw-tool-executor"
-TESTS_BIN="${BIN_DIR}/tizenclaw-tests"
+DAEMON_BIN="${BIN_DIR}/voxi"
+TOOL_EXECUTOR_BIN="${BIN_DIR}/voxi-tool-executor"
+TESTS_BIN="${BIN_DIR}/voxi-tests"
 
 for bin in "${DAEMON_BIN}" "${TOOL_EXECUTOR_BIN}" "${TESTS_BIN}"; do
   if [[ ! -x "${bin}" ]]; then
@@ -112,10 +112,10 @@ done
 # Isolated runtime root
 # ─────────────────────────────────────────────
 TEST_ROOT="$(mktemp -d)"
-TEST_SOCKET="${TEST_ROOT}/tizenclaw.sock"
-DAEMON_PID_FILE="${TEST_ROOT}/tizenclaw.pid"
+TEST_SOCKET="${TEST_ROOT}/voxi.sock"
+DAEMON_PID_FILE="${TEST_ROOT}/voxi.pid"
 TOOL_EXECUTOR_PID_FILE="${TEST_ROOT}/tool-executor.pid"
-DAEMON_LOG="${TEST_ROOT}/tizenclaw.log"
+DAEMON_LOG="${TEST_ROOT}/voxi.log"
 TOOL_EXECUTOR_LOG="${TEST_ROOT}/tool-executor.log"
 
 _kill_pid_file() {
@@ -132,7 +132,7 @@ _kill_pid_file() {
   fi
   if kill -0 "${pid}" 2>/dev/null; then
     # Kill the entire process group (PGID == PID for setsid-started processes).
-    # This ensures child processes such as tizenclaw-web-dashboard are also
+    # This ensures child processes such as voxi-web-dashboard are also
     # terminated and not left orphaned when the daemon exits.
     kill -- "-${pid}" 2>/dev/null || kill "${pid}" 2>/dev/null || true
     local waited=0
@@ -150,8 +150,8 @@ _kill_pid_file() {
 
 cleanup() {
   log "Cleaning up isolated test environment..."
-  _kill_pid_file "${TOOL_EXECUTOR_PID_FILE}" "tizenclaw-tool-executor"
-  _kill_pid_file "${DAEMON_PID_FILE}" "tizenclaw"
+  _kill_pid_file "${TOOL_EXECUTOR_PID_FILE}" "voxi-tool-executor"
+  _kill_pid_file "${DAEMON_PID_FILE}" "voxi"
   rm -rf "${TEST_ROOT}"
   log "Test environment removed"
 }
@@ -225,9 +225,9 @@ ok "Patched dashboard scenario written to ${DASHBOARD_PATCHED}"
 # ─────────────────────────────────────────────
 # Export isolation environment
 # ─────────────────────────────────────────────
-export TIZENCLAW_DATA_DIR="${TEST_ROOT}"
-export TIZENCLAW_SOCKET_PATH="${TEST_SOCKET}"
-# Put the bin dir first so the daemon finds tizenclaw-web-dashboard next to itself.
+export VOXI_DATA_DIR="${TEST_ROOT}"
+export VOXI_SOCKET_PATH="${TEST_SOCKET}"
+# Put the bin dir first so the daemon finds voxi-web-dashboard next to itself.
 export PATH="${BIN_DIR}:${PATH}"
 
 # Redirect HOME to an empty directory inside the test root so that credential
@@ -244,23 +244,23 @@ mkdir -p "${HOME}"
 # exercises the backend selection path.
 #
 # This list must stay in sync with ENV_MAPPINGS in
-# src/tizenclaw/src/generic/infra/key_store.rs.
+# src/voxi/src/generic/infra/key_store.rs.
 unset ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY GROQ_API_KEY || true
 
 # ─────────────────────────────────────────────
 # Start companion processes
 # ─────────────────────────────────────────────
-log "Starting tizenclaw-tool-executor (isolated)..."
+log "Starting voxi-tool-executor (isolated)..."
 setsid "${TOOL_EXECUTOR_BIN}" \
   >> "${TOOL_EXECUTOR_LOG}" 2>&1 < /dev/null &
 echo $! > "${TOOL_EXECUTOR_PID_FILE}"
-ok "tizenclaw-tool-executor started (pid $(cat "${TOOL_EXECUTOR_PID_FILE}"))"
+ok "voxi-tool-executor started (pid $(cat "${TOOL_EXECUTOR_PID_FILE}"))"
 
-log "Starting tizenclaw daemon (isolated)..."
+log "Starting voxi daemon (isolated)..."
 setsid "${DAEMON_BIN}" \
   >> "${DAEMON_LOG}" 2>&1 < /dev/null &
 echo $! > "${DAEMON_PID_FILE}"
-ok "tizenclaw daemon started (pid $(cat "${DAEMON_PID_FILE}"))"
+ok "voxi daemon started (pid $(cat "${DAEMON_PID_FILE}"))"
 
 # ─────────────────────────────────────────────
 # Wait for IPC readiness

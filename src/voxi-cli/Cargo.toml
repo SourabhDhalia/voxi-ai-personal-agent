@@ -1,0 +1,8 @@
+[package]
+name = "voxi-cli"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+voxi = { package = "voxi-client", path = "../voxi-client" }
+serde_json = "1"

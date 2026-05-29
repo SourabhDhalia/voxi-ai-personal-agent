@@ -1,7 +1,7 @@
 {
   "enabled": false,
-  "fleet_server_url": "https://fleet.tizenclaw.io/api",
-  "device_name": "TizenClaw Device",
+  "fleet_server_url": "https://fleet.voxi.io/api",
+  "device_name": "Voxi Device",
   "device_group": "default",
   "heartbeat_interval_sec": 60,
   "auto_accept_commands": false,

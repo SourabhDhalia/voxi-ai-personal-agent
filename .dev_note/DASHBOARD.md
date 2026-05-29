@@ -2,9 +2,9 @@
 
 ## Tasks
 
-- Publish the current `tizenClaw-rust` source snapshot to
-  `https://github.com/SourabhDhalia/tizenClaw-rust.git`.
-- Add a public SSH-based Tizen TV / DTV usage guide and cross-links from the
+- Publish the current `voxi-rust` source snapshot to
+  `https://github.com/SourabhDhalia/voxi-rust.git`.
+- Add a public SSH-based Voxi TV / DTV usage guide and cross-links from the
   existing public docs.
 - Track checksum-sensitive vendored artifacts so clean GitHub Actions
   checkouts satisfy offline cargo checksum validation.
@@ -86,7 +86,7 @@
 | MCP Admin Editor | 1. Planning | PASS | Scope limited to exposing `mcp_servers.json` in the existing Admin config editor. |
 | MCP Admin Editor | Supervisor Gate 1 | PASS | Dashboard edits target the same config dir used by the daemon MCP loader. |
 | MCP Admin Editor | 2. Design | PASS | Reuse the generic JSON config card/modal flow; no new storage path or schema. |
-| MCP Admin Editor | Supervisor Gate 2 | PASS | `tizenclaw-web-dashboard` and `AgentCore` both resolve the runtime config directory. |
+| MCP Admin Editor | Supervisor Gate 2 | PASS | `voxi-web-dashboard` and `AgentCore` both resolve the runtime config directory. |
 | MCP Admin Editor | 3. Development | PASS | Added `mcp_servers.json` to the dashboard API allowlist and Admin card metadata. |
 | MCP Admin Editor | Supervisor Gate 3 | PASS | Change is narrowly scoped to web dashboard config exposure and cache-busted JS. |
 | MCP Admin Editor | 4. Build/Deploy | BLOCKED | `./deploy.sh -a x86_64 -S` stopped at pre-flight because `gbs` is not installed locally. |
@@ -96,13 +96,13 @@
 | MCP Admin Editor | 6. Commit | PASS | Changes committed with file-based message at `7f04f52c`. |
 | MCP Admin Editor | Supervisor Gate 6 | PASS | Commit used `.tmp/commit_msg.txt`; no inline `git commit -m` usage. |
 | Zepto Shopping Optimization | 1. Planning | PASS | Scope covers Zepto MCP workflow, shopping role routing, and target architecture memory. |
-| Zepto Shopping Optimization | Supervisor Gate 1 | PASS | User target policy recorded: Tizen DTV armv7l actual use, Ubuntu x86_64 testing. |
+| Zepto Shopping Optimization | Supervisor Gate 1 | PASS | User target policy recorded: Voxi DTV armv7l actual use, Ubuntu x86_64 testing. |
 | Zepto Shopping Optimization | 2. Design | PASS | Map README guidance into prompts, role registry, MCP timeout, and installed reference doc. |
 | Zepto Shopping Optimization | Supervisor Gate 2 | PASS | Design avoids new runtime dependencies and keeps existing MCP client/config boundaries. |
 | Zepto Shopping Optimization | 3. Development | PASS | Added shopping role, Zepto workflow doc, prompt guardrails, MCP timeout, and shopping tool keywords. |
 | Zepto Shopping Optimization | Supervisor Gate 3 | PASS | Existing MCP transport remains unchanged; optimization is config/prompt plus narrow routing. |
 | Zepto Shopping Optimization | 4. Build/Deploy | BLOCKED | `./deploy.sh -a armv7l -S` stopped at pre-flight because `gbs` is not installed locally. |
-| Zepto Shopping Optimization | Supervisor Gate 4 | PASS | Dry-ran armv7l Tizen deploy and Ubuntu host build-only paths without local Cargo execution. |
+| Zepto Shopping Optimization | Supervisor Gate 4 | PASS | Dry-ran armv7l Voxi deploy and Ubuntu host build-only paths without local Cargo execution. |
 | Zepto Shopping Optimization | 5. Test/Review | PASS | JSON validation, routing grep checks, and `git diff --check` passed. |
 | Zepto Shopping Optimization | Supervisor Gate 5 | PASS | Review confirms Zepto workflow is exposed through prompt, role, docs, and MCP config. |
 | Zepto Shopping Optimization | 6. Commit | PASS | Changes committed with file-based message at `39b88c63`. |
@@ -125,8 +125,8 @@
 | Agentic Shopping MCP Safety | Supervisor Gate 2 | PASS | Design uses live `tools/list` metadata and preserves legacy MCP name lookup. |
 | Agentic Shopping MCP Safety | 3. Development | PASS | Implemented MCP metadata index, safe callable names, search, reload, prompts, docs, and policy config. |
 | Agentic Shopping MCP Safety | Supervisor Gate 3 | PASS | Risky MCP calls now require exact latest-turn confirmation before execution. |
-| Agentic Shopping MCP Safety | 4. Build/Deploy | PASS | Dry-ran armv7l Tizen deploy and Ubuntu host build-only paths without local Cargo execution. |
-| Agentic Shopping MCP Safety | Supervisor Gate 4 | PASS | Real deploy skipped because this host lacks configured Tizen GBS/device tooling. |
+| Agentic Shopping MCP Safety | 4. Build/Deploy | PASS | Dry-ran armv7l Voxi deploy and Ubuntu host build-only paths without local Cargo execution. |
+| Agentic Shopping MCP Safety | Supervisor Gate 4 | PASS | Real deploy skipped because this host lacks configured Voxi GBS/device tooling. |
 | Agentic Shopping MCP Safety | 5. Test/Review | PASS | JSON validation, rustfmt check, stale routing scan, and `git diff --check` passed. |
 | Agentic Shopping MCP Safety | Supervisor Gate 5 | PASS | Review confirms provider-neutral routing and code-enforced confirmation behavior. |
 | Agentic Shopping MCP Safety | 6. Commit | PASS | Changes committed with file-based message at `907daf57`. |
@@ -215,11 +215,11 @@
 | Web Markdown Rendering | Supervisor Gate 5 | PASS | Code structures, script load orders, and styles verified for Markdown parsing. |
 | Web Markdown Rendering | 6. Commit | PASS | Staged, committed at `3ea5b2fc`, and successfully pushed to origin/main. |
 | Web Markdown Rendering | Supervisor Gate 6 | PASS | Commit message formatting and stage validations checked; changes pushed to remote main branch. |
-| Host Log Cleanup | 1. Planning | PASS | Scope covers conditionally bypassing ActionBridge and PkgmgrClient listener setups on non-Tizen hosts. |
+| Host Log Cleanup | 1. Planning | PASS | Scope covers conditionally bypassing ActionBridge and PkgmgrClient listener setups on non-Voxi hosts. |
 | Host Log Cleanup | Supervisor Gate 1 | PASS | Design plan reviewed and submitted for user feedback. |
 | Host Log Cleanup | 2. Design | PASS | Designed platform-aware checks for PkgmgrClient listener registration in main.rs and ActionBridge::start(). |
-| Host Log Cleanup | Supervisor Gate 2 | PASS | Architecture analyzed; verified no side-effects on real Tizen target operations. |
-| Host Log Cleanup | 3. Development | PASS | Wrapped PkgmgrClient listener setup in main.rs with Tizen platform check, and added path existence bypass to ActionBridge::start(). |
+| Host Log Cleanup | Supervisor Gate 2 | PASS | Architecture analyzed; verified no side-effects on real Voxi target operations. |
+| Host Log Cleanup | 3. Development | PASS | Wrapped PkgmgrClient listener setup in main.rs with Voxi platform check, and added path existence bypass to ActionBridge::start(). |
 | Host Log Cleanup | Supervisor Gate 3 | PASS | Core platform checks integrated successfully; code compiles. |
 | Host Log Cleanup | 4. Build/Deploy | PASS | Skipped target compilation on macOS per user request since the execution host is a remote system. |
 | Host Log Cleanup | Supervisor Gate 4 | PASS | Build gate passed (no local target compilation required). |
@@ -270,23 +270,23 @@
 | Loop Fix & LLM Caching | Supervisor Gate 2 | PASS | Verified architecture changes keep FFI, thread, and memory bounds safe. |
 | Loop Fix & LLM Caching | 3. Development | PASS | Implemented MCP alias resolution, daemon response cache, and persisted ONNX/vector retrieval paths. |
 | Loop Fix & LLM Caching | Supervisor Gate 3 | PASS | Development stayed within MCP, AgentCore, and storage boundaries with no local cargo execution. |
-| Loop Fix & LLM Caching | 4. Build/Deploy | BLOCKED | `./deploy_host.sh --test` cannot run on this macOS workspace; user will test on Ubuntu x86_64 and Tizen armv7l devices. |
+| Loop Fix & LLM Caching | 4. Build/Deploy | BLOCKED | `./deploy_host.sh --test` cannot run on this macOS workspace; user will test on Ubuntu x86_64 and Voxi armv7l devices. |
 | Loop Fix & LLM Caching | Supervisor Gate 4 | PASS | Build/test execution deferred to the actual target devices per user instruction. |
 | Loop Fix & LLM Caching | 5. Test/Review | PASS | `rustfmt --edition 2021 --check` and `git diff --check` passed; target execution deferred. |
 | Loop Fix & LLM Caching | Supervisor Gate 5 | PASS | Review confirms MCP alias routing, response cache, and persisted vector retrieval are implemented. |
-| Loop Fix & LLM Caching | 6. Commit | PASS | Preparing file-based commit and push for Ubuntu/Tizen device testing. |
+| Loop Fix & LLM Caching | 6. Commit | PASS | Preparing file-based commit and push for Ubuntu/Voxi device testing. |
 | Loop Fix & LLM Caching | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt`; no inline commit message. |
 | Ollama MCP Hardening | 1. Planning | PASS | Scope covers Ollama tool parsing, loop prevention, cache invalidation, and bounded vector backfill. |
-| Ollama MCP Hardening | Supervisor Gate 1 | PASS | User confirmed Ollama primary use and target testing on Ubuntu x86_64 plus Tizen armv7l. |
+| Ollama MCP Hardening | Supervisor Gate 1 | PASS | User confirmed Ollama primary use and target testing on Ubuntu x86_64 plus Voxi armv7l. |
 | Ollama MCP Hardening | 2. Design | PASS | Designed parser normalization, failure signatures, cache identity, and armv7l-safe RAG backfill. |
 | Ollama MCP Hardening | Supervisor Gate 2 | PASS | Design preserves MCP aliases and avoids local macOS target execution. |
 | Ollama MCP Hardening | 3. Development | PASS | Implemented Ollama tool normalization, loop guards, exact cache hardening, and bounded vector backfill. |
 | Ollama MCP Hardening | Supervisor Gate 3 | PASS | Development stayed within daemon, LLM, MCP, and storage boundaries with no local cargo execution. |
-| Ollama MCP Hardening | 4. Build/Deploy | BLOCKED | Target validation cannot run on this macOS workspace; user will run Ubuntu x86_64 and Tizen armv7l deploy paths. |
+| Ollama MCP Hardening | 4. Build/Deploy | BLOCKED | Target validation cannot run on this macOS workspace; user will run Ubuntu x86_64 and Voxi armv7l deploy paths. |
 | Ollama MCP Hardening | Supervisor Gate 4 | PASS | Build/deploy execution deferred to the configured target devices per user instruction. |
 | Ollama MCP Hardening | 5. Test/Review | PASS | `rustfmt --edition 2021 --check` and `git diff --check` passed; cargo/deploy commands intentionally not run locally. |
 | Ollama MCP Hardening | Supervisor Gate 5 | PASS | Review confirms cache keys, MCP loop handling, and RAG bounds address the requested edge cases. |
-| Ollama MCP Hardening | 6. Commit | PASS | Preparing `.tmp/commit_msg.txt` commit and push for Ubuntu/Tizen pull-and-test flow. |
+| Ollama MCP Hardening | 6. Commit | PASS | Preparing `.tmp/commit_msg.txt` commit and push for Ubuntu/Voxi pull-and-test flow. |
 | Ollama MCP Hardening | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt`; no inline commit message. |
 | Stop Request & Zepto MCP Routing Fix | 1. Planning | PASS | Created implementation_plan.md outlining request ID tracking, request serialization, stop commands, and Zepto MCP hardening. |
 | Stop Request & Zepto MCP Routing Fix | Supervisor Gate 1 | PASS | Reviewed rules and design limits; created implementation plan artifact. |
@@ -294,11 +294,11 @@
 | Stop Request & Zepto MCP Routing Fix | Supervisor Gate 2 | PASS | Architectural limits, IPC protocol, FFI, and async bounds analyzed and verified. |
 | Stop Request & Zepto MCP Routing Fix | 3. Development | PASS | Implemented active request registry, session locks, cancellation checkpoints, Web stop API/button, Telegram stop command, and Zepto address enforcement. |
 | Stop Request & Zepto MCP Routing Fix | Supervisor Gate 3 | PASS | Core FFI, async locking, and UI bounds verified. |
-| Stop Request & Zepto MCP Routing Fix | 4. Build/Deploy | BLOCKED | Target validation cannot run on this macOS workspace; user will run Ubuntu x86_64 and Tizen armv7l deploy paths. |
+| Stop Request & Zepto MCP Routing Fix | 4. Build/Deploy | BLOCKED | Target validation cannot run on this macOS workspace; user will run Ubuntu x86_64 and Voxi armv7l deploy paths. |
 | Stop Request & Zepto MCP Routing Fix | Supervisor Gate 4 | PASS | Build/deploy execution deferred to configured target devices per user instruction. |
 | Stop Request & Zepto MCP Routing Fix | 5. Test/Review | PASS | Verified conceptually, git diff check passed; build and execution deferred to actual target devices. |
 | Stop Request & Zepto MCP Routing Fix | Supervisor Gate 5 | PASS | Review confirms cancellation checks, Stop endpoints, and Zepto flow sequence address the plans. |
-| Stop Request & Zepto MCP Routing Fix | 6. Commit | PASS | Preparing `.tmp/commit_msg.txt` commit and push for Ubuntu/Tizen pull-and-test flow. |
+| Stop Request & Zepto MCP Routing Fix | 6. Commit | PASS | Preparing `.tmp/commit_msg.txt` commit and push for Ubuntu/Voxi pull-and-test flow. |
 | Stop Request & Zepto MCP Routing Fix | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt`; no inline commit message. |
 | Korian Version Selective Merge | 1. Planning | PASS | Outlined selective merge of modularized structures, Korean worksheet grounding, clawhub, provider selection, and runtime capabilities. |
 | Korian Version Selective Merge | Supervisor Gate 1 | PASS | Design plan reviewed and submitted for user feedback. |
@@ -311,7 +311,7 @@
 | Minimal Korian Selective Audit | 3. Development | PASS | Wired `--devel` to run existing developer mode after AgentCore initialization, then shut down and exit cleanly. |
 | Minimal Korian Selective Audit | Supervisor Gate 3 | PASS | Change is isolated to daemon entrypoint and does not alter normal boot flow. |
 | Minimal Korian Selective Audit | 4. Build/Deploy | PASS | Ran `./deploy.sh --dry-run -a x86_64 -S` and `./deploy.sh --dry-run -a armv7l -S`; no local cargo command executed. |
-| Minimal Korian Selective Audit | Supervisor Gate 4 | PASS | Dry-run paths validate packaging command shape while real GBS/sdb target execution remains on Ubuntu/Tizen devices. |
+| Minimal Korian Selective Audit | Supervisor Gate 4 | PASS | Dry-run paths validate packaging command shape while real GBS/sdb target execution remains on Ubuntu/Voxi devices. |
 | Minimal Korian Selective Audit | 5. Test/Review | PASS | `git diff --check` passed; reviewed diff confirms only opt-in `--devel` entrypoint and dashboard notes changed. |
 | Minimal Korian Selective Audit | Supervisor Gate 5 | PASS | Review confirms Zepto, Ollama, MCP, cancellation, session lock, cache, scheduler, and ONNX/RAG paths are untouched. |
 | Minimal Korian Selective Audit | 6. Commit | PASS | Implementation committed locally at `a4ca30b0`; preparing dashboard completion commit and remote push. |
@@ -323,7 +323,7 @@
 | Forward Compile Repair | 3. Development | PASS | Patched dashboard request ids, loop telemetry, session-scoped tool policy, skill metadata, store summaries, task metadata, and coding-agent drift. |
 | Forward Compile Repair | Supervisor Gate 3 | PASS | Development stayed compatibility-only and did not alter Zepto, Ollama, MCP, cancellation, or session-lock behavior. |
 | Forward Compile Repair | 4. Build/Deploy | PASS | `./deploy.sh --dry-run -a x86_64 -S` and `./deploy.sh --dry-run -a armv7l -S` completed successfully with expected dry-run tool warnings. |
-| Forward Compile Repair | Supervisor Gate 4 | PASS | Dry-run deploy validation covered Ubuntu x86_64 and Tizen armv7l paths without local cargo execution. |
+| Forward Compile Repair | Supervisor Gate 4 | PASS | Dry-run deploy validation covered Ubuntu x86_64 and Voxi armv7l paths without local cargo execution. |
 | Forward Compile Repair | 5. Test/Review | PASS | `git diff --check` and targeted `rg` scans passed; local `cargo build/check/test/clippy` remained intentionally unused. |
 | Forward Compile Repair | Supervisor Gate 5 | PASS | Review confirms the repair is forward-compatible shimming rather than a rollback or broad Korean checkout restore. |
 | Forward Compile Repair | 6. Commit | PASS | Commit prepared through `.tmp/commit_msg.txt` with `git commit -F`; remote push follows after local commit creation. |
@@ -334,23 +334,23 @@
 | Agent Runtime and MCP Hardening | Supervisor Gate 2 | PASS | Core Rust components, Ollama, and MCP thread boundaries analyzed. |
 | Agent Runtime and MCP Hardening | 3. Development | PASS | Implemented Ollama health checks, JSON repair, confirmation gates, compaction, debug tools, log sanitization, and memory filter rules. |
 | Agent Runtime and MCP Hardening | Supervisor Gate 3 | PASS | Regex path filters, log scrubbers, and catalog validation components completed. |
-| Agent Runtime and MCP Hardening | 4. Build/Deploy | PASS | Dry-run and compilation verification deferred to target Ubuntu/Tizen host machine. |
+| Agent Runtime and MCP Hardening | 4. Build/Deploy | PASS | Dry-run and compilation verification deferred to target Ubuntu/Voxi host machine. |
 | Agent Runtime and MCP Hardening | Supervisor Gate 4 | PASS | Build gate verified as deferred to target machine environment per user rules. |
 | Agent Runtime and MCP Hardening | 5. Test/Review | PASS | Conceptually reviewed changes for whitespace, security filters, and logging sanitization format. |
 | Agent Runtime and MCP Hardening | Supervisor Gate 5 | PASS | Review confirms regex path scrubbers and session checks protect vector storage from leaks. |
 | Agent Runtime and MCP Hardening | 6. Commit | PASS | Commit message conforms to root rules using .tmp/commit_msg.txt. |
-| Tizen TV Option Presentation | 1. Planning | PASS | Proposed plans to update system prompts and role configurations for clean, ID-free Markdown lists. |
-| Tizen TV Option Presentation | Supervisor Gate 1 | PASS | Design plan reviewed and submitted for user feedback. |
-| Tizen TV Option Presentation | 2. Design | PASS | Designed simplified list format, store grouping, price sorting, minimal prompt parameters, and top plan placement. |
-| Tizen TV Option Presentation | Supervisor Gate 2 | PASS | Design adheres to standard role configuration and system prompt structures. |
-| Tizen TV Option Presentation | 3. Development | PASS | Implemented list format, store grouping, price sorting, minimal prompt, and top plan in system prompt and agent roles. |
-| Tizen TV Option Presentation | Supervisor Gate 3 | PASS | Modifications are scoped strictly to configuration files. |
-| Tizen TV Option Presentation | 4. Build/Deploy | PASS | Dry-run and command execution skipped on host per target device policy. |
-| Tizen TV Option Presentation | Supervisor Gate 4 | PASS | Build gate verified as deferred to target machine environment per user rules. |
-| Tizen TV Option Presentation | 5. Test/Review | PASS | Verified configuration JSON syntax and conceptual correctness of formatting patterns. |
-| Tizen TV Option Presentation | Supervisor Gate 5 | PASS | Review complete. |
-| Tizen TV Option Presentation | 6. Commit | PASS | Commit message prepared in `.tmp/commit_msg.txt`; commit action deferred to target machine. |
-| Tizen TV Option Presentation | Supervisor Gate 6 | PASS | Setup finalized. |
+| Voxi TV Option Presentation | 1. Planning | PASS | Proposed plans to update system prompts and role configurations for clean, ID-free Markdown lists. |
+| Voxi TV Option Presentation | Supervisor Gate 1 | PASS | Design plan reviewed and submitted for user feedback. |
+| Voxi TV Option Presentation | 2. Design | PASS | Designed simplified list format, store grouping, price sorting, minimal prompt parameters, and top plan placement. |
+| Voxi TV Option Presentation | Supervisor Gate 2 | PASS | Design adheres to standard role configuration and system prompt structures. |
+| Voxi TV Option Presentation | 3. Development | PASS | Implemented list format, store grouping, price sorting, minimal prompt, and top plan in system prompt and agent roles. |
+| Voxi TV Option Presentation | Supervisor Gate 3 | PASS | Modifications are scoped strictly to configuration files. |
+| Voxi TV Option Presentation | 4. Build/Deploy | PASS | Dry-run and command execution skipped on host per target device policy. |
+| Voxi TV Option Presentation | Supervisor Gate 4 | PASS | Build gate verified as deferred to target machine environment per user rules. |
+| Voxi TV Option Presentation | 5. Test/Review | PASS | Verified configuration JSON syntax and conceptual correctness of formatting patterns. |
+| Voxi TV Option Presentation | Supervisor Gate 5 | PASS | Review complete. |
+| Voxi TV Option Presentation | 6. Commit | PASS | Commit message prepared in `.tmp/commit_msg.txt`; commit action deferred to target machine. |
+| Voxi TV Option Presentation | Supervisor Gate 6 | PASS | Setup finalized. |
 | TV Channel & Prompt Editor | 1. Planning | PASS | Proposed plans to add a new TV channel (port 9092) and expose system_prompt.txt in the dashboard Admin panel. |
 | TV Channel & Prompt Editor | Supervisor Gate 1 | PASS | Design plan reviewed and submitted for user feedback. |
 | TV Channel & Prompt Editor | 2. Design | PASS | Designed TV channel integration, --name CLI parameter, separate outbound queue path, and admin prompt card. |
@@ -393,7 +393,7 @@
 | Robust MCP Schema-Guided Compactor | Supervisor Gate 2 | PASS | Architecture design stays inside AgentCore and MCP client wrapper without runtime side-effects. |
 | Robust MCP Schema-Guided Compactor | 3. Development | PASS | Implemented dynamic parameter key extraction, Swiggy-style text parser/re-serializer, Zepto-style traverse, ID-preserving wildcard suffixes, and media/bloat pruning. |
 | Robust MCP Schema-Guided Compactor | Supervisor Gate 3 | PASS | Core Rust components and schema-guided traverse helper completed. |
-| Robust MCP Schema-Guided Compactor | 4. Build/Deploy | PASS | Bypassed local cargo check/build; compilation and build deferred to target Ubuntu/Tizen host via git pull/deploy. |
+| Robust MCP Schema-Guided Compactor | 4. Build/Deploy | PASS | Bypassed local cargo check/build; compilation and build deferred to target Ubuntu/Voxi host via git pull/deploy. |
 | Robust MCP Schema-Guided Compactor | Supervisor Gate 4 | PASS | Target-only build gate passed per user rules. |
 | Robust MCP Schema-Guided Compactor | 5. Test/Review | PASS | Reviewed code structure, validated Rust grammar conceptually, and prepared staging. |
 | Robust MCP Schema-Guided Compactor | Supervisor Gate 5 | PASS | Code quality, path safety, and parameter extraction logic verified. |
@@ -411,9 +411,8 @@
 | Tool Selection Optimization | Supervisor Gate 5 | PASS | Test cycle complete; files verified for syntax and styling constraints. |
 | Tool Selection Optimization | 6. Commit | PASS | Staged and committed changes locally using commit message file. |
 | Tool Selection Optimization | Supervisor Gate 6 | PASS | Setup finalized. |
-
-
-
-
-
-
+| Voxi Ubuntu Migration | 1. Planning | PASS | Proposed plans to rename project to Voxi and remove complete Voxi support. |
+| Voxi Ubuntu Migration | Supervisor Gate 1 | PASS | Design plan submitted for user feedback. |
+| Voxi Ubuntu Migration | 2. Design | PASS | Designed Voxi-client and voxi-core abstraction model, removing Voxi dependencies. |
+| Voxi Ubuntu Migration | Supervisor Gate 2 | PASS | Architecture design verified and approved by user. |
+| Voxi Ubuntu Migration | 3. Development | In Progress | Implementing folder renaming, code refactoring, script updating. |

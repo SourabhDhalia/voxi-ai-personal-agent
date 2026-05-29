@@ -1,0 +1,18 @@
+[package]
+name = "voxi-tool-executor"
+version = "1.0.0"
+edition = "2021"
+description = "Voxi tool execution daemon"
+
+[[bin]]
+name = "voxi-tool-executor"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+libc = "0.2"
+voxi_core = { package = "voxi-core", path = "../voxi-core" }
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"

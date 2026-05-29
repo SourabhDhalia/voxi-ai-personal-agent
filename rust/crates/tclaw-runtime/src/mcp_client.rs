@@ -22,7 +22,7 @@ pub struct McpClientSpec {
 impl Default for McpClientSpec {
     fn default() -> Self {
         Self {
-            client_name: "tizenclaw-runtime".to_string(),
+            client_name: "voxi-runtime".to_string(),
             version: "1.0.0".to_string(),
             protocol_version: crate::mcp::MCP_PROTOCOL_VERSION.to_string(),
         }

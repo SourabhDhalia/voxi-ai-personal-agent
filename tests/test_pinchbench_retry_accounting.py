@@ -158,14 +158,14 @@ class PinchBenchRetryAccountingTest(unittest.TestCase):
                 path.mkdir(parents=True, exist_ok=True)
                 return path
 
-            def _cleanup_tizenclaw_session(self, session_id: str) -> None:
+            def _cleanup_voxi_session(self, session_id: str) -> None:
                 self.usage.pop(session_id, None)
                 self.transcripts.pop(session_id, None)
 
-            def _tizenclaw_workdir(self, session_id: str) -> Path:
+            def _voxi_workdir(self, session_id: str) -> Path:
                 return self.root / "sessions" / session_id
 
-            def _read_tizenclaw_usage(
+            def _read_voxi_usage(
                 self,
                 session_id: str,
                 baseline: dict[str, int | float] | None = None,
@@ -188,15 +188,15 @@ class PinchBenchRetryAccountingTest(unittest.TestCase):
                     return current
                 return {key: current[key] - baseline.get(key, 0) for key in current}
 
-            def _load_tizenclaw_transcript(self, session_id: str) -> list[dict[str, str]]:
+            def _load_voxi_transcript(self, session_id: str) -> list[dict[str, str]]:
                 return list(self.transcripts.get(session_id, []))
 
-            def _wait_for_tizenclaw_transcript_slice(
+            def _wait_for_voxi_transcript_slice(
                 self,
                 session_id: str,
                 start_index: int,
             ) -> list[dict[str, str]]:
-                return self._load_tizenclaw_transcript(session_id)[start_index:]
+                return self._load_voxi_transcript(session_id)[start_index:]
 
             def _transcript_has_agent_activity(self, transcript: list[dict[str, str]]) -> bool:
                 return bool(transcript)
@@ -208,7 +208,7 @@ class PinchBenchRetryAccountingTest(unittest.TestCase):
                     return value.decode("utf-8", errors="replace")
                 return str(value)
 
-            def _run_tizenclaw_message(
+            def _run_voxi_message(
                 self,
                 session_id: str,
                 prompt: str,
@@ -228,7 +228,7 @@ class PinchBenchRetryAccountingTest(unittest.TestCase):
                     {"role": "assistant", "content": "partial reply before timeout"}
                 ]
                 raise subprocess.TimeoutExpired(
-                    cmd=["tizenclaw-cli"],
+                    cmd=["voxi-cli"],
                     timeout=timeout_seconds,
                     output="HTTP 429 before timeout\n",
                     stderr="",
@@ -247,7 +247,7 @@ class PinchBenchRetryAccountingTest(unittest.TestCase):
                 workspace_files=[],
             )
 
-            result = PINCHBENCH.execute_tizenclaw_task_active_config(
+            result = PINCHBENCH.execute_voxi_task_active_config(
                 lib_agent=lib_agent,
                 task=task,
                 agent_id="bench-test",
@@ -278,14 +278,14 @@ class PinchBenchRetryAccountingTest(unittest.TestCase):
                 path.mkdir(parents=True, exist_ok=True)
                 return path
 
-            def _cleanup_tizenclaw_session(self, session_id: str) -> None:
+            def _cleanup_voxi_session(self, session_id: str) -> None:
                 self.usage.pop(session_id, None)
                 self.transcripts.pop(session_id, None)
 
-            def _tizenclaw_workdir(self, session_id: str) -> Path:
+            def _voxi_workdir(self, session_id: str) -> Path:
                 return self.root / "sessions" / session_id
 
-            def _read_tizenclaw_usage(
+            def _read_voxi_usage(
                 self,
                 session_id: str,
                 baseline: dict[str, int | float] | None = None,
@@ -302,15 +302,15 @@ class PinchBenchRetryAccountingTest(unittest.TestCase):
                     "request_count": 0,
                 }
 
-            def _load_tizenclaw_transcript(self, session_id: str) -> list[dict[str, str]]:
+            def _load_voxi_transcript(self, session_id: str) -> list[dict[str, str]]:
                 return list(self.transcripts.get(session_id, []))
 
-            def _wait_for_tizenclaw_transcript_slice(
+            def _wait_for_voxi_transcript_slice(
                 self,
                 session_id: str,
                 start_index: int,
             ) -> list[dict[str, str]]:
-                return self._load_tizenclaw_transcript(session_id)[start_index:]
+                return self._load_voxi_transcript(session_id)[start_index:]
 
             def _transcript_has_agent_activity(self, transcript: list[dict[str, str]]) -> bool:
                 return bool(transcript)
@@ -322,7 +322,7 @@ class PinchBenchRetryAccountingTest(unittest.TestCase):
                     return value.decode("utf-8", errors="replace")
                 return str(value)
 
-            def _run_tizenclaw_message(
+            def _run_voxi_message(
                 self,
                 session_id: str,
                 prompt: str,
@@ -347,7 +347,7 @@ class PinchBenchRetryAccountingTest(unittest.TestCase):
                 workspace_files=[],
             )
 
-            result = PINCHBENCH.execute_tizenclaw_task_active_config(
+            result = PINCHBENCH.execute_voxi_task_active_config(
                 lib_agent=lib_agent,
                 task=task,
                 agent_id="bench-test",

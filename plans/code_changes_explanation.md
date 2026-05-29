@@ -1,11 +1,11 @@
 # Code Changes Explanation: Multi-MCP Integration & User Clarification
 
-This document details the modifications made to the TizenClaw codebase to enable the daemon to run as an autonomous shopping assistant using multiple external MCP servers.
+This document details the modifications made to the Voxi codebase to enable the daemon to run as an autonomous shopping assistant using multiple external MCP servers.
 
 ---
 
 ## 1. Upgrade to the MCP Client Manager Config Parser
-**Modified File**: [mcp_client.rs](file:///Users/sdhalia/Developer/githubRepo/tizenClaw-rust/src/tizenclaw/src/channel/mcp_client.rs)
+**Modified File**: [mcp_client.rs](file:///Users/sdhalia/Developer/githubRepo/voxi-rust/src/voxi/src/channel/mcp_client.rs)
 
 ### Problem
 - The legacy `load_config_and_connect` expected a legacy `{"servers": [...]}` array layout, whereas standard configs (`mcp_servers.json`) use the map-based `{"mcpServers": { ... }}` layout.
@@ -28,7 +28,7 @@ This enables stdio-based `McpClient` to interact with HTTP/SSE servers seamlessl
 ---
 
 ## 2. Integrating MCP Clients into AgentCore
-**Modified File**: [agent_core.rs](file:///Users/sdhalia/Developer/githubRepo/tizenClaw-rust/src/tizenclaw/src/core/agent_core.rs)
+**Modified File**: [agent_core.rs](file:///Users/sdhalia/Developer/githubRepo/voxi-rust/src/voxi/src/core/agent_core.rs)
 
 ### Add Field & Initialization
 - Added `mcp_client_manager: tokio::sync::RwLock<McpClientManager>` to `AgentCore`.
@@ -50,7 +50,7 @@ This enables stdio-based `McpClient` to interact with HTTP/SSE servers seamlessl
 ---
 
 ## 3. Upgrading Ollama Backend for Tool-Calling
-**Modified File**: [ollama.rs](file:///Users/sdhalia/Developer/githubRepo/tizenClaw-rust/src/tizenclaw/src/llm/ollama.rs)
+**Modified File**: [ollama.rs](file:///Users/sdhalia/Developer/githubRepo/voxi-rust/src/voxi/src/llm/ollama.rs)
 
 ### Problem
 - The local Ollama backend completely ignored the `tools` slice, making it impossible for local models to native-call shopping tools.
@@ -70,7 +70,7 @@ let args = match tc["function"]["arguments"].clone() {
 ---
 
 ## 4. Multi-turn User Clarification Tool
-**Modified Files**: [tool_declaration_builder.rs](file:///Users/sdhalia/Developer/githubRepo/tizenClaw-rust/src/tizenclaw/src/core/tool_declaration_builder.rs), [agent_core.rs](file:///Users/sdhalia/Developer/githubRepo/tizenClaw-rust/src/tizenclaw/src/core/agent_core.rs)
+**Modified Files**: [tool_declaration_builder.rs](file:///Users/sdhalia/Developer/githubRepo/voxi-rust/src/voxi/src/core/tool_declaration_builder.rs), [agent_core.rs](file:///Users/sdhalia/Developer/githubRepo/voxi-rust/src/voxi/src/core/agent_core.rs)
 
 ### Solution
 - Registered `request_user_clarification` as a builtin meta-tool.

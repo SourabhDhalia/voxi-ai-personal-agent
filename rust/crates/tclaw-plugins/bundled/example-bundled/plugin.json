@@ -6,7 +6,7 @@
   "metadata": {
     "version": "1.0.0",
     "description": "Bundled plugin that exposes metadata commands and tools.",
-    "authors": ["TizenClaw"],
+    "authors": ["Voxi"],
     "tags": ["bundled", "metadata"]
   },
   "permissions": [

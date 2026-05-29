@@ -1,9 +1,0 @@
-[package]
-name = "tizenclaw-metadata-plugin"
-version = "0.1.0"
-edition = "2021"
-publish = false
-
-[lib]
-name = "tizenclaw_metadata_plugin"
-crate-type = ["rlib"]

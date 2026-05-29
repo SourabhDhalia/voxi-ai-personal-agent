@@ -2,17 +2,17 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-HOST_BASE_DIR="${HOME}/.tizenclaw"
+HOST_BASE_DIR="${HOME}/.voxi"
 CARGO_TARGET_DIR_HOST="${CARGO_TARGET_DIR:-${HOST_BASE_DIR}/build/cargo-target}"
 BUILD_MODE="release"
 OUTPUT_DIR="${PROJECT_DIR}/dist"
 VERSION=""
 SKIP_BUILD=false
 
-PKG_NAME="tizenclaw"
-TOOL_EXECUTOR_NAME="tizenclaw-tool-executor"
-CLI_NAME="tizenclaw-cli"
-WEB_DASHBOARD_NAME="tizenclaw-web-dashboard"
+PKG_NAME="voxi"
+TOOL_EXECUTOR_NAME="voxi-tool-executor"
+CLI_NAME="voxi-cli"
+WEB_DASHBOARD_NAME="voxi-web-dashboard"
 
 usage() {
   cat <<'EOF'
@@ -100,29 +100,29 @@ generate_pkgconfig_files() {
 
   mkdir -p "${pkgconfig_dir}"
 
-  cat > "${pkgconfig_dir}/tizenclaw.pc" <<EOF
+  cat > "${pkgconfig_dir}/voxi.pc" <<EOF
 prefix=${prefix}
 libdir=\${prefix}/lib
 includedir=\${prefix}/include
 
-Name: tizenclaw
-Description: TizenClaw Agent C API library
+Name: voxi
+Description: Voxi Agent C API library
 Version: 1.0.0
-Libs: -L\${libdir} -Wl,-rpath,\${libdir} -ltizenclaw
-Cflags: -I\${includedir} -I\${includedir}/tizenclaw
+Libs: -L\${libdir} -Wl,-rpath,\${libdir} -lvoxi
+Cflags: -I\${includedir} -I\${includedir}/voxi
 EOF
 
-  cat > "${pkgconfig_dir}/tizenclaw-core.pc" <<EOF
+  cat > "${pkgconfig_dir}/voxi-core.pc" <<EOF
 prefix=${prefix}
 libdir=\${prefix}/lib
 includedir=\${prefix}/include
 
-Name: tizenclaw-core
-Description: TizenClaw Plugin SDK
+Name: voxi-core
+Description: Voxi Plugin SDK
 Version: 1.0.0
-Libs: -L\${libdir} -Wl,-rpath,\${libdir} -ltizenclaw_core
-Cflags: -I\${includedir}/tizenclaw/core -I\${includedir}/tizenclaw
-Requires: tizenclaw, libcurl
+Libs: -L\${libdir} -Wl,-rpath,\${libdir} -lvoxi_core
+Cflags: -I\${includedir}/voxi/core -I\${includedir}/voxi
+Requires: voxi, libcurl
 EOF
 }
 
@@ -136,11 +136,11 @@ write_bundle_manifest() {
 
   cat > "${bundle_root}/bundle-manifest.json" <<EOF
 {
-  "name": "tizenclaw-host-bundle",
+  "name": "voxi-host-bundle",
   "version": "${VERSION}",
   "target": "linux-x86_64",
   "format_version": 1,
-  "install_prefix": "~/.tizenclaw",
+  "install_prefix": "~/.voxi",
   "git_commit": "${commit_sha}",
   "generated_at": "${generated_at}"
 }
@@ -151,7 +151,7 @@ main() {
   parse_args "$@"
   resolve_version
 
-  local asset_basename="tizenclaw-host-bundle-${VERSION}-linux-x86_64"
+  local asset_basename="voxi-host-bundle-${VERSION}-linux-x86_64"
   local archive_path
   local checksum_path
   local stage_dir
@@ -175,7 +175,7 @@ main() {
   mkdir -p \
     "${bundle_root}/bin" \
     "${bundle_root}/lib/pkgconfig" \
-    "${bundle_root}/include/tizenclaw/core" \
+    "${bundle_root}/include/voxi/core" \
     "${bundle_root}/config" \
     "${bundle_root}/sample" \
     "${bundle_root}/manage"
@@ -193,29 +193,29 @@ main() {
     "${build_dir}/${WEB_DASHBOARD_NAME}" \
     "${bundle_root}/bin/${WEB_DASHBOARD_NAME}"
   install_data_if_present \
-    "${build_dir}/libtizenclaw.so" \
-    "${bundle_root}/lib/libtizenclaw.so"
+    "${build_dir}/libvoxi.so" \
+    "${bundle_root}/lib/libvoxi.so"
   install_data_if_present \
-    "${build_dir}/libtizenclaw.rlib" \
-    "${bundle_root}/lib/libtizenclaw.rlib"
+    "${build_dir}/libvoxi.rlib" \
+    "${bundle_root}/lib/libvoxi.rlib"
 
   install -m 644 \
-    "${PROJECT_DIR}/src/libtizenclaw/include/tizenclaw.h" \
-    "${bundle_root}/include/tizenclaw/tizenclaw.h"
+    "${PROJECT_DIR}/src/libvoxi/include/voxi.h" \
+    "${bundle_root}/include/voxi/voxi.h"
   install -m 644 \
-    "${PROJECT_DIR}/src/libtizenclaw-core/include/tizenclaw_error.h" \
-    "${bundle_root}/include/tizenclaw/tizenclaw_error.h"
+    "${PROJECT_DIR}/src/libvoxi-core/include/voxi_error.h" \
+    "${bundle_root}/include/voxi/voxi_error.h"
   install -m 644 \
-    "${PROJECT_DIR}/src/libtizenclaw-core/include/tizenclaw_channel.h" \
-    "${bundle_root}/include/tizenclaw/core/tizenclaw_channel.h"
+    "${PROJECT_DIR}/src/libvoxi-core/include/voxi_channel.h" \
+    "${bundle_root}/include/voxi/core/voxi_channel.h"
   install -m 644 \
-    "${PROJECT_DIR}/src/libtizenclaw-core/include/tizenclaw_llm_backend.h" \
-    "${bundle_root}/include/tizenclaw/core/tizenclaw_llm_backend.h"
+    "${PROJECT_DIR}/src/libvoxi-core/include/voxi_llm_backend.h" \
+    "${bundle_root}/include/voxi/core/voxi_llm_backend.h"
   install -m 644 \
-    "${PROJECT_DIR}/src/libtizenclaw-core/include/tizenclaw_curl.h" \
-    "${bundle_root}/include/tizenclaw/core/tizenclaw_curl.h"
+    "${PROJECT_DIR}/src/libvoxi-core/include/voxi_curl.h" \
+    "${bundle_root}/include/voxi/core/voxi_curl.h"
 
-  generate_pkgconfig_files "\$HOME/.tizenclaw" "${bundle_root}/lib/pkgconfig"
+  generate_pkgconfig_files "\$HOME/.voxi" "${bundle_root}/lib/pkgconfig"
 
   while IFS= read -r config_path; do
     install -m 644 "${config_path}" "${bundle_root}/config/$(basename "${config_path}")"

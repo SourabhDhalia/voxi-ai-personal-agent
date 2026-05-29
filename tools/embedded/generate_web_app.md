@@ -1,6 +1,6 @@
 # generate_web_app
 
-Generate a dynamic web application and serve it via the built-in web server (port 9090). Creates HTML/CSS/JS apps accessible at `http://<device-ip>:9090/apps/<app_id>/`. Use for dashboards, data visualizations, device control panels, or any interactive UI. The app can call TizenClaw REST API (same origin) for live data. External assets (images, fonts) can be downloaded automatically.
+Generate a dynamic web application and serve it via the built-in web server (port 9090). Creates HTML/CSS/JS apps accessible at `http://<device-ip>:9090/apps/<app_id>/`. Use for dashboards, data visualizations, device control panels, or any interactive UI. The app can call Voxi REST API (same origin) for live data. External assets (images, fonts) can be downloaded automatically.
 
 **Category**: web_app
 
@@ -40,22 +40,22 @@ Generate a dynamic web application and serve it via the built-in web server (por
 
 ## Bridge API Integration
 
-Generated web apps can call TizenClaw tools via the **Bridge API**. The `tizenclaw-sdk.js` is available at `/sdk/tizenclaw-sdk.js` and auto-detects the app_id from the URL path.
+Generated web apps can call Voxi tools via the **Bridge API**. The `voxi-sdk.js` is available at `/sdk/voxi-sdk.js` and auto-detects the app_id from the URL path.
 
 ### SDK Usage
 
 ```html
-<script src="/sdk/tizenclaw-sdk.js"></script>
+<script src="/sdk/voxi-sdk.js"></script>
 <script>
   // One-shot tool call
-  const battery = await TizenClaw.callTool('execute_cli',
-      {tool_name: 'tizen-device-info-cli', arguments: 'battery'});
+  const battery = await Voxi.callTool('execute_cli',
+      {tool_name: 'voxi-device-info-cli', arguments: 'battery'});
 
   // Get available tools
-  const tools = await TizenClaw.getAvailableTools();
+  const tools = await Voxi.getAvailableTools();
 
   // Ask LLM
-  const answer = await TizenClaw.askLLM('Analyze battery status');
+  const answer = await Voxi.askLLM('Analyze battery status');
 </script>
 ```
 
@@ -70,18 +70,18 @@ Generated web apps can call TizenClaw tools via the **Bridge API**. The `tizencl
 
 ## IMPORTANT: Real-Time Dashboard Pattern
 
-When creating dashboards or monitoring apps that display live device data (battery, memory, network, display, etc.), you **MUST** use `TizenClaw.autoRefresh()` to keep the data updated automatically. Without autoRefresh, the data will only be fetched once and never update.
+When creating dashboards or monitoring apps that display live device data (battery, memory, network, display, etc.), you **MUST** use `Voxi.autoRefresh()` to keep the data updated automatically. Without autoRefresh, the data will only be fetched once and never update.
 
 ### autoRefresh() Usage (REQUIRED for dashboards)
 
 ```html
-<script src="/sdk/tizenclaw-sdk.js"></script>
+<script src="/sdk/voxi-sdk.js"></script>
 <script>
   // Auto-refresh battery info every 5 seconds
   // Returns a stop() function to cancel
-  const stopBattery = TizenClaw.autoRefresh(
+  const stopBattery = Voxi.autoRefresh(
     'execute_cli',
-    {tool_name: 'tizen-device-info-cli', arguments: 'battery'},
+    {tool_name: 'voxi-device-info-cli', arguments: 'battery'},
     function(result, err) {
       if (err) return;
       document.getElementById('battery-level').textContent = result.percent + '%';
@@ -98,7 +98,7 @@ When creating dashboards or monitoring apps that display live device data (batte
 ### Example: Device Status Dashboard
 
 ```html
-<script src="/sdk/tizenclaw-sdk.js"></script>
+<script src="/sdk/voxi-sdk.js"></script>
 <div id="battery-section">
   <h3>Battery</h3>
   <span id="bat-pct">--</span>% | <span id="bat-charge">--</span>
@@ -108,8 +108,8 @@ When creating dashboards or monitoring apps that display live device data (batte
   <pre id="dev-info">Loading...</pre>
 </div>
 <script>
-  TizenClaw.autoRefresh('execute_cli',
-    {tool_name: 'tizen-device-info-cli', arguments: 'battery'},
+  Voxi.autoRefresh('execute_cli',
+    {tool_name: 'voxi-device-info-cli', arguments: 'battery'},
     function(r) {
       if (r) {
         document.getElementById('bat-pct').textContent = r.percent;
@@ -119,8 +119,8 @@ When creating dashboards or monitoring apps that display live device data (batte
     }, 5000);
 
   // One-shot call for static device info
-  TizenClaw.callTool('execute_cli',
-    {tool_name: 'tizen-device-info-cli', arguments: 'model'})
+  Voxi.callTool('execute_cli',
+    {tool_name: 'voxi-device-info-cli', arguments: 'model'})
     .then(function(r) {
       document.getElementById('dev-info').textContent =
         JSON.stringify(r, null, 2);
@@ -132,10 +132,10 @@ When creating dashboards or monitoring apps that display live device data (batte
 
 - For single-file apps, put everything (CSS+JS) inline in the `html` parameter
 - For larger apps, use separate `css` and `js` parameters for cleaner code
-- Include `<script src="/sdk/tizenclaw-sdk.js"></script>` in HTML to use Bridge API
+- Include `<script src="/sdk/voxi-sdk.js"></script>` in HTML to use Bridge API
 - Specify `allowed_tools` to grant the app access to specific device tools — use actual tool names like `execute_cli`, NOT CLI subcommand names
-- **For dashboards/monitors: ALWAYS use `TizenClaw.autoRefresh()` instead of one-shot `callTool()`** so the data stays current
-- The generated app can fetch TizenClaw API endpoints: `fetch('/api/metrics')`, `fetch('/api/sessions')`, etc.
+- **For dashboards/monitors: ALWAYS use `Voxi.autoRefresh()` instead of one-shot `callTool()`** so the data stays current
+- The generated app can fetch Voxi API endpoints: `fetch('/api/metrics')`, `fetch('/api/sessions')`, etc.
 - Use `assets` to download images from external URLs: `[{"url": "https://...", "filename": "logo.png"}]`
 - Asset filenames must not contain path separators or `..`
 - Max asset size: 10MB per file

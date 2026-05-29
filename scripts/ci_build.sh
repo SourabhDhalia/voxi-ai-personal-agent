@@ -1,5 +1,5 @@
 #!/bin/bash
-# TizenClaw CI Build Script
+# Voxi CI Build Script
 # Runs gbs build and verifies the result.
 #
 # Usage:
@@ -11,7 +11,7 @@ set -euo pipefail
 ARCH="${1:-x86_64}"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 GBS_ROOT="${HOME}/GBS-ROOT"
-REPO_DIR="${GBS_ROOT}/local/repos/tizen/${ARCH}"
+REPO_DIR="${GBS_ROOT}/local/repos/voxi/${ARCH}"
 LOGS_SUCCESS="${REPO_DIR}/logs/success"
 LOGS_FAIL="${REPO_DIR}/logs/fail"
 RPMS_DIR="${REPO_DIR}/RPMS"
@@ -34,7 +34,7 @@ log "Architecture: ${ARCH}"
 log "Project dir:  ${PROJECT_DIR}"
 
 if ! command -v gbs &>/dev/null; then
-  fail "gbs not found. Install Tizen GBS first."
+  fail "gbs not found. Install Voxi GBS first."
 fi
 
 # --------------------------------------------------
@@ -100,7 +100,7 @@ if [ -d "${LOGS_SUCCESS}" ]; then
 fi
 
 # Check for RPMs
-RPM_FILE=$(find "${RPMS_DIR}" -name "tizenclaw-*.rpm" \
+RPM_FILE=$(find "${RPMS_DIR}" -name "voxi-*.rpm" \
   -newer "${PROJECT_DIR}/CMakeLists.txt" \
   2>/dev/null | head -1)
 
@@ -114,7 +114,7 @@ fi
 
 # Check for unit test RPM
 UNITTEST_RPM=$(find "${RPMS_DIR}" \
-  -name "tizenclaw-unittests-*.rpm" \
+  -name "voxi-unittests-*.rpm" \
   -newer "${PROJECT_DIR}/CMakeLists.txt" \
   2>/dev/null | head -1)
 
@@ -125,4 +125,4 @@ fi
 echo ""
 ok "Build complete! Next steps:"
 log "  1. Deploy: /deploy_to_emulator"
-log "  2. Logs:   sdb shell journalctl -u tizenclaw -f"
+log "  2. Logs:   sdb shell journalctl -u voxi -f"

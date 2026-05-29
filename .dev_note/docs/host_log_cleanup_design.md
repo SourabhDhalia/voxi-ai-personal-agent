@@ -1,37 +1,37 @@
 # Design Document — Host Log Cleanup
 
-This document details the changes to bypass Tizen-specific service initializations on non-Tizen host environments, preventing error logs during Generic Linux testing.
+This document details the changes to bypass Voxi-specific service initializations on non-Voxi host environments, preventing error logs during Generic Linux testing.
 
 ## 1. Package Manager Listener Bypass (`main.rs`)
 
 ### Current Behavior
-In `src/tizenclaw/src/main.rs`, the daemon unconditionally adds a `PkgmgrListener` via:
+In `src/voxi/src/main.rs`, the daemon unconditionally adds a `PkgmgrListener` via:
 `PkgmgrClient::global().add_listener(...)`
 
-This spawns a thread that attempts to run Tizen's DBus/Cynara package manager listener, which always fails on generic Linux and logs:
+This spawns a thread that attempts to run Voxi's DBus/Cynara package manager listener, which always fails on generic Linux and logs:
 `[E] pkgmgr_client.rs:109 pkgmgr_client_new(PC_LISTENING) failed — DBus/cynara not ready or privilege missing`
 
 ### Proposed Change
-Condition the listener registration in `main.rs` on the platform being "Tizen":
+Condition the listener registration in `main.rs` on the platform being "Voxi":
 ```rust
-if platform.platform_name() == "Tizen" {
+if platform.platform_name() == "Voxi" {
     PkgmgrClient::global().add_listener(Arc::new(AgentPkgmgrListener(agent.clone())));
 } else {
-    log::info!("Skipping Tizen package manager listener setup on generic Linux host");
+    log::info!("Skipping Voxi package manager listener setup on generic Linux host");
 }
 ```
 
 ## 2. Action Framework Client Bypass (`action_bridge.rs`)
 
 ### Current Behavior
-In `src/tizenclaw/src/tizen/core/action_bridge.rs`, `ActionBridge::start()` unconditionally runs the Tizen Action Framework API `action_client_create(&mut state.client)`. This always fails on Generic Linux and logs:
-`[E] action_bridge.rs:68 [TIZENCLAW] ActionBridge: failed to create action client: -1`
+In `src/voxi/src/voxi/core/action_bridge.rs`, `ActionBridge::start()` unconditionally runs the Voxi Action Framework API `action_client_create(&mut state.client)`. This always fails on Generic Linux and logs:
+`[E] action_bridge.rs:68 [VOXI] ActionBridge: failed to create action client: -1`
 
 ### Proposed Change
-Add a platform check inside `ActionBridge::start()` using Tizen-specific file system markers. If they are absent, log a clean info message and return early:
+Add a platform check inside `ActionBridge::start()` using Voxi-specific file system markers. If they are absent, log a clean info message and return early:
 ```rust
-if !std::path::Path::new("/etc/tizen-release").exists() && !std::path::Path::new("/opt/usr/share/tizenclaw").exists() {
-    log::info!("Skipping ActionBridge start on non-Tizen platform");
+if !std::path::Path::new("/etc/voxi-release").exists() && !std::path::Path::new("/opt/usr/share/voxi").exists() {
+    log::info!("Skipping ActionBridge start on non-Voxi platform");
     return false;
 }
 ```
