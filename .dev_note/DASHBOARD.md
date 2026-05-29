@@ -459,3 +459,15 @@
 | macOS Dashboard Socket Fix | Supervisor Gate 5 | PASS | Dashboard metrics endpoint works correctly. |
 | macOS Dashboard Socket Fix | 6. Commit | PASS | Staged and committed changes locally, then pushed. |
 | macOS Dashboard Socket Fix | Supervisor Gate 6 | PASS | Pushed commit 5422c8d8 successfully. |
+| macOS Dashboard Uptime & Logo Fix | 1. Planning | PASS | Plan tracking of startup time and copying logo SVG. |
+| macOS Dashboard Uptime & Logo Fix | Supervisor Gate 1 | PASS | Change is isolated to web dashboard main.rs and public static assets. |
+| macOS Dashboard Uptime & Logo Fix | 2. Design | PASS | Designed OnceLock-based startup tracking and asset file layout. |
+| macOS Dashboard Uptime & Logo Fix | Supervisor Gate 2 | PASS | Avoids proc filesystem dependencies and aligns with static page schema. |
+| macOS Dashboard Uptime & Logo Fix | 3. Development | PASS | Implemented OnceLock in main.rs and copied voxi.svg to data/web/img/. |
+| macOS Dashboard Uptime & Logo Fix | Supervisor Gate 3 | PASS | Process startup and metrics endpoints work perfectly. |
+| macOS Dashboard Uptime & Logo Fix | 4. Build/Deploy | PASS | Rebuilt and deployed dashboard to host using deploy.sh. |
+| macOS Dashboard Uptime & Logo Fix | Supervisor Gate 4 | PASS | Build and run validated. |
+| macOS Dashboard Uptime & Logo Fix | 5. Test/Review | PASS | Verified uptime formatted duration and SVG image content-type on macOS. |
+| macOS Dashboard Uptime & Logo Fix | Supervisor Gate 5 | PASS | Dashboard endpoint returns correct uptime and SVG header. |
+| macOS Dashboard Uptime & Logo Fix | 6. Commit | PASS | Staged and committed changes locally, then pushed. |
+| macOS Dashboard Uptime & Logo Fix | Supervisor Gate 6 | PASS | Pushed commit 118a75dc successfully. |
