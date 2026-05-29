@@ -151,6 +151,42 @@ impl AgentCore {
         selected
     }
 
+    fn is_shopping_intent(&self, prompt: &str) -> bool {
+        let prompt_lower = prompt.to_lowercase();
+        let mut found = prompt_lower.contains("zepto")
+            || prompt_lower.contains("swiggy")
+            || prompt_lower.contains("instamart")
+            || prompt_lower.contains("cart")
+            || prompt_lower.contains("checkout")
+            || prompt_lower.contains("order")
+            || prompt_lower.contains("groceries")
+            || prompt_lower.contains("grocery")
+            || prompt_lower.contains("food")
+            || prompt_lower.contains("buy")
+            || prompt_lower.contains("purchase")
+            || prompt_lower.contains("shop")
+            || prompt_lower.contains("add ")
+            || prompt_lower.starts_with("add")
+            || prompt_lower.contains("choose")
+            || prompt_lower.contains("select");
+            
+        if !found {
+            if let Ok(ms_guard) = self.memory_store.lock() {
+                if let Some(ms) = ms_guard.as_ref() {
+                    if let Some(prompt_emb) = ms.encode_text_embedding(prompt) {
+                        if let Some(ref_emb) = ms.encode_text_embedding("shopping, grocery search, adding items to cart, checkout, store selection, address selection") {
+                            let similarity: f32 = prompt_emb.iter().zip(ref_emb.iter()).map(|(a, b)| a * b).sum();
+                            if similarity > 0.30 {
+                                found = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        found
+    }
+
     fn get_session_lock(&self, session_id: &str) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self.session_locks.lock().unwrap();
         locks.entry(session_id.to_string())
@@ -798,36 +834,7 @@ impl AgentCore {
 
             // Apply dynamic shopping planner filtering
             let prompt_lower = prompt.to_lowercase();
-            let is_shopping = {
-                let mut found = prompt_lower.contains("zepto")
-                    || prompt_lower.contains("swiggy")
-                    || prompt_lower.contains("instamart")
-                    || prompt_lower.contains("cart")
-                    || prompt_lower.contains("checkout")
-                    || prompt_lower.contains("order")
-                    || prompt_lower.contains("groceries")
-                    || prompt_lower.contains("grocery")
-                    || prompt_lower.contains("food")
-                    || prompt_lower.contains("buy")
-                    || prompt_lower.contains("purchase")
-                    || prompt_lower.contains("shop");
-                
-                if !found {
-                    if let Ok(ms_guard) = self.memory_store.lock() {
-                        if let Some(ms) = ms_guard.as_ref() {
-                            if let Some(prompt_emb) = ms.encode_text_embedding(prompt) {
-                                if let Some(ref_emb) = ms.encode_text_embedding("shopping, grocery search, adding items to cart, checkout, store selection, address selection") {
-                                    let similarity: f32 = prompt_emb.iter().zip(ref_emb.iter()).map(|(a, b)| a * b).sum();
-                                    if similarity > 0.45 {
-                                        found = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                found
-            };
+            let is_shopping = self.is_shopping_intent(prompt);
 
             if is_shopping {
                 let has_zepto = prompt_lower.contains("zepto");
@@ -3482,9 +3489,7 @@ impl AgentCore {
                 // ── Phase 7: Evaluating — GoalAchieved ──────────────────
                 loop_state.transition(AgentPhase::Evaluating);
 
-                // Goal Evaluation Check:
-                let prompt_lower = prompt.to_lowercase();
-                let is_shopping = prompt_lower.contains("zepto") || prompt_lower.contains("swiggy") || prompt_lower.contains("instamart") || prompt_lower.contains("cart") || prompt_lower.contains("checkout") || prompt_lower.contains("order") || prompt_lower.contains("groceries") || prompt_lower.contains("food");
+                let is_shopping = self.is_shopping_intent(prompt);
 
                 if is_shopping && !was_shopping_tool_executed(&messages, history_len) {
                     log::info!("[GoalEvaluation] Shopping intent detected, but no shopping tools were executed. Rejecting termination.");
@@ -3772,12 +3777,75 @@ fn parse_numbered_selection(input: &str) -> Option<usize> {
     digits.parse::<usize>().ok().filter(|value| *value > 0)
 }
 
+fn resolve_selection_index(
+    session_workdir: &Path,
+    session_id: &str,
+    prompt: &str,
+) -> Option<usize> {
+    let lower = prompt.trim().to_lowercase();
+    
+    // Check for explicit digit selection first
+    if let Some(num) = parse_numbered_selection(prompt) {
+        return Some(num);
+    }
+    
+    // Check ordinals
+    if lower.contains("first") || lower.contains("1st") {
+        return Some(1);
+    }
+    if lower.contains("second") || lower.contains("2nd") {
+        return Some(2);
+    }
+    if lower.contains("third") || lower.contains("3rd") {
+        return Some(3);
+    }
+    
+    // Check for cheapest selection
+    if lower.contains("cheapest") || lower.contains("lowest price") || lower.contains("minimum price") {
+        let path = shopping_state_path(session_workdir, session_id);
+        let state_text = std::fs::read_to_string(path).ok()?;
+        let state: Value = serde_json::from_str(&state_text).ok()?;
+        let options = state.get("options").and_then(Value::as_array)?;
+        
+        let mut min_price = None;
+        let mut min_number = None;
+        for opt in options {
+            let number = opt.get("number").and_then(Value::as_u64)?;
+            let raw = opt.get("raw")?;
+            
+            // Extract numeric price
+            let price = raw.get("price")
+                .and_then(|p| {
+                    if p.is_number() {
+                        p.as_f64()
+                    } else {
+                        p.get("offerPrice")
+                            .and_then(Value::as_f64)
+                            .or_else(|| p.get("mrp").and_then(Value::as_f64))
+                    }
+                })
+                .or_else(|| raw.get("sellingPrice").and_then(Value::as_f64))
+                .or_else(|| raw.get("mrp").and_then(Value::as_f64));
+                
+            if let Some(p) = price {
+                if min_price.is_none() || Some(p) < min_price {
+                    min_price = Some(p);
+                    min_number = Some(number as usize);
+                }
+            }
+        }
+        return min_number;
+    }
+    
+    None
+}
+
 fn shopping_selection_context(
     session_workdir: &Path,
     session_id: &str,
     prompt: &str,
 ) -> Option<String> {
-    let selected_number = parse_numbered_selection(prompt)?;
+    let selected_number = resolve_selection_index(session_workdir, session_id, prompt)?;
     let path = shopping_state_path(session_workdir, session_id);
     let state_text = std::fs::read_to_string(path).ok()?;
     let state: Value = serde_json::from_str(&state_text).ok()?;

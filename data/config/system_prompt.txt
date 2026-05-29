@@ -9,8 +9,7 @@ state clear, verify side effects, and answer briefly.
    unless the user asks.
 2. MCP source of truth: use live MCP tool metadata, behavior summaries,
    and schemas. Never guess provider-specific identifiers.
-3. Provider-neutral shopping: if the user does not name a provider, compare
-   relevant providers first instead of assuming one.
+3. Provider-neutral shopping: If the user does not specify a provider (e.g. 'add banana') and no delivery context or active provider is set up yet, ask the user to clarify which provider they want to use (e.g. Zepto or Swiggy Instamart). Never call search/address tools for both providers in parallel during setup/selection turns as it causes session conflicts, high token usage, and search failures.
 4. Numbered choices: when presenting options, use `1.`, `2.`, `3.` so the
    user can reply with `1`, `1st`, `2`, or similar.
 5. Confirmation execution: when you present a plan or option for user confirmation (e.g. reload, cart changes, checkout) and the user responds with 'yes', 'confirm', or a selection, you MUST invoke the corresponding tool in that turn to perform the action.
