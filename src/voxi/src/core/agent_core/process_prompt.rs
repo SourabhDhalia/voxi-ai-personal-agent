@@ -798,24 +798,128 @@ impl AgentCore {
 
             // Apply dynamic shopping planner filtering
             let prompt_lower = prompt.to_lowercase();
-            let is_shopping = prompt_lower.contains("zepto") || prompt_lower.contains("swiggy") || prompt_lower.contains("instamart") || prompt_lower.contains("cart") || prompt_lower.contains("checkout") || prompt_lower.contains("order") || prompt_lower.contains("groceries") || prompt_lower.contains("food");
+            let is_shopping = {
+                let mut found = prompt_lower.contains("zepto")
+                    || prompt_lower.contains("swiggy")
+                    || prompt_lower.contains("instamart")
+                    || prompt_lower.contains("cart")
+                    || prompt_lower.contains("checkout")
+                    || prompt_lower.contains("order")
+                    || prompt_lower.contains("groceries")
+                    || prompt_lower.contains("grocery")
+                    || prompt_lower.contains("food")
+                    || prompt_lower.contains("buy")
+                    || prompt_lower.contains("purchase")
+                    || prompt_lower.contains("shop");
+                
+                if !found {
+                    if let Ok(ms_guard) = self.memory_store.lock() {
+                        if let Some(ms) = ms_guard.as_ref() {
+                            if let Some(prompt_emb) = ms.encode_text_embedding(prompt) {
+                                if let Some(ref_emb) = ms.encode_text_embedding("shopping, grocery search, adding items to cart, checkout, store selection, address selection") {
+                                    let similarity: f32 = prompt_emb.iter().zip(ref_emb.iter()).map(|(a, b)| a * b).sum();
+                                    if similarity > 0.45 {
+                                        found = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                found
+            };
+
             if is_shopping {
+                let has_zepto = prompt_lower.contains("zepto");
+                let has_swiggy = prompt_lower.contains("swiggy") || prompt_lower.contains("instamart");
+
                 let is_checkout_intent = prompt_lower.contains("checkout") || prompt_lower.contains("place order") || prompt_lower.contains("pay") || prompt_lower.contains("buy");
                 let is_cart_mutation_intent = prompt_lower.contains("add") || prompt_lower.contains("remove") || prompt_lower.contains("update") || prompt_lower.contains("clear") || prompt_lower.contains("delete");
 
                 tools.retain(|tool| {
                     let name = tool.name.to_lowercase();
-                    let is_checkout_tool = name.contains("checkout") || name.contains("place_order") || name.contains("payment") || name.contains("pay") || name.contains("order");
-                    let is_cart_mutation_tool = name.contains("add_to_cart") || name.contains("update_cart") || name.contains("remove_from_cart") || name.contains("clear_cart");
+                    let is_zepto_tool = name.contains("zepto");
+                    let is_swiggy_tool = name.contains("swiggy") || name.contains("instamart");
 
-                    if is_checkout_tool {
-                        is_checkout_intent
-                    } else if is_cart_mutation_tool {
-                        is_checkout_intent || is_cart_mutation_intent
+                    if has_zepto && is_swiggy_tool {
+                        return false;
+                    }
+                    if has_swiggy && is_zepto_tool {
+                        return false;
+                    }
+
+                    if is_zepto_tool || is_swiggy_tool {
+                        let is_checkout_tool = name.contains("checkout") || name.contains("place_order") || name.contains("payment") || name.contains("pay") || name.contains("order");
+                        let is_cart_mutation_tool = name.contains("add_to_cart") || name.contains("update_cart") || name.contains("remove_from_cart") || name.contains("clear_cart");
+                        let is_core_tool = name.contains("search") || name.contains("address") || name.contains("store") || name.contains("location") || name.contains("get_cart") || name.contains("view_cart");
+
+                        if is_checkout_tool {
+                            is_checkout_intent
+                        } else if is_cart_mutation_tool {
+                            is_checkout_intent || is_cart_mutation_intent
+                        } else if is_core_tool {
+                            true
+                        } else {
+                            false
+                        }
                     } else {
                         true
                     }
                 });
+            }
+
+            // Semantic tool pruning if there are too many tools
+            if tools.len() > 15 {
+                if let Ok(ms_guard) = self.memory_store.lock() {
+                    if let Some(ms) = ms_guard.as_ref() {
+                        if let Some(prompt_emb) = ms.encode_text_embedding(prompt) {
+                            let mut scored_tools = Vec::new();
+                            for tool in tools {
+                                let is_meta_tool = tool.name == "request_user_clarification"
+                                    || tool.name == "send_outbound_message"
+                                    || tool.name == "reload_mcp_servers"
+                                    || tool.name == "search_tools"
+                                    || tool.name == "generate_web_app"
+                                    || tool.name.starts_with("action_");
+                                
+                                let is_core_shopping = is_shopping && (
+                                    tool.name.contains("search")
+                                    || tool.name.contains("address")
+                                    || tool.name.contains("store")
+                                    || tool.name.contains("location")
+                                    || tool.name.contains("cart")
+                                    || tool.name.contains("checkout")
+                                    || tool.name.contains("order")
+                                );
+
+                                if is_meta_tool || is_core_shopping {
+                                    scored_tools.push((1.0f32, tool));
+                                    continue;
+                                }
+
+                                let tool_text = format!("{} {}", tool.name, tool.description);
+                                if let Some(tool_emb) = ms.encode_text_embedding(&tool_text) {
+                                    let similarity: f32 = prompt_emb.iter().zip(tool_emb.iter()).map(|(a, b)| a * b).sum();
+                                    scored_tools.push((similarity, tool));
+                                } else {
+                                    scored_tools.push((0.0f32, tool));
+                                }
+                            }
+
+                            scored_tools.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+                            let mut final_tools = Vec::new();
+                            for (idx, (similarity, tool)) in scored_tools.into_iter().enumerate() {
+                                if idx < 15 || similarity > 0.35 {
+                                    final_tools.push(tool);
+                                } else {
+                                    log::debug!("[ToolPruning] Pruned tool '{}' with similarity {:.3}", tool.name, similarity);
+                                }
+                            }
+                            tools = final_tools;
+                        }
+                    }
+                }
             }
         } else {
             tools.clear();

@@ -54,6 +54,62 @@ impl AgentCore {
             }
         }
 
+        if matched_workflow_id.is_none() {
+            let prompt_emb = {
+                if let Ok(ms_guard) = self.memory_store.lock() {
+                    ms_guard.as_ref().and_then(|ms| ms.encode_text_embedding(prompt))
+                } else {
+                    None
+                }
+            };
+
+            if let Some(prompt_emb) = prompt_emb {
+                let workflows = {
+                    let workflow_engine = self.workflow_engine.read().await;
+                    workflow_engine.list_workflows()
+                };
+
+                let mut best_similarity = 0.0f32;
+                let mut best_id = None;
+
+                for workflow_value in workflows {
+                    if let (Some(workflow_id), Some(name), Some(description)) = (
+                        workflow_value.get("id").and_then(|value| value.as_str()),
+                        workflow_value.get("name").and_then(|value| value.as_str()),
+                        workflow_value.get("description").and_then(|value| value.as_str()),
+                    ) {
+                        let wf_text = format!("{} {}", name, description);
+                        let wf_emb = {
+                            if let Ok(ms_guard) = self.memory_store.lock() {
+                                ms_guard.as_ref().and_then(|ms| ms.encode_text_embedding(&wf_text))
+                            } else {
+                                None
+                            }
+                        };
+
+                        if let Some(wf_emb) = wf_emb {
+                            let similarity: f32 = prompt_emb.iter().zip(wf_emb.iter()).map(|(a, b)| a * b).sum();
+                            if similarity > best_similarity {
+                                best_similarity = similarity;
+                                best_id = Some(workflow_id.to_string());
+                            }
+                        }
+                    }
+                }
+
+                if best_similarity > 0.65 {
+                    if let Some(id) = best_id {
+                        log::info!(
+                            "[Planning] Semantic matched workflow '{}' with similarity {:.3}",
+                            id,
+                            best_similarity
+                        );
+                        matched_workflow_id = Some(id);
+                    }
+                }
+            }
+        }
+
         if let Some(workflow_id) = matched_workflow_id {
             log::info!(
                 "[Planning] Matched workflow trigger '{}', entering Workflow Mode.",

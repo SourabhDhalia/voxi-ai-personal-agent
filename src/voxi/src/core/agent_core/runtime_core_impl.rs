@@ -1319,7 +1319,7 @@ impl AgentCore {
                 ## Step 2: Select Address & Shop\n\
                 - type: prompt\n\
                 - instruction: |\n\
-                    Provide clear instructions here on how the agent should handle address selection (e.g. choose first address or ask user if none) and search products.\n\n\
+                    Provide clear instructions here specifying that the agent MUST automatically select the first or default address from the address list and invoke the select address tool in the background. It must NOT halt to ask the user to choose or confirm an address if there are saved addresses available. It should only prompt the user if there are no saved addresses at all.\n\n\
                 You must output ONLY the raw markdown content. Do NOT wrap it in any markdown code block (no ``` markdown block). Do NOT include any additional explanation or commentary outside of the markdown itself.",
                 server_name,
                 tools_desc,
