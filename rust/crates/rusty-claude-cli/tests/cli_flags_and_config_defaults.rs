@@ -2,7 +2,7 @@ use std::io::Cursor;
 
 use rusty_claude_cli::input::OutputFormat;
 use rusty_claude_cli::run_with_stdio;
-use tclaw_runtime::{PermissionMode, RuntimeProfile};
+use vclaw_runtime::{PermissionMode, RuntimeProfile};
 
 fn run_cli(args: &[&str]) -> rusty_claude_cli::init::CliOutcome {
     let mut input = Cursor::new(Vec::<u8>::new());

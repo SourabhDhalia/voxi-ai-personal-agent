@@ -88,7 +88,7 @@ mod tests {
         CliOutcome, CommandSummary, HelpSummary, InputSummary, PluginSummary, RuntimeSummary,
         ToolSummary,
     };
-    use tclaw_runtime::{PermissionMode, RuntimeConfig, RuntimePaths, RuntimeProfile};
+    use vclaw_runtime::{PermissionMode, RuntimeConfig, RuntimePaths, RuntimeProfile};
 
     fn sample_outcome(format: OutputFormat) -> CliOutcome {
         CliOutcome {

@@ -38,7 +38,7 @@ def load_text(path: Path) -> str:
 
 def documented_rust_crates(root: Path) -> list[str]:
     text = load_text(root / "rust" / "README.md")
-    return sorted(set(re.findall(r"tclaw-[a-z-]+", text)))
+    return sorted(set(re.findall(r"vclaw-[a-z-]+", text)))
 
 
 def documented_domain_split(root: Path) -> list[str]:
@@ -72,7 +72,7 @@ def workspace_crates(root: Path) -> list[str]:
 
 
 def runtime_module_map(root: Path) -> list[str]:
-    text = load_text(root / "rust" / "crates" / "tclaw-runtime" / "src" / "bootstrap.rs")
+    text = load_text(root / "rust" / "crates" / "vclaw-runtime" / "src" / "bootstrap.rs")
     match = re.search(r"modules:\s*vec!\[(.*?)\]\s*\.into_iter", text, re.S)
     if not match:
         raise RuntimeError("could not parse RuntimeModuleMap from bootstrap.rs")
@@ -81,7 +81,7 @@ def runtime_module_map(root: Path) -> list[str]:
 
 
 def runtime_source_modules(root: Path) -> list[str]:
-    src_dir = root / "rust" / "crates" / "tclaw-runtime" / "src"
+    src_dir = root / "rust" / "crates" / "vclaw-runtime" / "src"
     modules = {
         path.stem for path in src_dir.glob("*.rs") if path.stem != "lib"
     }
@@ -94,7 +94,7 @@ def runtime_source_modules(root: Path) -> list[str]:
 
 
 def rust_surface_names(root: Path) -> list[str]:
-    text = load_text(root / "rust" / "crates" / "tclaw-api" / "src" / "lib.rs")
+    text = load_text(root / "rust" / "crates" / "vclaw-api" / "src" / "lib.rs")
     return sorted(set(re.findall(r'name:\s*"([^"]+)"', text)))
 
 
@@ -110,10 +110,10 @@ def file_presence(root: Path) -> dict[str, bool]:
         "rust/crates/rusty-claude-cli/tests/cli_flags_and_config_defaults.rs",
         "rust/crates/rusty-claude-cli/tests/resume_slash_commands.rs",
         "rust/crates/rusty-claude-cli/tests/compact_output.rs",
-        "rust/crates/tclaw-runtime/tests/integration_tests.rs",
-        "rust/crates/tclaw-api/tests/client_integration.rs",
-        "rust/crates/tclaw-api/tests/openai_compat_integration.rs",
-        "rust/crates/tclaw-api/tests/proxy_integration.rs",
+        "rust/crates/vclaw-runtime/tests/integration_tests.rs",
+        "rust/crates/vclaw-api/tests/client_integration.rs",
+        "rust/crates/vclaw-api/tests/openai_compat_integration.rs",
+        "rust/crates/vclaw-api/tests/proxy_integration.rs",
         "tests/system/doc_layout_verification.json",
     ]
     return {path: (root / path).exists() for path in required}

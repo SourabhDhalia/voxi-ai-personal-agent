@@ -195,10 +195,10 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "tclaw-commands",
- "tclaw-plugins",
- "tclaw-runtime",
- "tclaw-tools",
+ "vclaw-commands",
+ "vclaw-plugins",
+ "vclaw-runtime",
+ "vclaw-tools",
 ]
 
 [[package]]
@@ -262,7 +262,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tclaw-api"
+name = "vclaw-api"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -270,14 +270,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "tclaw-cli"
+name = "vclaw-cli"
 version = "0.1.0"
 dependencies = [
  "rusty-claude-cli",
 ]
 
 [[package]]
-name = "tclaw-commands"
+name = "vclaw-commands"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -285,38 +285,38 @@ dependencies = [
 ]
 
 [[package]]
-name = "tclaw-plugins"
+name = "vclaw-plugins"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "tclaw-api",
- "tclaw-commands",
+ "vclaw-api",
+ "vclaw-commands",
  "thiserror",
 ]
 
 [[package]]
-name = "tclaw-runtime"
+name = "vclaw-runtime"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "tclaw-api",
- "tclaw-commands",
- "tclaw-plugins",
+ "vclaw-api",
+ "vclaw-commands",
+ "vclaw-plugins",
  "tempfile",
  "thiserror",
 ]
 
 [[package]]
-name = "tclaw-tools"
+name = "vclaw-tools"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "tclaw-api",
- "tclaw-plugins",
- "tclaw-runtime",
+ "vclaw-api",
+ "vclaw-plugins",
+ "vclaw-runtime",
  "thiserror",
 ]
 

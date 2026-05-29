@@ -2,11 +2,11 @@
 
 This directory is the forward-looking production workspace for Voxi.
 
-- `crates/tclaw-runtime` owns runtime orchestration
-- `crates/tclaw-api` owns shared contracts
-- `crates/tclaw-cli` owns the CLI surface
-- `crates/tclaw-tools` owns tool abstractions
-- `crates/tclaw-plugins` owns plugin boundaries
+- `crates/vclaw-runtime` owns runtime orchestration
+- `crates/vclaw-api` owns shared contracts
+- `crates/vclaw-cli` owns the CLI surface
+- `crates/vclaw-tools` owns tool abstractions
+- `crates/vclaw-plugins` owns plugin boundaries
 
 The legacy root Rust workspace remains available while the reconstruction
 prompt series migrates functionality into this layout.

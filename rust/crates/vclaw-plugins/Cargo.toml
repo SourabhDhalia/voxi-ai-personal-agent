@@ -1,0 +1,12 @@
+[package]
+name = "vclaw-plugins"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+vclaw-api = { path = "../vclaw-api" }
+vclaw-commands = { path = "../vclaw-commands" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

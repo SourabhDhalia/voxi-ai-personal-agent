@@ -1,10 +1,10 @@
 use serde::Serialize;
-use tclaw_plugins::{plugin_manifests, plugin_tool_manifests, PluginManifest};
-use tclaw_runtime::{
+use vclaw_plugins::{plugin_manifests, plugin_tool_manifests, PluginManifest};
+use vclaw_runtime::{
     runtime_command_registry, CommandRegistry, RegistryParseOutcome, ResolvedSlashCommand,
     RuntimeBootstrap, RuntimeConfig, SessionControlResult,
 };
-use tclaw_tools::built_in_tool_registry;
+use vclaw_tools::built_in_tool_registry;
 
 use crate::input::{merge_prompt_and_stdin, CliMode, OutputFormat, ParsedCli};
 
@@ -356,7 +356,7 @@ mod tests {
         parsed.mode = CliMode::PrintConfig;
         let outcome = dispatch_cli(parsed, None).expect("dispatch");
         assert_eq!(outcome.mode, "config");
-        assert_eq!(outcome.config.profile, tclaw_runtime::RuntimeProfile::Host);
+        assert_eq!(outcome.config.profile, vclaw_runtime::RuntimeProfile::Host);
     }
 
     #[test]

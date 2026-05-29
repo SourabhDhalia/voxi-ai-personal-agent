@@ -177,12 +177,12 @@ Do **not** create new workflow or stage artifact documents under `docs/`.
 
 | Crate | Role |
 |-------|------|
-| `tclaw-runtime` | Forward-looking runtime orchestration |
-| `tclaw-api` | Shared contracts and stable types |
-| `tclaw-cli` | Canonical CLI surface |
-| `tclaw-tools` | Tool adapters and registries |
-| `tclaw-plugins` | Plugin boundaries |
-| `tclaw-commands` | Shared command-layer support |
+| `vclaw-runtime` | Forward-looking runtime orchestration |
+| `vclaw-api` | Shared contracts and stable types |
+| `vclaw-cli` | Canonical CLI surface |
+| `vclaw-tools` | Tool adapters and registries |
+| `vclaw-plugins` | Plugin boundaries |
+| `vclaw-commands` | Shared command-layer support |
 | `rusty-claude-cli` | Claude-oriented CLI reconstruction |
 
 ### Legacy Rust Workspace (`src/`)

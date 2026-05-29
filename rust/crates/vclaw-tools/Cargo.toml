@@ -1,13 +1,13 @@
 [package]
-name = "rusty-claude-cli"
+name = "vclaw-tools"
 edition.workspace = true
 license.workspace = true
 version.workspace = true
 
 [dependencies]
-serde.workspace = true
-serde_json.workspace = true
-vclaw-commands = { path = "../vclaw-commands" }
+vclaw-api = { path = "../vclaw-api" }
 vclaw-plugins = { path = "../vclaw-plugins" }
 vclaw-runtime = { path = "../vclaw-runtime" }
-vclaw-tools = { path = "../vclaw-tools" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

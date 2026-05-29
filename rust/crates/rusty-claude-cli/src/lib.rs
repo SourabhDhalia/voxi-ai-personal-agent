@@ -113,10 +113,10 @@ mod tests {
     #[test]
     fn config_defaults_follow_runtime_defaults() {
         let outcome = run(&["rusty-claude-cli"], "", true);
-        assert_eq!(outcome.config.profile, tclaw_runtime::RuntimeProfile::Host);
+        assert_eq!(outcome.config.profile, vclaw_runtime::RuntimeProfile::Host);
         assert_eq!(
             outcome.config.permission_mode,
-            tclaw_runtime::PermissionMode::Ask
+            vclaw_runtime::PermissionMode::Ask
         );
         assert_eq!(outcome.config.plugin_roots, vec!["plugins".to_string()]);
     }

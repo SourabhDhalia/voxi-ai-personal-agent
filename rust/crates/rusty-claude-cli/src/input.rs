@@ -1,7 +1,7 @@
 use std::io::{self, Read};
 
 use serde::Serialize;
-use tclaw_runtime::{PermissionMode, RuntimeProfile};
+use vclaw_runtime::{PermissionMode, RuntimeProfile};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

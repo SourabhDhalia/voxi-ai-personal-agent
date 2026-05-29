@@ -423,3 +423,16 @@
 | Voxi Ubuntu Migration | Supervisor Gate 5 | PASS | macOS directory symlink issues resolved; test run validation succeeded. |
 | Voxi Ubuntu Migration | 6. Commit | PASS | Staged, committed, and pushed changes to remote repository origin main branch. |
 | Voxi Ubuntu Migration | Supervisor Gate 6 | PASS | Setup finalized and remote repository updated. |
+| VClaw Rename | 1. Planning | PASS | Outlined tclaw to vclaw renaming across crates, code, and scripts. |
+| VClaw Rename | Supervisor Gate 1 | PASS | Preserved Rust structures and boundaries. |
+| VClaw Rename | 2. Design | PASS | Planned case-sensitive string replacements. |
+| VClaw Rename | Supervisor Gate 2 | PASS | Kept module layouts and surfaces identical. |
+| VClaw Rename | 3. Development | PASS | Renamed folders and replaced all instances. |
+| VClaw Rename | Supervisor Gate 3 | PASS | Completed replacement with zero remaining matches. |
+| VClaw Rename | 4. Build/Deploy | PASS | Ran deploy.sh --test on mac host. |
+| VClaw Rename | Supervisor Gate 4 | PASS | Validated all 534 cargo tests pass successfully. |
+| VClaw Rename | 5. Test/Review | PASS | Verified mock parity diff and doc architecture validator. |
+| VClaw Rename | Supervisor Gate 5 | PASS | Code structures, module maps, and surfaces validated successfully. |
+| VClaw Rename | 6. Commit | PASS | Staging all modifications and committing via .tmp/commit_msg.txt. |
+| VClaw Rename | Supervisor Gate 6 | PASS | Commit message prepared in compliance with root rules. |
+
