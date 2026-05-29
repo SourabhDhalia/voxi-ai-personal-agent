@@ -93,7 +93,11 @@ run() {
 }
 
 process_report() {
-  ps -eo pid,ppid,stat,cmd \
+  local ps_format="pid,ppid,stat,cmd"
+  if [ "$(uname)" = "Darwin" ]; then
+    ps_format="pid,ppid,state,command"
+  fi
+  ps -eo "${ps_format}" \
     | grep -E "(${INSTALL_DIR}/${PKG_NAME}|${INSTALL_DIR}/${TOOL_EXECUTOR_NAME}|${INSTALL_DIR}/${WEB_DASHBOARD_NAME}|(^|/| )${PKG_NAME}($| )|(^|/| )${TOOL_EXECUTOR_NAME}($| )|(^|/| )${WEB_DASHBOARD_NAME}($| ))" \
     | grep -v -E "grep -E|deploy.sh" || true
 }
@@ -709,7 +713,11 @@ show_status() {
   fi
 
   local dashboard_zombies
-  dashboard_zombies="$(ps -eo pid,ppid,stat,cmd | grep '\[voxi-web-d\] <defunct>' | grep -v grep || true)"
+  local ps_format="pid,ppid,stat,cmd"
+  if [ "$(uname)" = "Darwin" ]; then
+    ps_format="pid,ppid,state,command"
+  fi
+  dashboard_zombies="$(ps -eo "${ps_format}" | grep '\[voxi-web-d\] <defunct>' | grep -v grep || true)"
   if [ -n "${dashboard_zombies}" ]; then
     warn "Detected defunct dashboard process entries:"
     printf '%s\n' "${dashboard_zombies}"
