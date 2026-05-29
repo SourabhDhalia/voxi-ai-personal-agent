@@ -435,4 +435,17 @@
 | VClaw Rename | Supervisor Gate 5 | PASS | Code structures, module maps, and surfaces validated successfully. |
 | VClaw Rename | 6. Commit | PASS | Staging all modifications and committing via .tmp/commit_msg.txt. |
 | VClaw Rename | Supervisor Gate 6 | PASS | Commit message prepared in compliance with root rules. |
+| macOS Status Fix | 1. Planning | PASS | Outlined macOS ps compatibility fixes in deploy.sh. |
+| macOS Status Fix | Supervisor Gate 1 | PASS | Change is localized to deploy script status options. |
+| macOS Status Fix | 2. Design | PASS | Designed OS-conditional check for state/command vs stat/cmd in ps. |
+| macOS Status Fix | Supervisor Gate 2 | PASS | Keeps Linux compat and introduces zero external dependency. |
+| macOS Status Fix | 3. Development | PASS | Updated deploy.sh process_report and defunct checks. |
+| macOS Status Fix | Supervisor Gate 3 | PASS | Replaced hardcoded Linux-centric ps keywords with dynamic format. |
+| macOS Status Fix | 4. Build/Deploy | PASS | Verified deploy.sh --status runs perfectly without warnings. |
+| macOS Status Fix | Supervisor Gate 4 | PASS | Status reporting is fully functional. |
+| macOS Status Fix | 5. Test/Review | PASS | Verified git diff and status CLI output. |
+| macOS Status Fix | Supervisor Gate 5 | PASS | Output format is clean. |
+| macOS Status Fix | 6. Commit | PASS | Staged and committed changes locally, then pushed. |
+| macOS Status Fix | Supervisor Gate 6 | PASS | Pushed commit 75cff388 successfully. |
+
 
