@@ -373,8 +373,16 @@ impl AgentCore {
             // Write user prompt and assistant response to session history
             if let Ok(ss) = self.session_store.lock() {
                 if let Some(store) = ss.as_ref() {
-                    store.add_message(session_id, "user", prompt);
-                    store.add_structured_user_message(session_id, prompt);
+                    let sanitized_prompt = if parts.len() >= 4 && (parts[1] == "token" || parts[1] == "login") {
+                        let mut sanitized_parts = parts.clone();
+                        sanitized_parts[3] = "[HIDDEN]";
+                        sanitized_parts.truncate(4);
+                        sanitized_parts.join(" ")
+                    } else {
+                        prompt.to_string()
+                    };
+                    store.add_message(session_id, "user", &sanitized_prompt);
+                    store.add_structured_user_message(session_id, &sanitized_prompt);
                     store.add_message(session_id, "assistant", &response);
                     store.add_structured_assistant_text_message(session_id, &response);
                 }

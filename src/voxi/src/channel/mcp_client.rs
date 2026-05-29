@@ -2554,6 +2554,9 @@ mod tests {
 
     #[test]
     fn test_find_access_token() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        std::env::set_var("VOXI_DATA_DIR", temp_dir.path());
+
         // Test with flag-value pair
         let client_flag = McpClient::new(
             "zepto",
@@ -2611,6 +2614,8 @@ mod tests {
         // Test with no token
         let client_empty = McpClient::new("zepto", "https://mcp.zepto.co.in/mcp", &[], 30000);
         assert_eq!(client_empty.find_access_token(), None);
+
+        std::env::remove_var("VOXI_DATA_DIR");
     }
 
     #[test]

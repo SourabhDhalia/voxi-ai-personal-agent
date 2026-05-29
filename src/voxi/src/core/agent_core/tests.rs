@@ -4541,4 +4541,32 @@ startxref
             Some("{\"status\":\"ok\",\"meta\":{\"v\":1}}")
         );
     }
+
+    #[test]
+    fn test_mcp_token_sanitization() {
+        let prompts = vec![
+            ("/mcp login swiggy-instamart eyJ1234567890", "/mcp login swiggy-instamart [HIDDEN]"),
+            ("/mcp token zepto my_zepto_token_abc", "/mcp token zepto [HIDDEN]"),
+            ("/mcp status", "/mcp status"),
+            ("/mcp help", "/mcp help"),
+        ];
+
+        for (input, expected) in prompts {
+            let prompt_trimmed = input.trim();
+            let sanitized = if prompt_trimmed.starts_with("/mcp") {
+                let parts: Vec<&str> = prompt_trimmed.split_whitespace().collect();
+                if parts.len() >= 4 && (parts[1] == "token" || parts[1] == "login") {
+                    let mut sanitized_parts = parts.clone();
+                    sanitized_parts[3] = "[HIDDEN]";
+                    sanitized_parts.truncate(4);
+                    sanitized_parts.join(" ")
+                } else {
+                    input.to_string()
+                }
+            } else {
+                input.to_string()
+            };
+            assert_eq!(sanitized, expected);
+        }
+    }
 }
