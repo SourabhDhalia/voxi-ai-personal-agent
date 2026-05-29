@@ -483,3 +483,15 @@
 | Hide MCP Tokens | Supervisor Gate 5 | PASS | All 535 cargo tests passed successfully. |
 | Hide MCP Tokens | 6. Commit | PASS | Staging all modifications and committing via .tmp/commit_msg.txt. |
 | Hide MCP Tokens | Supervisor Gate 6 | PASS | Commit message prepared in compliance with root rules. |
+| Vendor Checksum Fix | 1. Planning | PASS | Identified changed files in vendor/ directory and planned checksum recalculation. |
+| Vendor Checksum Fix | Supervisor Gate 1 | PASS | Design plan reviewed and submitted. |
+| Vendor Checksum Fix | 2. Design | PASS | Designed Python script to automate SHA256 checksum updates inside .cargo-checksum.json files. |
+| Vendor Checksum Fix | Supervisor Gate 2 | PASS | No behavior changes outside vendor package manifest updates. |
+| Vendor Checksum Fix | 3. Development | PASS | Recalculated and updated cargo checksum manifests under vendor/ directories. |
+| Vendor Checksum Fix | Supervisor Gate 3 | PASS | Manifest modifications match local files. |
+| Vendor Checksum Fix | 4. Build/Deploy | PASS | Verification via host compile test. |
+| Vendor Checksum Fix | Supervisor Gate 4 | PASS | Compilation succeeds without checksum conflicts. |
+| Vendor Checksum Fix | 5. Test/Review | PASS | Verified git status and changes. |
+| Vendor Checksum Fix | Supervisor Gate 5 | PASS | Review complete. |
+| Vendor Checksum Fix | 6. Commit | PASS | Staging checksum updates and committing via .tmp/commit_msg.txt. |
+| Vendor Checksum Fix | Supervisor Gate 6 | PASS | Setup finalized. |
