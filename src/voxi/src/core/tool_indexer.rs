@@ -740,6 +740,55 @@ pub fn repair_json(s: &str) -> String {
     repaired
 }
 
+/// Helper to sanitize invalid escape sequences inside JSON string values.
+pub fn fix_json_escapes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if in_string {
+            if escaped {
+                let is_valid = match c {
+                    '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' => true,
+                    'u' => {
+                        if i + 4 < chars.len() {
+                            chars[i+1..i+5].iter().all(|&hc| hc.is_ascii_hexdigit())
+                        } else {
+                            false
+                        }
+                    }
+                    _ => false,
+                };
+
+                if !is_valid {
+                    result.push('\\');
+                }
+                result.push(c);
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+                result.push(c);
+            } else {
+                if c == '"' {
+                    in_string = false;
+                }
+                result.push(c);
+            }
+        } else {
+            if c == '"' {
+                in_string = true;
+            }
+            result.push(c);
+        }
+        i += 1;
+    }
+    result
+}
+
 /// Parse the LLM response JSON and write the generated files to disk.
 ///
 /// Returns the number of files successfully written.
@@ -770,14 +819,15 @@ pub fn apply_llm_index_result(result: &str, root_dir: &str, metadata: &ToolsMeta
     }
 
     let repaired_json = repair_json(json_str);
-    let parsed: serde_json::Value = match serde_json::from_str(&repaired_json) {
+    let fixed_json = fix_json_escapes(&repaired_json);
+    let parsed: serde_json::Value = match serde_json::from_str(&fixed_json) {
         Ok(v) => v,
         Err(e) => {
             log::warn!(
                 "ToolIndexer: Failed to parse LLM index response after repair: {} (original: {:?}, repaired: {:?})",
                 e,
                 clean.chars().take(200).collect::<String>(),
-                repaired_json.chars().take(200).collect::<String>()
+                fixed_json.chars().take(200).collect::<String>()
             );
             return 0;
         }
