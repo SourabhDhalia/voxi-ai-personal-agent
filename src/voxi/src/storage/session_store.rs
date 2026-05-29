@@ -571,6 +571,22 @@ impl SessionStore {
         })
     }
 
+    pub fn get_total_tool_calls(&self) -> i64 {
+        let mut total = 0i64;
+        let sessions_root = self.base_dir.join("sessions");
+        if let Ok(entries) = fs::read_dir(sessions_root) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    let transcript_path = entry.path().join("transcript.jsonl");
+                    if let Ok(text) = fs::read_to_string(transcript_path) {
+                        total += text.matches("\"role\":\"toolResult\"").count() as i64;
+                    }
+                }
+            }
+        }
+        total
+    }
+
     // ── Token usage ──────────────────────────────────────────────────────────
 
     pub fn record_usage(

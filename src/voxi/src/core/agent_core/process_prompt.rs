@@ -1282,6 +1282,13 @@ impl AgentCore {
 
         // ── Phases 4–13: Main agentic loop ───────────────────────────────
         loop {
+            if self.is_request_cancelled(request_id) {
+                loop_state.transition(AgentPhase::ResultReporting);
+                loop_state.transition(AgentPhase::Complete);
+                self.persist_loop_snapshot(&loop_state);
+                return self.handle_cancellation(session_id, request_id);
+            }
+
             // ── Phase 4: DecisionMaking / LLM call ──────────────────────
             loop_state.transition(AgentPhase::DecisionMaking);
             log::debug!(
@@ -1559,6 +1566,13 @@ impl AgentCore {
                         }
                         store.add_structured_tool_call_message(session_id, canonical_tool_calls);
                     }
+                }
+
+                if self.is_request_cancelled(request_id) {
+                    loop_state.transition(AgentPhase::ResultReporting);
+                    loop_state.transition(AgentPhase::Complete);
+                    self.persist_loop_snapshot(&loop_state);
+                    return self.handle_cancellation(session_id, request_id);
                 }
 
                 // Parallel tool execution

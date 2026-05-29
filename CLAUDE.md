@@ -37,6 +37,7 @@ explicitly requested. The repository is currently split across:
 - Use `./deploy.sh` only when the user explicitly asks for Voxi,
   emulator, or device validation.
 - Architecture focus: **x86_64 only**.
+- **ALWAYS write cross-platform multi-OS compatible code**: When implementing metrics, process status, CPU/memory, thread counts, or uptime features, do not assume Linux-only files/structures (like `/proc`). Utilize standard cross-platform libraries (e.g. `std::time::Instant`), POSIX calls (e.g. `libc::getloadavg`), or compile-time/runtime conditional flags (`#[cfg(target_os = "macos")]`) to maintain compatibility on both macOS and Linux.
 
 ### Commits
 - **NEVER** use `git commit -m "..."`. Write the message to

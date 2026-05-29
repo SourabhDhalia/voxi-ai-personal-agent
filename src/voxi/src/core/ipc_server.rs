@@ -445,6 +445,7 @@ impl IpcServer {
                         params.get("baseline"),
                     );
                     let delta = usage.diff_from(&baseline);
+                    let total_tool_calls = ss_ref.store().get_total_tool_calls();
                     json!({
                         "scope": if session_id.is_empty() { "daily" } else { "session" },
                         "session_id": if session_id.is_empty() { Value::Null } else { Value::String(session_id.to_string()) },
@@ -455,7 +456,8 @@ impl IpcServer {
                         "completion_tokens": usage.total_completion_tokens,
                         "cache_creation_input_tokens": usage.total_cache_creation_input_tokens,
                         "cache_read_input_tokens": usage.total_cache_read_input_tokens,
-                        "total_requests": usage.total_requests
+                        "total_requests": usage.total_requests,
+                        "total_tool_calls": total_tool_calls
                     })
                 } else {
                     json!({"error": "No session store"})

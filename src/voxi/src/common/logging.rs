@@ -26,6 +26,10 @@ struct PlatformLogBridge;
 
 impl log::Log for PlatformLogBridge {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
+        let target = metadata.target();
+        if target.starts_with("mdns") || target.contains("mdns") {
+            return false;
+        }
         // Enforce strict filtering: ONLY voxi internal modules get Debug/Trace.
         // Vendor crates are restricted to Warn/Error.
         if metadata.target().starts_with("voxi") {

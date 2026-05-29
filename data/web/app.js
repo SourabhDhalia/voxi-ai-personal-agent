@@ -50,6 +50,11 @@
             metricsInterval = null;
         }
 
+        if (page !== 'chat' && window.chatPollInterval) {
+            clearInterval(window.chatPollInterval);
+            window.chatPollInterval = null;
+        }
+
         const navEl =
             document.getElementById('nav-' + page);
         const pageEl =
@@ -61,7 +66,13 @@
         else if (page === 'sessions') loadSessions();
         else if (page === 'tasks') loadTasks();
         else if (page === 'logs') loadLogs();
-        else if (page === 'chat') loadChatSessions();
+        else if (page === 'chat') {
+            loadChatSessions().then(() => {
+                if (currentChatSessionId) {
+                    loadChatSessionDetail(currentChatSessionId);
+                }
+            });
+        }
         else if (page === 'ota') loadOta();
         else if (page === 'admin') loadAdmin();
     }
@@ -931,7 +942,7 @@
     const chatSelectionMeta =
         document.getElementById(
             'chat-selection-meta');
-    let currentChatSessionId = null;
+    let currentChatSessionId = sessionStorage.getItem('current_chat_session_id') || null;
     let chatSessionsCache = [];
     let selectedChatSessionIds = new Set();
 
@@ -969,6 +980,11 @@
 
     function selectChatSession(sessionId) {
         currentChatSessionId = sessionId || null;
+        if (currentChatSessionId) {
+            sessionStorage.setItem('current_chat_session_id', currentChatSessionId);
+        } else {
+            sessionStorage.removeItem('current_chat_session_id');
+        }
         formatChatSessionMeta();
         if (!chatSessionList) return;
         chatSessionList.querySelectorAll(
@@ -1141,6 +1157,10 @@
 
     async function loadChatSessionDetail(sessionId) {
         if (!chatMessages) return;
+        if (window.chatPollInterval) {
+            clearInterval(window.chatPollInterval);
+            window.chatPollInterval = null;
+        }
         const resp = await apiFetch('sessions/' +
             encodeURIComponent(sessionId));
         if (!resp || !Array.isArray(resp.messages)) {
@@ -1154,6 +1174,14 @@
             addChatMsg(message.role, message.text);
         });
         selectChatSession(sessionId);
+
+        // Check if last message is from user, indicating the agent is still running/thinking
+        const lastMsg = resp.messages[resp.messages.length - 1];
+        if (lastMsg && lastMsg.role === 'user') {
+            const reqId = sessionStorage.getItem('active_request_id_' + sessionId) || 'unknown';
+            showThinkingIndicator(sessionId, reqId);
+            startPollingSession(sessionId);
+        }
     }
 
     function addChatMsg(role, text) {
@@ -1174,20 +1202,10 @@
             chatMessages.scrollHeight;
     }
 
-    async function sendChat() {
-        if (!chatInput || !chatMessages) return;
-        const prompt = chatInput.value.trim();
-        if (!prompt) return;
-        const sessionId = currentChatSessionId;
-        const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-
-        addChatMsg('user', prompt);
-        chatInput.value = '';
-        
-        // Removed chatSend.disabled = true; to allow concurrent/overlapping requests
-
-        // Show thinking indicator specific to this request
+    function showThinkingIndicator(sessionId, requestId) {
         const thinkingId = 'think-' + requestId;
+        if (document.getElementById(thinkingId)) return;
+
         const thinking = document.createElement('div');
         thinking.className = 'chat-thinking';
         thinking.id = thinkingId;
@@ -1197,8 +1215,7 @@
             '<span class="chat-thinking-dot"></span>' +
             '<button class="chat-stop-btn" title="Stop generating">Stop</button>';
         chatMessages.appendChild(thinking);
-        chatMessages.scrollTop =
-            chatMessages.scrollHeight;
+        chatMessages.scrollTop = chatMessages.scrollHeight;
 
         const stopBtn = thinking.querySelector('.chat-stop-btn');
         if (stopBtn) {
@@ -1211,11 +1228,56 @@
                         session_id: sessionId || currentChatSessionId || '',
                         request_id: requestId
                     });
+                    sessionStorage.removeItem('active_request_id_' + sessionId);
+                    thinking.remove();
+                    if (window.chatPollInterval) {
+                        clearInterval(window.chatPollInterval);
+                        window.chatPollInterval = null;
+                    }
+                    await loadChatSessionDetail(sessionId);
                 } catch (err) {
                     console.error('Failed to cancel request:', err);
                 }
             });
         }
+    }
+
+    function startPollingSession(sessionId) {
+        if (window.chatPollInterval) {
+            clearInterval(window.chatPollInterval);
+        }
+        window.chatPollInterval = setInterval(async () => {
+            if (sessionId !== currentChatSessionId) {
+                clearInterval(window.chatPollInterval);
+                window.chatPollInterval = null;
+                return;
+            }
+            const resp = await apiFetch('sessions/' + encodeURIComponent(sessionId));
+            if (resp && Array.isArray(resp.messages) && resp.messages.length > 0) {
+                const lastMsg = resp.messages[resp.messages.length - 1];
+                if (lastMsg && lastMsg.role === 'assistant') {
+                    clearInterval(window.chatPollInterval);
+                    window.chatPollInterval = null;
+                    await loadChatSessionDetail(sessionId);
+                    await loadChatSessions();
+                }
+            }
+        }, 2000);
+    }
+
+    async function sendChat() {
+        if (!chatInput || !chatMessages) return;
+        const prompt = chatInput.value.trim();
+        if (!prompt) return;
+        const sessionId = currentChatSessionId;
+        const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+
+        addChatMsg('user', prompt);
+        chatInput.value = '';
+        
+        sessionStorage.setItem('active_request_id_' + (sessionId || 'new'), requestId);
+
+        showThinkingIndicator(sessionId || 'new', requestId);
 
         try {
             const resp = await apiPost('chat', {
@@ -1224,11 +1286,13 @@
                 request_id: requestId
             });
 
-            // Remove this specific thinking indicator
+            const thinkingId = 'think-' + requestId;
             const indicator = document.getElementById(thinkingId);
             if (indicator) indicator.remove();
 
             if (resp && resp.session_id) {
+                sessionStorage.removeItem('active_request_id_' + sessionId);
+                sessionStorage.removeItem('active_request_id_new');
                 if (!sessionId) {
                     if (currentChatSessionId === null) {
                         currentChatSessionId = resp.session_id;
@@ -1250,8 +1314,11 @@
                 }
             }
         } catch (err) {
+            const thinkingId = 'think-' + requestId;
             const indicator = document.getElementById(thinkingId);
             if (indicator) indicator.remove();
+            sessionStorage.removeItem('active_request_id_' + sessionId);
+            sessionStorage.removeItem('active_request_id_new');
             if (sessionId === currentChatSessionId) {
                 addChatMsg('assistant', 'Error: connection failed.');
             }

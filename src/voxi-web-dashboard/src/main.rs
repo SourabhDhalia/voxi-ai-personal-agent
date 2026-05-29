@@ -704,6 +704,10 @@ async fn api_metrics() -> Json<Value> {
         .as_ref()
         .and_then(|u| u["cache_creation_input_tokens"].as_i64())
         .unwrap_or(0);
+    let tool_calls = usage
+        .as_ref()
+        .and_then(|u| u["total_tool_calls"].as_i64())
+        .unwrap_or(0);
 
     Json(json!({
         "version": "1.0.0",
@@ -717,7 +721,7 @@ async fn api_metrics() -> Json<Value> {
             "requests": 0,
             "errors": 0,
             "llm_calls": llm_calls,
-            "tool_calls": 0
+            "tool_calls": tool_calls
         },
         "tokens": {
             "prompt": prompt_tokens,
@@ -1925,20 +1929,68 @@ fn parse_proc_status() -> (i64, i64, i32) {
                 threads = v.trim().parse().unwrap_or(0);
             }
         }
+        return (rss_kb, vm_kb, threads);
     }
+
+    #[cfg(target_os = "macos")]
+    {
+        unsafe {
+            let mut usage: libc::rusage = std::mem::zeroed();
+            if libc::getrusage(libc::RUSAGE_SELF, &mut usage) == 0 {
+                rss_kb = usage.ru_maxrss / 1024;
+            }
+
+            type MachPortT = libc::c_uint;
+            type ThreadActT = MachPortT;
+            type ThreadActArrayT = *mut ThreadActT;
+
+            extern "C" {
+                fn mach_task_self() -> MachPortT;
+                fn task_threads(
+                    target_task: MachPortT,
+                    act_list: *mut ThreadActArrayT,
+                    act_listCnt: *mut libc::c_uint,
+                ) -> libc::c_int;
+                fn vm_deallocate(
+                    target_task: MachPortT,
+                    address: usize,
+                    size: usize,
+                ) -> libc::c_int;
+                fn mach_port_deallocate(
+                    target_task: MachPortT,
+                    name: MachPortT,
+                ) -> libc::c_int;
+            }
+
+            let task = mach_task_self();
+            let mut act_list: ThreadActArrayT = std::ptr::null_mut();
+            let mut count: libc::c_uint = 0;
+            if task_threads(task, &mut act_list, &mut count) == 0 {
+                threads = count as i32;
+                for i in 0..count {
+                    let port = *act_list.offset(i as isize);
+                    mach_port_deallocate(task, port);
+                }
+                vm_deallocate(
+                    task,
+                    act_list as usize,
+                    (count as usize) * std::mem::size_of::<MachPortT>(),
+                );
+            }
+        }
+    }
+
     (rss_kb, vm_kb, threads)
 }
 
 fn parse_loadavg() -> (f64, f64, f64) {
-    if let Ok(s) = std::fs::read_to_string("/proc/loadavg") {
-        let p: Vec<&str> = s.split_whitespace().collect();
-        return (
-            p.first().and_then(|s| s.parse().ok()).unwrap_or(0.0),
-            p.get(1).and_then(|s| s.parse().ok()).unwrap_or(0.0),
-            p.get(2).and_then(|s| s.parse().ok()).unwrap_or(0.0),
-        );
+    let mut loads = [0.0f64; 3];
+    let ret = unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
+    if ret == 3 {
+        (loads[0], loads[1], loads[2])
+    } else {
+        (0.0, 0.0, 0.0)
     }
-    (0.0, 0.0, 0.0)
 }
 
 fn get_process_uptime() -> f64 {
