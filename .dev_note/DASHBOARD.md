@@ -682,4 +682,5 @@
 | Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 4 | PASS | Compilation succeeds and binaries verified without direct cargo invocation. |
 | Enable builtin-tools & SSE Event Pump Refactor | 5. Test/Review | PASS | ./deploy.sh --test passed: 498 unit tests + 22 voice tests + 26 scenario tests + 3 CLI tests + 14 core tests all green. |
 | Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 5 | PASS | All workspace tests green; subscription accounting and event pump logic verified. |
-| Enable builtin-tools & SSE Event Pump Refactor | 6. Commit | IN PROGRESS | Staging files and preparing commit message in .tmp/commit_msg.txt. |
+| Enable builtin-tools & SSE Event Pump Refactor | 6. Commit | PASS | Staged 5 files and committed at e0987af6; pushed to origin/voice-module-integration. |
+| Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 6 | PASS | Commit used .tmp/commit_msg.txt; no inline git commit -m; all lines ≤ 80 chars. |
