@@ -14,7 +14,9 @@ use serde_json::{Map, Value, json};
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::Duration;
 use voxi::api::Voxi;
 
 static CLI_SESSION_COUNTER: AtomicUsize = AtomicUsize::new(1);
@@ -773,19 +775,135 @@ fn magenta(text: &str) -> String { ansi("35", text) }
 
 // ─── Chat REPL ───────────────────────────────────────────────────────────────
 
+struct Spinner {
+    running: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Spinner {
+    fn start(message: &'static str) -> Self {
+        let running = Arc::new(AtomicBool::new(true));
+        let r = running.clone();
+        let msg = message.to_string();
+        let handle = std::thread::spawn(move || {
+            if !is_tty() {
+                return;
+            }
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let mut idx = 0;
+            while r.load(Ordering::Relaxed) {
+                print!("\r\x1b[2K{} {}", ansi("36", frames[idx]), ansi("2", &msg));
+                io::stdout().flush().ok();
+                idx = (idx + 1) % frames.len();
+                std::thread::sleep(Duration::from_millis(80));
+            }
+            print!("\r\x1b[2K\r");
+            io::stdout().flush().ok();
+        });
+        Spinner {
+            running,
+            handle: Some(handle),
+        }
+    }
+
+    fn stop(&mut self) {
+        self.running.store(false, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            h.join().ok();
+        }
+    }
+}
+
+fn strip_ansi(text: &str) -> String {
+    let mut result = String::new();
+    let mut in_esc = false;
+    for c in text.chars() {
+        if c == '\x1b' {
+            in_esc = true;
+        } else if in_esc {
+            if c == 'm' || c == 'K' || c == 'H' || c == 'J' {
+                in_esc = false;
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+fn print_boxed_line(left: &str, right: &str, cols: usize) {
+    let left_len = strip_ansi(left).chars().count();
+    let right_len = strip_ansi(right).chars().count();
+    let content_len = left_len + right_len;
+    let padding = if cols > content_len + 4 {
+        cols - content_len - 4
+    } else {
+        0
+    };
+    println!("│ {}{}{} │", left, " ".repeat(padding), right);
+}
+
+fn print_chat_banner(client: &Voxi, session_id: &str) {
+    let cols = 80;
+    let line = "─".repeat(cols - 2);
+    
+    let backend = client.get_llm_config(Some("active_backend"))
+        .ok()
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "gemini".to_string());
+        
+    let model = client.get_llm_config(Some(&format!("backends.{}.model", backend)))
+        .ok()
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let workdir = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .display()
+        .to_string();
+        
+    // Limit workdir length
+    let max_wd_len = 40;
+    let formatted_wd = if workdir.len() > max_wd_len {
+        format!("...{}", &workdir[workdir.len() - max_wd_len + 3..])
+    } else {
+        workdir
+    };
+
+    println!("╭{}╮", line);
+    print_boxed_line(
+        &format!("{} {}", bold(&green("● VOXI ACTIVE")), bold(&cyan(&format!("v{}", env!("CARGO_PKG_VERSION"))))),
+        &format!("pid: {}", bold(&std::process::id().to_string())),
+        cols
+    );
+    print_boxed_line(
+        &format!("Backend: {}", bold(&backend)),
+        &format!("Model: {}", bold(&model)),
+        cols
+    );
+    print_boxed_line(
+        &format!("Session: {}", bold(&session_id[..std::cmp::min(session_id.len(), 24)])),
+        &format!("Dir: {}", dim(&formatted_wd)),
+        cols
+    );
+    println!("╰{}╯", line);
+    println!("  {}", dim("Type /help for slash commands. Press Ctrl-C or type exit to quit."));
+    println!();
+}
+
 fn print_chat_help() {
     println!("{}", bold("Voxi Chat — available commands:"));
-    println!("  {}   Start a brand-new conversation", cyan("/new"));
-    println!("  {}   List recent sessions", cyan("/sessions"));
-    println!("  {} {}  Switch to a previous session", cyan("/switch"), dim("<id>"));
-    println!("  {}      Show current session ID", cyan("/session"));
-    println!("  {}        Show token usage", cyan("/usage"));
-    println!("  {}         Show this help", cyan("/help"));
-    println!("  {} {}        Start/stop web dashboard", cyan("/dashboard"), dim("<start|stop|status>"));
-    println!("  {}   Exit chat", cyan("/exit  quit  exit"));
+    println!("  {}         Start a brand-new conversation", cyan("/new"));
+    println!("  {}    List recent sessions", cyan("/sessions"));
+    println!("  {} {}   Switch to a previous session", cyan("/switch"), dim("<id>"));
+    println!("  {}       Show current session ID", cyan("/session"));
+    println!("  {}         Show token usage", cyan("/usage"));
+    println!("  {}          Show this help", cyan("/help"));
+    println!("  {} {}         Start/stop web dashboard", cyan("/dashboard"), dim("<start|stop|status>"));
+    println!("  {}    Exit chat", cyan("/exit  quit  exit"));
     println!();
-    println!("  {} {}   Send prompt with streaming (default on)", dim("--no-stream"), dim("flag"));
-    println!("  {}   Anything else is sent as a message to the agent", dim("<message>"));
+    println!("  {} {}    Send prompt with streaming (default on)", dim("--no-stream"), dim("flag"));
+    println!("  {}    Anything else is sent as a message to the agent", dim("<message>"));
 }
 
 fn list_sessions_compact(client: &Voxi) {
@@ -801,7 +919,6 @@ fn list_sessions_compact(client: &Voxi) {
                 let title = s.get("title").and_then(|v| v.as_str()).unwrap_or("(untitled)");
                 let modified = s.get("modified").and_then(|v| v.as_i64())
                     .map(|ts| {
-                        // Format as HH:MM or date depending on age
                         let now = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default()
@@ -831,17 +948,22 @@ fn list_sessions_compact(client: &Voxi) {
 fn cmd_chat(client: &Voxi, start_session: Option<String>, stream: bool) {
     let mut session_id = start_session.unwrap_or_else(generate_session_id);
 
-    // Banner
-    println!();
-    println!("  {} {}", bold(&green("Voxi")), bold("Chat"));
-    println!("  {}", dim("Type /help for commands. Press Ctrl-C or type /exit to quit."));
-    println!("  Session: {}", cyan(&session_id));
-    println!();
+    // Initial clear and banner
+    if is_tty() {
+        print!("\x1b[2J\x1b[H");
+        io::stdout().flush().ok();
+    }
+    print_chat_banner(client, &session_id);
 
     let stdin = io::stdin();
     loop {
+        // Output clean turn separator
+        if is_tty() {
+            println!("{}", dim(&"─".repeat(80)));
+        }
+
         // Prompt
-        print!("{}  ", bold(&magenta("you›")));
+        print!("{} ", bold(&magenta("👤 you›")));
         io::stdout().flush().ok();
 
         let mut line = String::new();
@@ -862,7 +984,11 @@ fn cmd_chat(client: &Voxi, start_session: Option<String>, stream: bool) {
 
             "/new" => {
                 session_id = generate_session_id();
-                println!("{} {}", green("✓ New session:"), cyan(&session_id));
+                if is_tty() {
+                    print!("\x1b[2J\x1b[H");
+                    io::stdout().flush().ok();
+                }
+                print_chat_banner(client, &session_id);
             }
 
             "/session" => {
@@ -877,7 +1003,11 @@ fn cmd_chat(client: &Voxi, start_session: Option<String>, stream: bool) {
                     println!("{}", yellow("Usage: /switch <session-id>"));
                 } else {
                     session_id = new_id.to_string();
-                    println!("{} {}", green("✓ Switched to:"), cyan(&session_id));
+                    if is_tty() {
+                        print!("\x1b[2J\x1b[H");
+                        io::stdout().flush().ok();
+                    }
+                    print_chat_banner(client, &session_id);
                 }
             }
 
@@ -889,17 +1019,27 @@ fn cmd_chat(client: &Voxi, start_session: Option<String>, stream: bool) {
             }
 
             prompt => {
-                // Print the agent label before streaming starts
-                print!("\n{}  ", bold(&cyan("voxi›")));
-                io::stdout().flush().ok();
+                let mut spinner = Some(Spinner::start("Thinking..."));
 
                 let result = if stream {
                     client.process_prompt_streaming(&session_id, prompt, |chunk| {
+                        if let Some(mut s) = spinner.take() {
+                            s.stop();
+                            print!("\r\x1b[2K");
+                            print!("{} ", bold(&cyan("🤖 voxi›")));
+                            io::stdout().flush().ok();
+                        }
                         print!("{}", chunk);
                         io::stdout().flush().ok();
                     })
                 } else {
                     let text_result = client.process_prompt(&session_id, prompt);
+                    if let Some(mut s) = spinner.take() {
+                        s.stop();
+                        print!("\r\x1b[2K");
+                        print!("{} ", bold(&cyan("🤖 voxi›")));
+                        io::stdout().flush().ok();
+                    }
                     text_result.map(|text| {
                         print!("{}", text);
                         voxi::api::PromptResponse {
@@ -910,12 +1050,30 @@ fn cmd_chat(client: &Voxi, start_session: Option<String>, stream: bool) {
                     })
                 };
 
+                // Clean up spinner if call finished without streaming any chunk
+                if let Some(mut s) = spinner.take() {
+                    s.stop();
+                    print!("\r\x1b[2K");
+                    print!("{} ", bold(&cyan("🤖 voxi›")));
+                    io::stdout().flush().ok();
+                }
+
                 match result {
                     Ok(resp) => {
                         println!("\n");
                         // Keep session_id in sync (agent may have assigned one)
                         if !resp.session_id.is_empty() {
                             session_id = resp.session_id;
+                        }
+
+                        // Display turn telemetry
+                        if let Ok(usage_val) = client.get_usage(Some(&session_id), None) {
+                            let p_tokens = usage_val.get("prompt_tokens").and_then(Value::as_i64).unwrap_or(0);
+                            let c_tokens = usage_val.get("completion_tokens").and_then(Value::as_i64).unwrap_or(0);
+                            let reqs = usage_val.get("total_requests").and_then(Value::as_i64).unwrap_or(0);
+                            if p_tokens > 0 || c_tokens > 0 {
+                                println!("  ⚙️  {}", dim(&format!("Tokens: {} prompt, {} completion | Requests: {}", p_tokens, c_tokens, reqs)));
+                            }
                         }
                     }
                     Err(e) => {
