@@ -8,6 +8,23 @@
         "port": 9090,
         "localhost_only": false
       }
+    },
+    {
+      "name": "voice",
+      "type": "voice",
+      "enabled": false,
+      "settings": {
+        "audio_backend": "auto",
+        "stt_model": "moonshine-tiny",
+        "tts_model": "kokoro-82m",
+        "correction_model": null,
+        "trigger_mode": "vad",
+        "wake_word": "hey voxi",
+        "language": "en",
+        "sample_rate": 16000,
+        "confidence_threshold": 0.85,
+        "auto_download": false
+      }
     }
   ]
 }

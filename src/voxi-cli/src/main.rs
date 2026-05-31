@@ -898,6 +898,13 @@ fn print_usage() {
     eprintln!("  voxi-cli config reload\n");
     eprintln!("Setup commands:");
     eprintln!("  voxi-cli setup         Interactive host setup wizard\n");
+    eprintln!("Voice model commands:");
+    eprintln!("  voxi-cli model list");
+    eprintln!("  voxi-cli model install <model_id>");
+    eprintln!("  voxi-cli model verify <model_id>");
+    eprintln!("  voxi-cli model remove <model_id>");
+    eprintln!("  voxi-cli model switch <task> <model_id>");
+    eprintln!("  voxi-cli model doctor\n");
     eprintln!("If no prompt given, starts interactive mode.");
 }
 
@@ -920,6 +927,205 @@ fn cmd_list_registrations(client: &Voxi) {
         Ok(result) => print_json(&result),
         Err(error) => print_error_and_exit(&error),
     }
+}
+
+/// Downloads model files by shelling out to `curl` (no unvendored HTTP crate
+/// is available offline). Fails clearly when `curl` is missing.
+struct CurlDownloader;
+
+impl voxi_voice::model_store::Downloader for CurlDownloader {
+    fn fetch(&self, url: &str, dest: &Path) -> Result<(), String> {
+        let status = std::process::Command::new("curl")
+            .arg("-fsSL")
+            .arg("--create-dirs")
+            .arg("-o")
+            .arg(dest)
+            .arg(url)
+            .status()
+            .map_err(|e| format!("failed to launch curl: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("curl exited with status {status}"))
+        }
+    }
+}
+
+/// Resolve the voice model directory (`~/.voxi/models/voice/` by default,
+/// override with `VOXI_VOICE_MODEL_DIR`).
+fn voice_model_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("VOXI_VOICE_MODEL_DIR") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    voxi_voice::config::default_model_dir()
+}
+
+/// Locate `models.voice.json`. Honors `VOXI_VOICE_REGISTRY`, then checks common
+/// install/source locations.
+fn voice_registry_path() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("VOXI_VOICE_REGISTRY") {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let candidates = [
+        PathBuf::from("data/config/models.voice.json"),
+        voice_model_dir().join("models.voice.json"),
+        PathBuf::from("/usr/share/voxi/models.voice.json"),
+    ];
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+fn load_voice_registry() -> voxi_voice::model_store::ModelRegistry {
+    let path = voice_registry_path().unwrap_or_else(|| {
+        print_error_and_exit(
+            "voice model registry not found; set VOXI_VOICE_REGISTRY or place \
+             data/config/models.voice.json",
+        )
+    });
+    match voxi_voice::model_store::ModelRegistry::load(&path, voice_model_dir()) {
+        Ok(r) => r,
+        Err(e) => print_error_and_exit(&format!("failed to load registry {}: {e}", path.display())),
+    }
+}
+
+fn cmd_model(args: &[String]) {
+    match args.first().map(|s| s.as_str()) {
+        Some("list") => {
+            let registry = load_voice_registry();
+            for s in registry.list() {
+                let mark = if s.installed { "[installed]" } else { "[       - ]" };
+                println!(
+                    "{mark} {:<28} task={:<12} backend={:<10} {} MB  {}",
+                    s.entry.model_id,
+                    s.entry.task,
+                    s.entry.backend,
+                    s.entry.size_mb,
+                    s.entry.language
+                );
+            }
+        }
+        Some("install") => {
+            let id = require_model_id(args, "install");
+            let registry = load_voice_registry();
+            println!("Installing '{id}'...");
+            match registry.download(&id, &CurlDownloader) {
+                Ok(report) => print_verify_report(&report),
+                Err(e) => print_error_and_exit(&format!("install failed: {e}")),
+            }
+        }
+        Some("verify") => {
+            let id = require_model_id(args, "verify");
+            let registry = load_voice_registry();
+            match registry.verify(&id) {
+                Ok(report) => print_verify_report(&report),
+                Err(e) => print_error_and_exit(&format!("verify failed: {e}")),
+            }
+        }
+        Some("remove") => {
+            let id = require_model_id(args, "remove");
+            let registry = load_voice_registry();
+            match registry.remove(&id) {
+                Ok(()) => println!("Removed '{id}'"),
+                Err(e) => print_error_and_exit(&format!("remove failed: {e}")),
+            }
+        }
+        Some("switch") => {
+            if args.len() < 3 {
+                print_error_and_exit("Usage: voxi-cli model switch <task> <model_id>");
+            }
+            let task = &args[1];
+            let model_id = &args[2];
+            let registry = load_voice_registry();
+            if registry.find(model_id).is_none() {
+                print_error_and_exit(&format!("unknown model id: {model_id}"));
+            }
+            persist_selection(task, model_id);
+            println!("Selected '{model_id}' for task '{task}'");
+        }
+        Some("doctor") => cmd_model_doctor(&load_voice_registry()),
+        _ => {
+            eprintln!("Usage:");
+            eprintln!("  voxi-cli model list");
+            eprintln!("  voxi-cli model install <model_id>");
+            eprintln!("  voxi-cli model verify <model_id>");
+            eprintln!("  voxi-cli model remove <model_id>");
+            eprintln!("  voxi-cli model switch <task> <model_id>");
+            eprintln!("  voxi-cli model doctor");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn require_model_id(args: &[String], sub: &str) -> String {
+    match args.get(1) {
+        Some(id) if !id.is_empty() => id.clone(),
+        _ => print_error_and_exit(&format!("Usage: voxi-cli model {sub} <model_id>")),
+    }
+}
+
+fn print_verify_report(report: &voxi_voice::model_store::VerifyReport) {
+    let checksum = match report.checksum_ok {
+        Some(true) => "checksum=OK",
+        Some(false) => "checksum=MISMATCH",
+        None => "checksum=skipped",
+    };
+    println!(
+        "{}: files_present={} {} — {}",
+        report.model_id, report.files_present, checksum, report.detail
+    );
+}
+
+/// Persist the selected model per task to `<model_dir>/selection.json`.
+fn persist_selection(task: &str, model_id: &str) {
+    let dir = voice_model_dir();
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        print_error_and_exit(&format!("cannot create model dir: {e}"));
+    }
+    let path = dir.join("selection.json");
+    let mut map: Map<String, Value> = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Map<String, Value>>(&s).ok())
+        .unwrap_or_default();
+    map.insert(task.to_string(), Value::String(model_id.to_string()));
+    let body = serde_json::to_string_pretty(&Value::Object(map)).unwrap_or_default();
+    if let Err(e) = std::fs::write(&path, body) {
+        print_error_and_exit(&format!("cannot write selection: {e}"));
+    }
+}
+
+fn cmd_model_doctor(registry: &voxi_voice::model_store::ModelRegistry) {
+    println!("Voice model directory: {}", voice_model_dir().display());
+    let mut installed = 0usize;
+    let mut issues = 0usize;
+    for status in registry.list() {
+        if !status.installed {
+            continue;
+        }
+        installed += 1;
+        match registry.verify(&status.entry.model_id) {
+            Ok(report) => {
+                print_verify_report(&report);
+                if report.checksum_ok == Some(false) || !report.files_present {
+                    issues += 1;
+                }
+            }
+            Err(e) => {
+                println!("{}: ERROR {e}", status.entry.model_id);
+                issues += 1;
+            }
+        }
+    }
+    let sel = voice_model_dir().join("selection.json");
+    if sel.is_file() {
+        println!("Active selection: {}", sel.display());
+    } else {
+        println!("Active selection: (none; using config defaults)");
+    }
+    println!("Doctor summary: {installed} installed, {issues} issue(s)");
 }
 
 fn main() {
@@ -993,6 +1199,10 @@ fn main() {
             }
             "setup" => {
                 cmd_setup();
+                return;
+            }
+            "model" => {
+                cmd_model(&args[i + 1..]);
                 return;
             }
             "dashboard" => {

@@ -1676,6 +1676,7 @@ dependencies = [
  "tower-http 0.5.2",
  "uuid",
  "voxi-core",
+ "voxi-voice",
  "zip",
 ]
 
@@ -1685,6 +1686,7 @@ version = "1.0.0"
 dependencies = [
  "serde_json",
  "voxi-client",
+ "voxi-voice",
 ]
 
 [[package]]
@@ -1730,6 +1732,17 @@ dependencies = [
  "serde_json",
  "tokio",
  "voxi-core",
+]
+
+[[package]]
+name = "voxi-voice"
+version = "1.0.0"
+dependencies = [
+ "log",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

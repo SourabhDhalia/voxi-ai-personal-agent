@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Voxi Host Linux Build & Run Script
-# Builds and runs Voxi natively on the host Linux (Ubuntu/WSL)
+# Voxi Host Build & Run Script
+# Builds and runs Voxi natively on macOS, Ubuntu, or WSL
 #
 # Usage:
 #   ./deploy.sh                   # Build (release) + install + run
@@ -553,6 +553,27 @@ EOF
     log "Installing embedded tool descriptors → ${DATA_DIR}/embedded"
     run cp -r "${EMBEDDED_TOOLS_SRC}/." "${DATA_DIR}/embedded/"
     ok "Embedded tool descriptors installed"
+  fi
+
+  # Voice model assets are optional and user-supplied (downloaded via
+  # `voxi-cli model install`). When a pre-populated `data/models/voice` tree is
+  # present in the checkout, bundle it; otherwise just ensure the target dir and
+  # the registry exist so the CLI can populate it later. The voice channel is
+  # disabled by default and degrades to null STT/TTS when no models are found,
+  # so a missing voice tree never breaks the daemon.
+  local VOICE_MODELS_SRC="${PROJECT_DIR}/data/models/voice"
+  local VOICE_MODELS_DIR="${DATA_DIR}/models/voice"
+  run mkdir -p "${VOICE_MODELS_DIR}"
+  if [ -d "${VOICE_MODELS_SRC}" ] && [ -n "$(ls -A "${VOICE_MODELS_SRC}" 2>/dev/null)" ]; then
+    log "Bundling voice model assets → ${VOICE_MODELS_DIR}"
+    run cp -r "${VOICE_MODELS_SRC}/." "${VOICE_MODELS_DIR}/"
+    ok "Voice model assets installed"
+  else
+    log "No bundled voice models; install later with: voxi-cli model install <id>"
+  fi
+  if [ -f "${BUNDLED_CONFIG_DIR}/models.voice.json" ]; then
+    run install -m 644 "${BUNDLED_CONFIG_DIR}/models.voice.json" \
+      "${VOICE_MODELS_DIR}/models.voice.json"
   fi
 
   ensure_shell_path

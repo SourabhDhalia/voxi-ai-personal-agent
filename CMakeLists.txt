@@ -78,6 +78,22 @@ INSTALL(FILES
         "${CMAKE_SOURCE_DIR}/data/config/system_prompt.txt"
         DESTINATION "${APP_DATA_DIR}/config")
 
+# Voice model registry (consumed by `voxi-cli model ...`). The voice channel is
+# disabled by default and falls back to null STT/TTS, so weights are optional
+# and user-installed at runtime.
+INSTALL(FILES
+        "${CMAKE_SOURCE_DIR}/data/config/models.voice.json"
+        DESTINATION "${APP_DATA_DIR}/config")
+
+# NOTE: Real on-device STT/TTS (Moonshine/Kokoro) requires the ONNX Runtime
+# shared library (libonnxruntime.so) built for the target arch. It is NOT
+# vendored here. To enable hardware inference in an embedded/DTV image:
+#   1. Cross-build or obtain libonnxruntime.so for the target.
+#   2. Install it alongside the daemon, e.g.:
+#        INSTALL(FILES "${ONNXRUNTIME_LIB}" DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+#   3. Build voxi-voice with the `onnx` feature and link the `ort` binding.
+# Until then the voice pipeline runs with the offline-safe null engines.
+
 
 
 # Systemd service/socket units

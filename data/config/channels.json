@@ -26,6 +26,6 @@
       "config_file": "discord_config.json",
       "required_keys": ["bot_token"]
     },
-    { "name": "voice", "enabled": true }
+    { "name": "voice", "enabled": false, "config_file": "voice_config.json" }
   ]
 }

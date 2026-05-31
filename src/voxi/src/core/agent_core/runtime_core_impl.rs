@@ -35,6 +35,13 @@ impl AgentCore {
         }
     }
 
+    /// Shared handle to the runtime event bus. Channels (e.g. the voice
+    /// channel) use this to publish lifecycle events onto the bus that the
+    /// dashboard and other subscribers consume.
+    pub fn event_bus(&self) -> Arc<EventBus> {
+        self.event_bus.clone()
+    }
+
     /// Compute a fast 64-bit hash of an arbitrary string slice.
     /// Used to detect system_prompt changes without storing the full text.
     fn hash_str(s: &str) -> u64 {
