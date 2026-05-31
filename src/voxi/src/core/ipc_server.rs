@@ -727,6 +727,197 @@ impl IpcServer {
                 })
             }
 
+            "get_hooks_config" => {
+                let config = agent.hooks_config.lock().unwrap();
+                match serde_json::to_value(&*config) {
+                    Ok(val) => val,
+                    Err(e) => json!({"error": format!("Serialization failed: {}", e)}),
+                }
+            }
+
+            "set_hooks_config" => {
+                let new_config_val = params.get("config").cloned().unwrap_or(Value::Null);
+                match serde_json::from_value::<crate::core::hooks::HooksConfig>(new_config_val) {
+                    Ok(new_config) => {
+                        match new_config.save(&agent.platform.paths.config_dir) {
+                            Ok(_) => {
+                                *agent.hooks_config.lock().unwrap() = new_config;
+                                json!({"status": "ok"})
+                            }
+                            Err(e) => json!({"error": e}),
+                        }
+                    }
+                    Err(e) => json!({"error": format!("Invalid config format: {}", e)}),
+                }
+            }
+
+            "submit_approval" => {
+                let approval_id = params["approval_id"].as_str().unwrap_or("").to_string();
+                let allowed = params["allowed"].as_bool()
+                    .or_else(|| params["approved"].as_bool())
+                    .unwrap_or(false);
+
+                if approval_id.is_empty() {
+                    json!({"error": "Missing 'approval_id'"})
+                } else {
+                    let mut approvals = agent.pending_approvals.lock().unwrap();
+                    if let Some(tx) = approvals.remove(&approval_id) {
+                        let _ = tx.send(allowed);
+                        json!({"status": "ok"})
+                    } else {
+                        json!({"error": "Approval ID not found"})
+                    }
+                }
+            }
+
+            "subscribe_events" => {
+                let (tx, rx) = std::sync::mpsc::channel::<crate::core::event_bus::SystemEvent>();
+                let tx_clone = tx.clone();
+                let sub_id = agent.event_bus().subscribe_all(move |event| {
+                    let _ = tx_clone.send(event.clone());
+                });
+
+                // Write the JSON-RPC acknowledgment first
+                let ack = json!({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "result": {"status": "subscribed"}
+                }).to_string();
+                Self::send_response(client_fd, &ack);
+
+                let mut last_heartbeat = std::time::Instant::now();
+                loop {
+                    // Receive with 1 second timeout to allow periodic heartbeat/exit check
+                    match rx.recv_timeout(std::time::Duration::from_millis(1000)) {
+                        Ok(event) => {
+                            let event_json = json!({
+                                "event_type": format!("{:?}", event.event_type),
+                                "source": event.source,
+                                "data": event.data,
+                                "timestamp": event.timestamp
+                            }).to_string() + "\n";
+
+                            let mut sent = 0;
+                            let mut failed = false;
+                            while sent < event_json.len() {
+                                let n = unsafe {
+                                    libc::write(
+                                        client_fd,
+                                        event_json.as_ptr().add(sent) as *const _,
+                                        event_json.len() - sent,
+                                    )
+                                };
+                                if n <= 0 {
+                                    failed = true;
+                                    break;
+                                }
+                                sent += n as usize;
+                            }
+                            if failed {
+                                break;
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            // Send heartbeat ping every 15 seconds to check connection health
+                            if last_heartbeat.elapsed() >= std::time::Duration::from_secs(15) {
+                                let ping_msg = json!({"type": "ping"}).to_string() + "\n";
+                                let mut sent = 0;
+                                let mut failed = false;
+                                while sent < ping_msg.len() {
+                                    let n = unsafe {
+                                        libc::write(
+                                            client_fd,
+                                            ping_msg.as_ptr().add(sent) as *const _,
+                                            ping_msg.len() - sent,
+                                        )
+                                    };
+                                    if n <= 0 {
+                                        failed = true;
+                                        break;
+                                    }
+                                    sent += n as usize;
+                                }
+                                if failed {
+                                    break;
+                                }
+                                last_heartbeat = std::time::Instant::now();
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            break;
+                        }
+                    }
+                }
+
+                agent.event_bus().unsubscribe(sub_id);
+                // Return a result, even though socket is closed
+                json!({"status": "unsubscribed"})
+            }
+
+            "list_skills" => {
+                let registrations = agent.list_registered_paths();
+                let snapshot = crate::core::skill_capability_manager::load_snapshot(
+                    &agent.platform.paths,
+                    &registrations,
+                );
+                let mut summary = snapshot.summary_json();
+                summary["drafts"] = crate::core::skill_capability_manager::scan_draft_skills(&agent.platform.paths);
+                summary
+            }
+
+            "approve_draft_skill" => {
+                let name = params["name"].as_str().unwrap_or("").to_string();
+                if name.is_empty() {
+                    json!({"error": "Missing 'name'"})
+                } else {
+                    match crate::core::skill_capability_manager::approve_draft_skill(
+                        &agent.platform.paths,
+                        &name,
+                    ) {
+                        Ok(_) => json!({"status": "ok"}),
+                        Err(e) => json!({"error": e}),
+                    }
+                }
+            }
+
+            "discard_draft_skill" => {
+                let name = params["name"].as_str().unwrap_or("").to_string();
+                if name.is_empty() {
+                    json!({"error": "Missing 'name'"})
+                } else {
+                    match crate::core::skill_capability_manager::discard_draft_skill(
+                        &agent.platform.paths,
+                        &name,
+                    ) {
+                        Ok(_) => json!({"status": "ok"}),
+                        Err(e) => json!({"error": e}),
+                    }
+                }
+            }
+
+            "toggle_skill" => {
+                let name = params["name"].as_str().unwrap_or("").to_string();
+                let enabled = params["enabled"].as_bool().unwrap_or(true);
+
+                if name.is_empty() {
+                    json!({"error": "Missing 'name'"})
+                } else {
+                    let registrations = agent.list_registered_paths();
+                    match crate::core::skill_capability_manager::toggle_skill(
+                        &agent.platform.paths,
+                        &registrations,
+                        &name,
+                        enabled,
+                    ) {
+                        Ok(snapshot) => json!({
+                            "status": "ok",
+                            "snapshot": snapshot.summary_json()
+                        }),
+                        Err(e) => json!({"error": e}),
+                    }
+                }
+            }
+
             _ => {
                 return json!({"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":req_id})
                     .to_string();

@@ -11,6 +11,7 @@ pub mod textual_skill_scanner;
 pub mod tool_declaration_builder;
 pub mod tool_dispatcher;
 pub mod tool_policy;
+pub mod hooks;
 
 pub mod event_bus;
 pub mod intent_analyzer;

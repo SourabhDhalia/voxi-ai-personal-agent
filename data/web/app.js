@@ -8,17 +8,24 @@
     let authToken =
         localStorage.getItem('admin_token') ||
         sessionStorage.getItem('admin_token');
+    let eventSource = null;
+    let approvalCountdownTimer = null;
 
     function persistAdminToken(token) {
         authToken = token;
         localStorage.setItem('admin_token', token);
         sessionStorage.setItem('admin_token', token);
+        initEventStream();
     }
 
     function clearAdminToken() {
         authToken = null;
         localStorage.removeItem('admin_token');
         sessionStorage.removeItem('admin_token');
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
     }
 
     function getAuthHeaders() {
@@ -73,6 +80,7 @@
                 }
             });
         }
+        else if (page === 'skills') loadSkills();
         else if (page === 'ota') loadOta();
         else if (page === 'admin') loadAdmin();
     }
@@ -1338,6 +1346,9 @@
 
     function addChatMsg(role, text) {
         if (!chatMessages) return;
+        if (role === 'assistant') {
+            text = checkAndShowHookApproval(text);
+        }
         const welcome =
             chatMessages.querySelector('.chat-welcome');
         if (welcome) welcome.remove();
@@ -1543,9 +1554,10 @@
         const sessionId = currentChatSessionId;
         const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
 
+        clearTimeline();
         addChatMsg('user', prompt);
         chatInput.value = '';
-        
+
         sessionStorage.setItem('active_request_id_' + (sessionId || 'new'), requestId);
 
         showThinkingIndicator(sessionId || 'new', requestId);
@@ -2843,8 +2855,406 @@
     }
     window._showToast = showToast;
 
+    // --- Hook Approval Modal ---
+    let currentApprovalId = null;
+
+    function showHookApprovalModal(req) {
+        currentApprovalId = req.approval_id;
+        const modal = document.getElementById('hook-approval-modal');
+        const toolNameEl = document.getElementById('approval-tool-name');
+        const toolArgsEl = document.getElementById('approval-tool-args');
+        const dangerBadge = document.getElementById('approval-danger-badge');
+        const countdownText = document.getElementById('approval-countdown-text');
+        const progressCircle = document.getElementById('countdown-ring-progress');
+
+        if (!modal) return;
+
+        if (toolNameEl) toolNameEl.textContent = req.tool;
+        if (toolArgsEl) {
+            toolArgsEl.textContent = typeof req.arguments === 'object'
+                ? JSON.stringify(req.arguments, null, 2)
+                : String(req.arguments);
+        }
+
+        if (dangerBadge) {
+            const isDanger = req.tool === 'run_command' || req.tool.startsWith('run_') || req.tool.includes('execute');
+            dangerBadge.style.display = isDanger ? '' : 'none';
+        }
+
+        modal.classList.remove('hidden');
+        document.body.classList.add('modal-open');
+
+        let totalSeconds = 30;
+        let remainingSeconds = totalSeconds;
+        if (countdownText) countdownText.textContent = remainingSeconds;
+        if (progressCircle) {
+            progressCircle.style.strokeDashoffset = '0';
+        }
+
+        if (approvalCountdownTimer) {
+            clearInterval(approvalCountdownTimer);
+        }
+
+        approvalCountdownTimer = setInterval(() => {
+            remainingSeconds--;
+            if (countdownText) countdownText.textContent = remainingSeconds;
+
+            if (progressCircle) {
+                const dashArray = 213.6;
+                const offset = dashArray * (1 - remainingSeconds / totalSeconds);
+                progressCircle.style.strokeDashoffset = offset;
+            }
+
+            if (remainingSeconds <= 0) {
+                clearInterval(approvalCountdownTimer);
+                hideHookApprovalModal();
+            }
+        }, 1000);
+    }
+
+    function hideHookApprovalModal() {
+        const modal = document.getElementById('hook-approval-modal');
+        if (modal) {
+            modal.classList.add('hidden');
+        }
+        document.body.classList.remove('modal-open');
+        if (approvalCountdownTimer) {
+            clearInterval(approvalCountdownTimer);
+            approvalCountdownTimer = null;
+        }
+        currentApprovalId = null;
+    }
+
+    async function submitApprovalDecision(allowed) {
+        if (!currentApprovalId) return;
+        const approvalId = currentApprovalId;
+        hideHookApprovalModal();
+
+        const resp = await apiPost('approval', {
+            approval_id: approvalId,
+            allowed: allowed
+        });
+
+        if (resp && resp.status === 'ok') {
+            showToast(allowed ? 'Action approved' : 'Action denied', allowed ? 'success' : 'warning');
+        } else {
+            showToast('Failed to submit decision: ' + (resp ? resp.error : 'unknown'), 'error');
+        }
+    }
+
+    function checkAndShowHookApproval(text) {
+        if (!text) return text;
+        const match = text.match(/<approval_request>([\s\S]*?)<\/approval_request>/);
+        if (match) {
+            try {
+                const req = JSON.parse(match[1]);
+                showHookApprovalModal(req);
+            } catch (e) {
+                console.error("Failed to parse approval request JSON:", e);
+            }
+            return text.replace(/<approval_request>[\s\S]*?<\/approval_request>/, '').trim();
+        }
+        return text;
+    }
+
+    // Bind approval action buttons
+    const btnApproveAction = document.getElementById('btn-approve-action');
+    const btnDenyAction = document.getElementById('btn-deny-action');
+    if (btnApproveAction) {
+        btnApproveAction.addEventListener('click', () => {
+            submitApprovalDecision(true);
+        });
+    }
+    if (btnDenyAction) {
+        btnDenyAction.addEventListener('click', () => {
+            submitApprovalDecision(false);
+        });
+    }
+
+    // --- Execution Timeline ---
+    let timelineNodes = [];
+
+    function clearTimeline() {
+        timelineNodes = [];
+        const container = document.getElementById('timeline-container');
+        if (container) {
+            container.innerHTML = '<div class="timeline-empty-hint">No tool execution logs in this turn yet.</div>';
+        }
+    }
+
+    function addTimelineNode(tool, args) {
+        const container = document.getElementById('timeline-container');
+        if (!container) return;
+
+        let listEl = container.querySelector('.timeline-list');
+        if (!listEl) {
+            container.innerHTML = '<div class="timeline-list"></div>';
+            listEl = container.querySelector('.timeline-list');
+        }
+
+        const id = 'tl-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+        const node = { id, tool, state: 'running', timestamp: new Date() };
+        timelineNodes.push(node);
+
+        const argsStr = args ? JSON.stringify(args) : '';
+
+        const nodeEl = document.createElement('div');
+        nodeEl.className = 'timeline-node';
+        nodeEl.id = id;
+        nodeEl.innerHTML = `
+            <div class="timeline-node-dot running"></div>
+            <div class="timeline-node-title">${escHtml(tool)}</div>
+            <div class="timeline-node-subtitle">${escHtml(argsStr)}</div>
+        `;
+        listEl.appendChild(nodeEl);
+        container.scrollTop = container.scrollHeight;
+
+        const sidebar = document.getElementById('chat-timeline-sidebar');
+        if (sidebar && sidebar.classList.contains('collapsed')) {
+            sidebar.classList.remove('collapsed');
+        }
+    }
+
+    function updateTimelineNode(tool, success, error) {
+        const node = [...timelineNodes].reverse().find(n => n.tool === tool && n.state === 'running');
+        if (!node) return;
+
+        node.state = success ? 'success' : 'failure';
+        const el = document.getElementById(node.id);
+        if (el) {
+            const dot = el.querySelector('.timeline-node-dot');
+            if (dot) {
+                dot.className = 'timeline-node-dot ' + (success ? 'success' : 'failure');
+            }
+            if (error) {
+                const sub = el.querySelector('.timeline-node-subtitle');
+                if (sub) {
+                    sub.textContent += ' (Error: ' + error + ')';
+                }
+            }
+        }
+    }
+
+    // Timeline Sidebar toggle handlers
+    const toggleTimelineBtn = document.getElementById('toggle-timeline-btn');
+    const chatTimelineSidebar = document.getElementById('chat-timeline-sidebar');
+    const closeTimelineBtn = document.getElementById('close-timeline-btn');
+
+    if (toggleTimelineBtn && chatTimelineSidebar) {
+        toggleTimelineBtn.addEventListener('click', () => {
+            chatTimelineSidebar.classList.toggle('collapsed');
+        });
+    }
+    if (closeTimelineBtn && chatTimelineSidebar) {
+        closeTimelineBtn.addEventListener('click', () => {
+            chatTimelineSidebar.classList.add('collapsed');
+        });
+    }
+
+    // --- SSE Event Stream ---
+    function initEventStream() {
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+
+        const token = authToken || '';
+        const url = `/api/events?token=${encodeURIComponent(token)}`;
+
+        eventSource = new EventSource(url);
+
+        eventSource.onmessage = function(event) {
+            try {
+                const raw = JSON.parse(event.data);
+                const type = parseEventType(raw.event_type || '');
+                handleIncomingEvent(type, raw.data, raw.timestamp);
+            } catch (e) {
+                console.error("Failed to parse event:", e);
+            }
+        };
+
+        eventSource.onerror = function(err) {
+            console.error("SSE connection error:", err);
+        };
+    }
+
+    function parseEventType(typeStr) {
+        if (typeStr.startsWith('Custom("') && typeStr.endsWith('")')) {
+            return typeStr.substring(8, typeStr.length - 2);
+        }
+        return typeStr;
+    }
+
+    function handleIncomingEvent(type, data, timestamp) {
+        if (type === 'tool_start') {
+            addTimelineNode(data.tool, data.arguments);
+        } else if (type === 'tool_end') {
+            updateTimelineNode(data.tool, data.success, data.error);
+        } else if (type === 'hook_approval_request') {
+            showHookApprovalModal(data);
+        } else if (type === 'hook_approval_resolved') {
+            if (currentApprovalId === data.approval_id) {
+                hideHookApprovalModal();
+            }
+        }
+    }
+
+    // --- Skills Catalog ---
+    async function loadSkills() {
+        const grid = document.getElementById('skills-grid');
+        const draftsContainer = document.getElementById('skills-drafts-container');
+        const draftsList = document.getElementById('skills-drafts-list');
+
+        if (grid) {
+            grid.innerHTML = `
+                <div class="skeleton-card shimmer"></div>
+                <div class="skeleton-card shimmer"></div>
+                <div class="skeleton-card shimmer"></div>
+            `;
+        }
+
+        const data = await apiFetch('skills');
+        if (!data || !grid) {
+            if (grid) grid.innerHTML = '<p class="empty-state">Failed to load skills.</p>';
+            return;
+        }
+
+        const drafts = data.drafts || [];
+        if (drafts.length > 0 && draftsContainer && draftsList) {
+            draftsContainer.classList.remove('hidden');
+            draftsList.innerHTML = drafts.map(draft => {
+                const diffHtml = generateDiffHtml(draft.original_content, draft.content);
+                return `
+                    <div class="draft-card" data-draft-name="${escHtml(draft.name)}">
+                        <div class="draft-card-header">
+                            <div>
+                                <span class="draft-badge">Draft Skill</span>
+                                <h4 style="margin: 4px 0 0 0; font-size: 0.95rem; color: var(--text-primary);">${escHtml(draft.name)}</h4>
+                            </div>
+                            <span class="skill-type">Markdown Draft</span>
+                        </div>
+                        <div class="draft-diff-container">
+                            <div class="draft-diff-header">SKILL.md.draft</div>
+                            <div class="draft-diff-body">${diffHtml}</div>
+                        </div>
+                        <div class="draft-card-actions">
+                            <button class="btn-outline btn-danger-outline btn-discard-draft">Discard Draft</button>
+                            <button class="btn-primary btn-success btn-approve-draft">Approve & Save</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            draftsList.querySelectorAll('.draft-card').forEach(card => {
+                const name = card.dataset.draftName;
+                card.querySelector('.btn-approve-draft').addEventListener('click', async () => {
+                    card.querySelector('.btn-approve-draft').disabled = true;
+                    const resp = await apiPost('skills/approve', { name });
+                    if (resp && resp.status === 'ok') {
+                        showToast(`Approved and saved skill: ${name}`, 'success');
+                        loadSkills();
+                    } else {
+                        showToast(`Failed to approve: ${resp ? resp.error : 'unknown'}`, 'error');
+                        card.querySelector('.btn-approve-draft').disabled = false;
+                    }
+                });
+                card.querySelector('.btn-discard-draft').addEventListener('click', async () => {
+                    if (!confirm(`Are you sure you want to discard draft for ${name}?`)) return;
+                    card.querySelector('.btn-discard-draft').disabled = true;
+                    const resp = await apiPost('skills/discard', { name });
+                    if (resp && resp.status === 'ok') {
+                        showToast(`Discarded draft: ${name}`, 'success');
+                        loadSkills();
+                    } else {
+                        showToast(`Failed to discard: ${resp ? resp.error : 'unknown'}`, 'error');
+                        card.querySelector('.btn-discard-draft').disabled = false;
+                    }
+                });
+            });
+        } else if (draftsContainer) {
+            draftsContainer.classList.add('hidden');
+        }
+
+        const skills = data.skills || [];
+        if (skills.length === 0) {
+            grid.innerHTML = '<p class="empty-state">No skills loaded.</p>';
+            return;
+        }
+
+        grid.innerHTML = skills.map(skill => {
+            const checked = skill.enabled ? 'checked' : '';
+            const missingDeps = !skill.dependency_ready && skill.missing_requires && skill.missing_requires.length > 0
+                ? `<div class="skill-path" style="border-color: rgba(239, 68, 68, 0.2); color: var(--danger); margin-top: 6px;">Missing dependencies: ${escHtml(skill.missing_requires.join(', '))}</div>`
+                : '';
+            return `
+                <div class="skill-card">
+                    <div class="skill-card-header">
+                        <div class="skill-title-wrap">
+                            <h4 class="skill-title" title="${escHtml(skill.name)}">${escHtml(skill.name)}</h4>
+                            <span class="skill-type">${escHtml(skill.root_kind || 'user')} skill</span>
+                        </div>
+                        <div class="skill-toggle-wrap">
+                            <label class="switch">
+                                <input type="checkbox" class="skill-toggle-input" data-skill-name="${escHtml(skill.name)}" ${checked}>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <p class="skill-desc">${escHtml(skill.description || 'No description provided.')}</p>
+                    <div class="skill-path" title="${escHtml(skill.path)}">${escHtml(skill.path)}</div>
+                    ${missingDeps}
+                </div>
+            `;
+        }).join('');
+
+        grid.querySelectorAll('.skill-toggle-input').forEach(input => {
+            input.addEventListener('change', async () => {
+                const name = input.dataset.skillName;
+                const enabled = input.checked;
+                input.disabled = true;
+                const resp = await apiPost('skills', { name, enabled });
+                if (resp && !resp.error) {
+                    showToast(`Skill ${name} ${enabled ? 'enabled' : 'disabled'}`, 'success');
+                } else {
+                    showToast(`Failed to toggle skill: ${resp ? resp.error : 'unknown'}`, 'error');
+                    input.checked = !enabled;
+                }
+                input.disabled = false;
+            });
+        });
+    }
+
+    function generateDiffHtml(original, draft) {
+        if (!original) {
+            return draft.split('\n').map(l => `<div class="diff-line added">+ ${escHtml(l)}</div>`).join('');
+        }
+        const origLines = original.split('\n');
+        const draftLines = draft.split('\n');
+
+        let html = '';
+        const max = Math.max(origLines.length, draftLines.length);
+        for (let i = 0; i < max; i++) {
+            const orig = origLines[i];
+            const drft = draftLines[i];
+            if (orig === drft) {
+                if (orig !== undefined) {
+                    html += `<div class="diff-line normal">  ${escHtml(orig)}</div>`;
+                }
+            } else {
+                if (orig !== undefined) {
+                    html += `<div class="diff-line deleted">- ${escHtml(orig)}</div>`;
+                }
+                if (drft !== undefined) {
+                    html += `<div class="diff-line added">+ ${escHtml(drft)}</div>`;
+                }
+            }
+        }
+        return html;
+    }
+
     // --- Initial Load ---
     formatChatSessionMeta();
     startOutboundPolling();
+    initEventStream();
     loadDashboard();
 })();

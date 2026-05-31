@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
-const SKILL_CAPABILITIES_CONFIG: &str = "skill_capabilities.json";
+const SKILL_CAPABILITIES_CONFIG: &str = "skills_state.json";
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SkillCapabilityConfig {
@@ -446,6 +446,17 @@ fn collect_skill_roots(paths: &PlatformPaths, registrations: &RegisteredPaths) -
         kind: "user".to_string(),
         external: false,
     });
+
+    if let Ok(cwd) = std::env::current_dir() {
+        let repo_skills = cwd.join(".agents").join("skills");
+        if repo_skills.exists() && repo_skills.is_dir() {
+            roots.push(SkillRoot {
+                path: repo_skills.to_string_lossy().to_string(),
+                kind: "repo".to_string(),
+                external: false,
+            });
+        }
+    }
     roots.push(SkillRoot {
         path: paths.skill_hubs_dir.to_string_lossy().to_string(),
         kind: "system".to_string(),
@@ -507,6 +518,106 @@ fn registered_tool_names(paths: &PlatformPaths, registrations: &RegisteredPaths)
         .into_iter()
         .filter_map(|tool| normalize_skill_name(&tool.name).ok())
         .collect()
+}
+
+pub fn toggle_skill(
+    paths: &PlatformPaths,
+    registrations: &RegisteredPaths,
+    skill_name: &str,
+    enabled: bool,
+) -> Result<SkillCapabilitySnapshot, String> {
+    let config_path = paths.config_dir.join(SKILL_CAPABILITIES_CONFIG);
+    let mut config = load_config(&config_path);
+
+    let normalized = normalize_skill_name(skill_name)
+        .map_err(|e| format!("Invalid skill name: {}", e))?;
+
+    if enabled {
+        config.disabled_skills.retain(|s| {
+            normalize_skill_name(s).unwrap_or_default() != normalized
+        });
+    } else {
+        let is_already_disabled = config.disabled_skills.iter().any(|s| {
+            normalize_skill_name(s).unwrap_or_default() == normalized
+        });
+        if !is_already_disabled {
+            config.disabled_skills.push(skill_name.to_string());
+        }
+    }
+
+    let content = serde_json::to_string_pretty(&config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+    std::fs::write(&config_path, content)
+        .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+    invalidate_snapshot_cache(SkillSnapshotInvalidationReason::CapabilityConfigChanged);
+
+    Ok(load_snapshot(paths, registrations))
+}
+
+pub fn scan_draft_skills(paths: &PlatformPaths) -> Value {
+    let mut drafts = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&paths.skills_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let draft_md = path.join("SKILL.md.draft");
+                if draft_md.exists() && draft_md.is_file() {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let content = std::fs::read_to_string(&draft_md).unwrap_or_default();
+                    let original_md = path.join("SKILL.md");
+                    let original_content = if original_md.exists() {
+                        std::fs::read_to_string(&original_md).ok()
+                    } else {
+                        None
+                    };
+                    drafts.push(json!({
+                        "name": name,
+                        "path": draft_md.to_string_lossy().to_string(),
+                        "content": content,
+                        "original_content": original_content,
+                    }));
+                }
+            }
+        }
+    }
+    Value::Array(drafts)
+}
+
+pub fn approve_draft_skill(paths: &PlatformPaths, skill_name: &str) -> Result<(), String> {
+    let skill_dir = paths.skills_dir.join(skill_name);
+    let draft_md = skill_dir.join("SKILL.md.draft");
+    let target_md = skill_dir.join("SKILL.md");
+
+    if !draft_md.exists() {
+        return Err("Draft file does not exist".to_string());
+    }
+
+    std::fs::rename(&draft_md, &target_md)
+        .map_err(|e| format!("Failed to approve draft skill: {}", e))?;
+
+    invalidate_snapshot_cache(SkillSnapshotInvalidationReason::SkillRootChanged);
+    Ok(())
+}
+
+pub fn discard_draft_skill(paths: &PlatformPaths, skill_name: &str) -> Result<(), String> {
+    let skill_dir = paths.skills_dir.join(skill_name);
+    let draft_md = skill_dir.join("SKILL.md.draft");
+
+    if draft_md.exists() {
+        std::fs::remove_file(&draft_md)
+            .map_err(|e| format!("Failed to delete draft skill: {}", e))?;
+    }
+
+    // If directory is empty, remove it
+    if let Ok(mut entries) = std::fs::read_dir(&skill_dir) {
+        if entries.next().is_none() {
+            let _ = std::fs::remove_dir(&skill_dir);
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1,0 +1,52 @@
+{
+  "name": "hooks-external-disabled-by-default",
+  "offline_safe": true,
+  "steps": [
+    {
+      "name": "configure-external-hook-disabled",
+      "method": "set_hooks_config",
+      "params": {
+        "config": {
+          "external_enabled": false,
+          "timeout_ms": 5000,
+          "rules": [
+            {
+              "event": "pre_tool",
+              "matcher": "file_manager",
+              "action": "external_script.sh"
+            }
+          ]
+        }
+      },
+      "assertions": [
+        {
+          "path": "status",
+          "equals": "ok"
+        }
+      ]
+    },
+    {
+      "name": "try-executing-external-hook-disabled",
+      "method": "bridge_tool",
+      "params": {
+        "tool_name": "file_manager",
+        "allowed_tools": ["file_manager"],
+        "args": {
+          "session_id": "hooks-test-session",
+          "operation": "read",
+          "path": "somefile.txt"
+        }
+      },
+      "assertions": [
+        {
+          "path": "success",
+          "equals": false
+        },
+        {
+          "path": "error",
+          "contains": "External hooks are disabled"
+        }
+      ]
+    }
+  ]
+}

@@ -105,6 +105,8 @@ const ALLOWED_CONFIGS: &[&str] = &[
     "web_search_config.json",
     "voice_config.json",
     "system_prompt.txt",
+    "hooks.json",
+    "skills_state.json",
 ];
 const BRIDGE_RATE_LIMIT_PER_SECOND: usize = 10;
 
@@ -330,7 +332,13 @@ async fn main() {
         .route("/api/bridge/chat", post(api_bridge_chat))
         .route("/api/voice/config", get(api_voice_config))
         .route("/api/capabilities", get(api_capabilities))
+        .route("/api/events", get(api_events))
+        .route("/api/skills", get(api_skills_get).post(api_skills_post))
+        .route("/api/skills/approve", post(api_skills_approve))
+        .route("/api/skills/discard", post(api_skills_discard))
+        .route("/api/approval", post(api_approval))
         .route("/api/a2a", post(api_a2a));
+
 
     let app = Router::new()
         .nest_service("/apps", ServeDir::new(web_root.join("apps")))
@@ -1598,6 +1606,306 @@ async fn api_capabilities(
         "tools": tools,
         "workflows": workflows
     })))
+}
+
+async fn api_skills_get() -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    match tokio::task::spawn_blocking(|| ipc_call("list_skills", json!({})))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+    {
+        Some(snapshot) => Ok(Json(snapshot)),
+        None => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to fetch skills from daemon",
+        )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ToggleSkillPayload {
+    name: String,
+    enabled: bool,
+}
+
+async fn api_skills_post(
+    Json(payload): Json<ToggleSkillPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    match tokio::task::spawn_blocking(move || {
+        ipc_call(
+            "toggle_skill",
+            json!({
+                "name": payload.name,
+                "enabled": payload.enabled,
+            }),
+        )
+    })
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    {
+        Some(result) => {
+            if result.get("error").is_some() {
+                Err(json_error(
+                    StatusCode::BAD_REQUEST,
+                    result["error"].as_str().unwrap_or("Failed to toggle skill"),
+                ))
+            } else {
+                Ok(Json(result))
+            }
+        }
+        None => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to toggle skill in daemon",
+        )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ApproveSkillPayload {
+    name: String,
+}
+
+async fn api_skills_approve(
+    Json(payload): Json<ApproveSkillPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    match tokio::task::spawn_blocking(move || {
+        ipc_call(
+            "approve_draft_skill",
+            json!({
+                "name": payload.name,
+            }),
+        )
+    })
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    {
+        Some(result) => {
+            if result.get("error").is_some() {
+                Err(json_error(
+                    StatusCode::BAD_REQUEST,
+                    result["error"].as_str().unwrap_or("Failed to approve draft skill"),
+                ))
+            } else {
+                Ok(Json(result))
+            }
+        }
+        None => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to approve draft skill in daemon",
+        )),
+    }
+}
+
+async fn api_skills_discard(
+    Json(payload): Json<ApproveSkillPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    match tokio::task::spawn_blocking(move || {
+        ipc_call(
+            "discard_draft_skill",
+            json!({
+                "name": payload.name,
+            }),
+        )
+    })
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    {
+        Some(result) => {
+            if result.get("error").is_some() {
+                Err(json_error(
+                    StatusCode::BAD_REQUEST,
+                    result["error"].as_str().unwrap_or("Failed to discard draft skill"),
+                ))
+            } else {
+                Ok(Json(result))
+            }
+        }
+        None => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to discard draft skill in daemon",
+        )),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ApprovalPayload {
+    approval_id: String,
+    allowed: bool,
+}
+
+async fn api_approval(
+    Json(payload): Json<ApprovalPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    match tokio::task::spawn_blocking(move || {
+        ipc_call(
+            "submit_approval",
+            json!({
+                "approval_id": payload.approval_id,
+                "allowed": payload.allowed,
+            }),
+        )
+    })
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    {
+        Some(result) => {
+            if result.get("error").is_some() {
+                Err(json_error(
+                    StatusCode::BAD_REQUEST,
+                    result["error"].as_str().unwrap_or("Failed to submit approval"),
+                ))
+            } else {
+                Ok(Json(result))
+            }
+        }
+        None => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to submit approval in daemon",
+        )),
+    }
+}
+
+
+#[derive(serde::Deserialize)]
+struct EventsQuery {
+    token: Option<String>,
+}
+
+async fn api_events(
+    State(state): State<AppState>,
+    Query(query): Query<EventsQuery>,
+) -> Result<axum::response::Sse<impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>, (StatusCode, Json<Value>)> {
+    // Validate token
+    let is_valid = if let Some(ref token) = query.token {
+        let stored = state
+            .admin_pw_hash
+            .lock()
+            .map(|h| h.clone())
+            .unwrap_or_default();
+        let in_memory = state
+            .active_tokens
+            .lock()
+            .map(|t| t.contains(token))
+            .unwrap_or(false);
+        in_memory || validate_auth_token(token, &stored)
+    } else {
+        false
+    };
+
+    if !is_valid {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+    tokio::task::spawn_blocking(move || {
+        unsafe {
+            let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+            if fd < 0 {
+                return;
+            }
+
+            let (addr, addr_len) = match get_ipc_addr() {
+                Ok(val) => val,
+                Err(_) => {
+                    libc::close(fd);
+                    return;
+                }
+            };
+
+            // Set recv timeout to zero (blocking) since we stream events
+            let timeout = libc::timeval {
+                tv_sec: 0,
+                tv_usec: 0,
+            };
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                &timeout as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+            );
+
+            if libc::connect(fd, &addr as *const _ as *const libc::sockaddr, addr_len) < 0 {
+                libc::close(fd);
+                return;
+            }
+
+            // Call subscribe_events
+            let req = json!({
+                "jsonrpc": "2.0",
+                "method": "subscribe_events",
+                "id": 1,
+                "params": {}
+            });
+            let data = req.to_string();
+            let len_bytes = (data.len() as u32).to_be_bytes();
+            if libc::write(fd, len_bytes.as_ptr() as *const _, 4) != 4 {
+                libc::close(fd);
+                return;
+            }
+            if libc::write(fd, data.as_ptr() as *const _, data.len()) as usize != data.len() {
+                libc::close(fd);
+                return;
+            }
+
+            // Read the JSON-RPC acknowledgment
+            let mut ack_len_buf = [0u8; 4];
+            if libc::recv(fd, ack_len_buf.as_mut_ptr() as *mut _, 4, libc::MSG_WAITALL) != 4 {
+                libc::close(fd);
+                return;
+            }
+            let ack_len = u32::from_be_bytes(ack_len_buf) as usize;
+            let mut ack_buf = vec![0u8; ack_len];
+            if libc::recv(fd, ack_buf.as_mut_ptr() as *mut _, ack_len, libc::MSG_WAITALL) as usize != ack_len {
+                libc::close(fd);
+                return;
+            }
+
+            // Receive raw events (newline delimited)
+            let mut read_buf = [0u8; 4096];
+            let mut line_accumulator = Vec::new();
+
+            loop {
+                let n = libc::recv(fd, read_buf.as_mut_ptr() as *mut _, read_buf.len(), 0);
+                if n <= 0 {
+                    break;
+                }
+
+                for &byte in &read_buf[..n as usize] {
+                    if byte == b'\n' {
+                        if !line_accumulator.is_empty() {
+                            let line = String::from_utf8_lossy(&line_accumulator).to_string();
+                            if tx.send(line).is_err() {
+                                break;
+                            }
+                            line_accumulator.clear();
+                        }
+                    } else {
+                        line_accumulator.push(byte);
+                    }
+                }
+            }
+
+            libc::close(fd);
+        }
+    });
+
+    let event_stream = futures_util::stream::unfold(rx, |mut rx| async move {
+        match rx.recv().await {
+            Some(line) => {
+                let sse_event = axum::response::sse::Event::default().data(line);
+                Some((Ok::<_, std::convert::Infallible>(sse_event), rx))
+            }
+            None => None,
+        }
+    });
+
+    Ok(axum::response::Sse::new(event_stream).keep_alive(axum::response::sse::KeepAlive::default()))
 }
 
 async fn api_bridge_data_get(

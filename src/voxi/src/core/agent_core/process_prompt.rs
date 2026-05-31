@@ -78,7 +78,7 @@ impl AgentCore {
         static OPTION_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
             regex::Regex::new(r"(?m)^\s*(\d+)[\.\)]\s*(.*)$").unwrap()
         });
-        
+
         let mut options = Vec::new();
         for line in text.lines() {
             if let Some(caps) = OPTION_RE.captures(line) {
@@ -244,7 +244,7 @@ impl AgentCore {
             || prompt_lower.starts_with("add")
             || prompt_lower.contains("choose")
             || prompt_lower.contains("select");
-            
+
         if !found {
             if let Ok(ms_guard) = self.memory_store.lock() {
                 if let Some(ms) = ms_guard.as_ref() {
@@ -989,7 +989,7 @@ impl AgentCore {
                                     || tool.name == "search_tools"
                                     || tool.name == "generate_web_app"
                                     || tool.name.starts_with("action_");
-                                
+
                                 let is_core_shopping = is_shopping && (
                                     tool.name.contains("search")
                                     || tool.name.contains("address")
@@ -2188,8 +2188,20 @@ impl AgentCore {
                                 })
                             );
                         }
+                        self.event_bus.publish(crate::core::event_bus::SystemEvent {
+                            event_type: crate::core::event_bus::EventType::Custom("tool_start".to_string()),
+                            source: "agent_core".to_string(),
+                            data: serde_json::json!({
+                                "tool": tc_name_clone,
+                                "arguments": tc_args_clone
+                            }),
+                            timestamp: 0,
+                        });
+                        let pre_hook_res = self.evaluate_pre_tool_hooks(&tc_name_clone, &tc_args_clone, on_chunk).await;
 
-                        let result = if tc_name_clone.starts_with("action_") {
+                        let result = if let Err(msg) = pre_hook_res {
+                            json!({ "error": msg })
+                        } else if tc_name_clone.starts_with("action_") {
                             if let Some(action_id) = tc_name_clone.strip_prefix("action_") {
                                 if let Ok(bridge) = bridge_ref.lock() {
                                     bridge.execute_action(action_id, &tc_args_clone)
@@ -2358,17 +2370,38 @@ impl AgentCore {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
                             let content = tc_args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+
+                            // Secrets Redaction
+                            let mut redacted_content = content.to_string();
+                            for (key, val) in std::env::vars() {
+                                let key_upper = key.to_ascii_uppercase();
+                                if (key_upper.contains("KEY") || key_upper.contains("TOKEN") || key_upper.contains("SECRET") || key_upper.contains("PASSWORD") || key_upper.contains("AUTH"))
+                                    && val.len() >= 6
+                                {
+                                    redacted_content = redacted_content.replace(&val, "[REDACTED]");
+                                }
+                            }
+                            if let Ok(re_sk) = regex::Regex::new(r"(?i)sk-[a-zA-Z0-9]{20,}") {
+                                redacted_content = re_sk.replace_all(&redacted_content, "[REDACTED]").to_string();
+                            }
+                            if let Ok(re_token) = regex::Regex::new(r"(?i)bearer\s+[a-zA-Z0-9_\-\.]{15,}") {
+                                redacted_content = re_token.replace_all(&redacted_content, "Bearer [REDACTED]").to_string();
+                            }
+                            if let Ok(re_generic_key) = regex::Regex::new(r#"(?i)(api[-_]?key|secret|password|token)\s*[:=]\s*['"]?[a-zA-Z0-9_\-\.]{8,}['"]?"#) {
+                                redacted_content = re_generic_key.replace_all(&redacted_content, "$1: [REDACTED]").to_string();
+                            }
+
                             match crate::core::skill_support::prepare_skill_document(
                                 name,
                                 description,
-                                content,
+                                &redacted_content,
                             ) {
                                 Ok(prepared) => {
                                     let skill_dir_path = skills_dir.join(&prepared.normalized_name);
                                     if let Err(e) = std::fs::create_dir_all(&skill_dir_path) {
                                         serde_json::json!({"error": format!("Failed to create skill directory: {}", e)})
                                     } else {
-                                        let skill_md_path = skill_dir_path.join("SKILL.md");
+                                        let skill_md_path = skill_dir_path.join("SKILL.md.draft");
                                         if skill_md_path.is_dir() {
                                             let _ = std::fs::remove_dir_all(&skill_md_path);
                                         }
@@ -2379,7 +2412,7 @@ impl AgentCore {
                                                 "path": skill_md_path.to_string_lossy().to_string(),
                                                 "warnings": prepared.warnings,
                                             }),
-                                            Err(e) => serde_json::json!({"error": format!("Failed to write skill: {}", e)})
+                                            Err(e) => serde_json::json!({"error": format!("Failed to write skill draft: {}", e)})
                                         }
                                     }
                                 }
@@ -3060,6 +3093,13 @@ impl AgentCore {
                         }
                     };
 
+                    let mut result = result;
+                    if result.get("error").is_none() {
+                        if let Err(msg) = self.evaluate_post_tool_hooks(&tc_name_clone, &tc_args_clone, &result, on_chunk).await {
+                            result = json!({ "error": msg });
+                        }
+                    }
+
                         let sanitized_args = sanitize_for_log(&tc_args_clone);
                         let is_err = result.get("error").is_some();
                         let result_len = result.to_string().len();
@@ -3078,6 +3118,24 @@ impl AgentCore {
                                 result_len
                             );
                         }
+
+                        let error_msg = if is_err {
+                            result.get("error").and_then(|v| v.as_str()).map(|s| s.to_string())
+                        } else {
+                            None
+                        };
+
+                        self.event_bus.publish(crate::core::event_bus::SystemEvent {
+                            event_type: crate::core::event_bus::EventType::Custom("tool_end".to_string()),
+                            source: "agent_core".to_string(),
+                            data: serde_json::json!({
+                                "tool": tc_name_clone,
+                                "arguments": tc_args_clone,
+                                "success": !is_err,
+                                "error": error_msg
+                            }),
+                            timestamp: 0,
+                        });
 
                         LlmMessage::tool_result(&tc_id_clone, &tc_name_clone, result)
                     });
@@ -3102,7 +3160,7 @@ impl AgentCore {
                         Some(session_id),
                     );
                 }
-                
+
                 // Check if any tool call required safety confirmation
                 let mut confirm_needed = None;
                 for res in &results {
@@ -3141,7 +3199,7 @@ impl AgentCore {
                         tool,
                         args_str
                     );
-                    
+
                     if let Ok(ss) = self.session_store.lock() {
                         if let Some(store) = ss.as_ref() {
                             store.add_message(session_id, "assistant", &confirm_prompt);
@@ -3786,11 +3844,11 @@ impl AgentCore {
                         } else {
                             json!({})
                         };
-                        
+
                         let current_retries = state.get("failed_mutation_retry_count").and_then(Value::as_u64).unwrap_or(0);
                         if current_retries < 3 {
                             log::warn!("[GoalEvaluation] Cart mutation failed: {}. Retrying (attempt {}/3)...", err_msg, current_retries + 1);
-                            
+
                             state["failed_mutation_retry_count"] = json!(current_retries + 1);
                             state["failed_task"] = json!({
                                 "tool_name": tool_name.clone(),
@@ -3798,17 +3856,17 @@ impl AgentCore {
                                 "error": err_msg.clone(),
                                 "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
                             });
-                            
+
                             if let Ok(text) = serde_json::to_string_pretty(&state) {
                                 let _ = std::fs::write(&path, text);
                             }
-                            
+
                             messages.push(LlmMessage {
                                 role: "assistant".into(),
                                 text: response.text.clone(),
                                 ..Default::default()
                             });
-                            
+
                             messages.push(LlmMessage::user(&format!(
                                 "System: The cart mutation tool `{}` failed with error: {}.\n\
                                  Arguments used: {:?}.\n\
@@ -3816,7 +3874,7 @@ impl AgentCore {
                                  Do NOT restart the search flow. Continue with the selected option and retry the cart mutation tool with corrected arguments. Retry attempt {}/3.",
                                 tool_name, err_msg, args, current_retries + 1
                             )));
-                            
+
                             loop_state.transition(AgentPhase::RePlanning);
                             continue;
                         } else {
@@ -4212,12 +4270,12 @@ fn resolve_selection_index(
     prompt: &str,
 ) -> Option<usize> {
     let lower = prompt.trim().to_lowercase();
-    
+
     // Check for explicit digit selection first
     if let Some(num) = parse_numbered_selection(prompt) {
         return Some(num);
     }
-    
+
     // Check ordinals
     if lower.contains("first") || lower.contains("1st") {
         return Some(1);
@@ -4228,20 +4286,20 @@ fn resolve_selection_index(
     if lower.contains("third") || lower.contains("3rd") {
         return Some(3);
     }
-    
+
     // Check for cheapest selection
     if lower.contains("cheapest") || lower.contains("lowest price") || lower.contains("minimum price") {
         let path = shopping_state_path(session_workdir, session_id);
         let state_text = std::fs::read_to_string(path).ok()?;
         let state: Value = serde_json::from_str(&state_text).ok()?;
         let options = state.get("options").and_then(Value::as_array)?;
-        
+
         let mut min_price = None;
         let mut min_number = None;
         for opt in options {
             let number = opt.get("number").and_then(Value::as_u64)?;
             let raw = opt.get("raw")?;
-            
+
             // Extract numeric price
             let price = raw.get("price")
                 .and_then(|p| {
@@ -4255,7 +4313,7 @@ fn resolve_selection_index(
                 })
                 .or_else(|| raw.get("sellingPrice").and_then(Value::as_f64))
                 .or_else(|| raw.get("mrp").and_then(Value::as_f64));
-                
+
             if let Some(p) = price {
                 if min_price.is_none() || Some(p) < min_price {
                     min_price = Some(p);
@@ -4265,7 +4323,7 @@ fn resolve_selection_index(
         }
         return min_number;
     }
-    
+
     None
 }
 
@@ -4602,18 +4660,18 @@ fn compact_shopping_search_result(
                 }
 
                 // 3. Keep standard database identifier suffix patterns (e.g. *id, *Id, *ID, *_id, *-id)
-                let is_id_suffix = k_lower.ends_with("id") 
-                    || k_lower.ends_with("_id") 
+                let is_id_suffix = k_lower.ends_with("id")
+                    || k_lower.ends_with("_id")
                     || k_lower.ends_with("-id");
 
                 // 4. Keep standard commerce descriptive, financial, and availability keys
                 let is_commerce_key = matches!(
                     k.as_str(),
-                    "id" | "productId" | "product_id" | "name" | "title" | "price" | 
-                    "mrp" | "brand" | "quantity" | "unit" | "inStock" | "in_stock" | 
-                    "available" | "availability" | "discount" | "displayName" | 
-                    "variations" | "quantityDescription" | "brandName" | "offerPrice" | 
-                    "isInStockAndAvailable" | "isAvail" | "isPromoted" | "success" | 
+                    "id" | "productId" | "product_id" | "name" | "title" | "price" |
+                    "mrp" | "brand" | "quantity" | "unit" | "inStock" | "in_stock" |
+                    "available" | "availability" | "discount" | "displayName" |
+                    "variations" | "quantityDescription" | "brandName" | "offerPrice" |
+                    "isInStockAndAvailable" | "isAvail" | "isPromoted" | "success" |
                     "data" | "products" | "message" | "packSize" | "availableQuantity" |
                     "productVariantId" | "storeProductId" | "cartProductId" | "variantId" |
                     "structuredContent" | "content" | "type" | "text"
@@ -4633,7 +4691,7 @@ fn compact_shopping_search_result(
                         if s.len() > 150 {
                             new_obj.insert(k.clone(), Value::String(format!("{}...", &s[..147])));
                         } else if s.starts_with("http") && (
-                            s.ends_with(".png") || s.ends_with(".jpg") || s.ends_with(".jpeg") || 
+                            s.ends_with(".png") || s.ends_with(".jpg") || s.ends_with(".jpeg") ||
                             s.ends_with(".webp") || s.ends_with(".gif") || s.ends_with(".svg") || s.len() > 70
                         ) {
                             new_obj.insert(k.clone(), Value::String("[MEDIA_URL]".to_string()));
