@@ -16,7 +16,8 @@ voxi/
 ├── data/                   Static assets, including dashboard resources
 ├── docs/                   Public documentation
 ├── packaging/              Voxi packaging and build metadata
-├── src/                    Rust workspace members
+├── rust/                   VClaw CLI agent workspace members and tools
+├── src/                    Rust daemon workspace members
 ├── third_party/            Vendored third-party sources
 ├── Cargo.toml              Workspace definition
 └── deploy.sh               Main build, deploy, and restart entry point
@@ -106,6 +107,28 @@ Plugin metadata for skill extensions.
 ### `src/voxi-metadata-cli-plugin`
 
 Plugin metadata for CLI-oriented extensions.
+
+### VClaw Workspace Crates (`rust/crates/`)
+
+The `rust/` workspace houses the modular VClaw CLI Agent:
+
+#### `rust/crates/rusty-claude-cli`
+The CLI front-end, containing the interactive console prompt (REPL) and standard input/output formatting.
+
+#### `rust/crates/vclaw-runtime`
+The core engine, containing the conversation engine loops, context gathering, prompt templates, vector databases (via ORT embeddings), LLM caching, log sanitization rules, diagnostics checks, and the warning/abort loop guard logic.
+
+#### `rust/crates/vclaw-tools`
+Houses the built-in and dynamically registered tools. This includes the filesystem tools (`fs.list_directory`, `fs.glob`, `fs.read_text`, `fs.write_text`, `fs.search_text`), shell executing sidecars, and network fetching helpers.
+
+#### `rust/crates/vclaw-commands`
+Implements built-in commands and routes slash commands (like `/doctor` and `/resume`) within interactive sessions.
+
+#### `rust/crates/vclaw-api`
+Shared structures, serialization schemas, traits, and interface contracts for the agent runtime.
+
+#### `rust/crates/vclaw-plugins`
+Manages dynamically loaded plugin binaries, third-party hooks, and platform-specific FFI extensions.
 
 ## Main Daemon Source Layout
 

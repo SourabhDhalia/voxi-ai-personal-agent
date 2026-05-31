@@ -60,6 +60,18 @@ demo chatbot, this is what Voxi is for.
 | Extensibility | Dedicated tool executor, metadata plugins, C-facing library, and dynamic `.so` loading |
 | Deployment story | `deploy.sh` for emulator/device packaging and deployment, or generic Linux/macOS host builds/runs |
 
+## VClaw Canonical CLI Agent
+
+Voxi includes **VClaw**, a canonical Rust workspace under the `rust/` directory. VClaw is a modular, high-performance CLI coding agent runtime (inspired by Claude Code/Claw Code workflows) that operates directly on the host workspace.
+
+It features:
+- **Interactive REPL Console Mode**: An interactive CLI prompt shell with slash-command routing (e.g., `/doctor`).
+- **Diagnostics check (`/doctor` & `--doctor`)**: Quick audit of paths, tool presence (`git`, `curl`, `python3`), API keys, and MCP server connectivity.
+- **Loop Guards**: Built-in safety mechanisms that detect repetitive tool loops, inject warning prompts on the 3rd turn, and abort with a `LoopDetected` error on the 4th turn to prevent runaway API spend.
+- **Filesystem Discovery Tools**: Low-permission `fs.list_directory` and wildcard-supporting `fs.glob` tools for safe repository navigation.
+- **Semantic Discovery & Fallbacks**: Cosine-similarity-based prefetching for workflow steps and skills using on-device ORT embedding engines.
+- **Sanitized Logging**: Auto-masks sensitive MCP credentials, OAuth bearer tokens, and session keys in logs and session histories.
+
 ## What Makes It Strong
 
 ### Built for real device runtimes
@@ -254,16 +266,23 @@ Voxi TV / DTV target over `ssh` and `scp`, see
 
 ## Workspace
 
-Voxi is a Rust workspace with clearly separated runtime roles:
+The repository is structured as two distinct, functional Rust workspaces:
 
-- `src/voxi`: main daemon
-- `src/voxi-cli`: IPC client and operational CLI
-- `src/voxi-web-dashboard`: standalone web dashboard
-- `src/voxi-tool-executor`: isolated tool-execution sidecar
-- `src/libvoxi-core`: shared framework and plugin/runtime support
-- `src/libvoxi`: C-facing client library
-- `src/voxi-metadata-*`: metadata plugin crates for skills, CLI, and LLM
-  backend extensions
+### 1. Voxi Runtime Daemon Workspace (Root)
+Houses the persistent embedded daemon and background communication channels:
+- `src/voxi`: The main daemon binary managing IPC, scheduling, and routing.
+- `src/voxi-cli`: Thin IPC client for remote prompt/stream execution.
+- `src/voxi-web-dashboard`: HTTP management portal and config editor.
+- `src/voxi-tool-executor`: Sandboxed subprocess sidecar for running tools.
+- `src/libvoxi-core` & `src/libvoxi`: Shared framework logic and FFI boundaries.
+
+### 2. VClaw CLI Agent Workspace (`rust/`)
+Houses the standalone, modular coding agent CLI runtime:
+- `rust/crates/rusty-claude-cli`: CLI interface and interactive console prompt (REPL) matching Claude Code paradigms.
+- `rust/crates/vclaw-runtime`: Main orchestration engine handling turn-based prompt reasoning, loops, caching, and diagnostics.
+- `rust/crates/vclaw-tools`: Common tool registry containing filesystem discovery (`glob`, `list_directory`), network, and task toolsets.
+- `rust/crates/vclaw-commands`: Built-in client commands, such as slash command routers (`/doctor`, `/resume`).
+- `rust/crates/vclaw-api` & `rust/crates/vclaw-plugins`: Standard API types and extension limits.
 
 ## Documentation
 
