@@ -670,3 +670,17 @@
 | Voxi Capability Expansion | Supervisor Gate 5 | PASS | Whitebox scenarios and UI layout components verified, with trailing whitespaces resolved and git checks clean. |
 | Voxi Capability Expansion | 6. Commit | PASS | Staged all changes and committed locally using commit message file .tmp/commit_msg.txt. |
 | Voxi Capability Expansion | Supervisor Gate 6 | PASS | Commit message rules (English, line lengths <= 80, concise title) fully met. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | 1. Planning | PASS | Outlined implementation plan for @ skill pre-fetching, custom workspace-auditor skill, multi-engine TTS router, configuration reordering, and security location isolation (opt-in project-level paths, disabled by default). |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | Supervisor Gate 1 | PASS | Created implementation plan and task checklists for user review. |
+| Enable builtin-tools & SSE Event Pump Refactor | 1. Planning | PASS | Identified root cause: builtin-tools cargo feature not in default features, and enable_builtin_tools policy was false. Planned Cargo.toml default feature addition, tool_policy.json seed update, IPC subscription limits, and SSE broadcast-hub pump. |
+| Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 1 | PASS | Root cause confirmed at process_prompt.rs:2254 dual-gate check (cfg! feature + runtime policy). |
+| Enable builtin-tools & SSE Event Pump Refactor | 2. Design | PASS | Designed: (1) add builtin-tools to Cargo.toml defaults, (2) seed tool_policy.json with enable_builtin_tools=true, (3) IPC MAX_SUBSCRIPTIONS ceiling + ACTIVE_SUBSCRIPTIONS atomic, (4) broadcast-hub SSE pump with auto-reconnect in voxi-web-dashboard. |
+| Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 2 | PASS | Design avoids runtime behavior changes on essential tools and keeps subscription pool separate from request pool. |
+| Enable builtin-tools & SSE Event Pump Refactor | 3. Development | PASS | Updated Cargo.toml default features, tool_policy.json seed, ipc_server.rs subscription cap with atomic accounting, and voxi-web-dashboard/src/main.rs broadcast-hub event pump. |
+| Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 3 | PASS | No direct cargo/cmake invocations; all changes scoped to Cargo.toml, config seed, IPC server, and web dashboard. |
+| Enable builtin-tools & SSE Event Pump Refactor | 4. Build/Deploy | PASS | ./deploy.sh compiled release build (0 warnings introduced) and daemon started (PID 20031). |
+| Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 4 | PASS | Compilation succeeds and binaries verified without direct cargo invocation. |
+| Enable builtin-tools & SSE Event Pump Refactor | 5. Test/Review | PASS | ./deploy.sh --test passed: 498 unit tests + 22 voice tests + 26 scenario tests + 3 CLI tests + 14 core tests all green. |
+| Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 5 | PASS | All workspace tests green; subscription accounting and event pump logic verified. |
+| Enable builtin-tools & SSE Event Pump Refactor | 6. Commit | PASS | Staged 5 files and committed at e0987af6; pushed to origin/voice-module-integration. |
+| Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 6 | PASS | Commit used .tmp/commit_msg.txt; no inline git commit -m; all lines ≤ 80 chars. |

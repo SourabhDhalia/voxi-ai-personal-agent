@@ -44,6 +44,6 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 tempfile = "3"
 
 [features]
-default = []
+default = ["builtin-tools"]
 builtin-tools = []
 
