@@ -103,6 +103,7 @@ const ALLOWED_CONFIGS: &[&str] = &[
     "agent_roles.json",
     "tunnel_config.json",
     "web_search_config.json",
+    "voice_config.json",
     "system_prompt.txt",
 ];
 const BRIDGE_RATE_LIMIT_PER_SECOND: usize = 10;
@@ -325,6 +326,8 @@ async fn main() {
             get(api_bridge_data_get).post(api_bridge_data_post),
         )
         .route("/api/bridge/chat", post(api_bridge_chat))
+        .route("/api/voice/config", get(api_voice_config))
+        .route("/api/capabilities", get(api_capabilities))
         .route("/api/a2a", post(api_a2a));
 
     let app = Router::new()
@@ -1515,6 +1518,76 @@ async fn api_bridge_tools(
             &format!("Agent error: {}", err),
         )),
     }
+}
+
+// Public read of the voice selection so the chat page can load it without auth.
+async fn api_voice_config(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let fpath = state.config_dir.join("voice_config.json");
+    let config = std::fs::read_to_string(&fpath)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        .unwrap_or_else(|| {
+            json!({
+                "engine": "browser",
+                "language": "en-US",
+                "speak_replies": true,
+                "browser_voice": "",
+                "available_engines": ["browser", "device"]
+            })
+        });
+    Ok(Json(json!({"status": "ok", "config": config})))
+}
+
+// Live agent capabilities for the chat slash-command palette: tools (via the
+// IPC bridge) plus locally-seeded workflows.
+async fn api_capabilities(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let tools = tokio::task::spawn_blocking(|| ipc_bridge_list_tools(Vec::new()))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .and_then(|v| v.get("tools").cloned())
+        .unwrap_or_else(|| Value::Array(vec![]));
+
+    let mut workflows: Vec<Value> = Vec::new();
+    let wdir = state.data_dir.join("workflows");
+    if let Ok(entries) = std::fs::read_dir(&wdir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !fname.ends_with(".workflow.md") {
+                continue;
+            }
+            let body = std::fs::read_to_string(&path).unwrap_or_default();
+            let mut id = String::new();
+            let mut desc = String::new();
+            let mut name = String::new();
+            for line in body.lines() {
+                if line.trim() == "---" && !id.is_empty() {
+                    break;
+                }
+                if let Some(v) = line.strip_prefix("id:") {
+                    id = v.trim().to_string();
+                } else if let Some(v) = line.strip_prefix("name:") {
+                    name = v.trim().to_string();
+                } else if let Some(v) = line.strip_prefix("description:") {
+                    desc = v.trim().to_string();
+                }
+            }
+            if id.is_empty() {
+                id = fname.trim_end_matches(".workflow.md").to_string();
+            }
+            workflows.push(json!({"name": id, "label": name, "description": desc}));
+        }
+    }
+
+    Ok(Json(json!({
+        "tools": tools,
+        "workflows": workflows
+    })))
 }
 
 async fn api_bridge_data_get(
