@@ -3491,7 +3491,35 @@ impl AgentCore {
 
                 let is_shopping = self.is_shopping_intent(prompt);
 
-                if is_shopping && !was_shopping_tool_executed(&messages, history_len) {
+                let has_clarification_call = messages[history_len.min(messages.len())..].iter().any(|msg| {
+                    if msg.role == "assistant" {
+                        msg.tool_calls.iter().any(|call| call.name == "request_user_clarification" || call.name.contains("clarif"))
+                    } else {
+                        false
+                    }
+                });
+
+                let response_text_lower = response.text.to_lowercase();
+                let is_clarification_response = response.text.contains('?')
+                    || response_text_lower.contains("which")
+                    || response_text_lower.contains("choose")
+                    || response_text_lower.contains("select")
+                    || response_text_lower.contains("would you")
+                    || response_text_lower.contains("could you")
+                    || response_text_lower.contains("please provide")
+                    || response_text_lower.contains("please let me know")
+                    || response_text_lower.contains("clarify")
+                    || response_text_lower.contains("clarification");
+
+                let is_user_asking_question = prompt.contains('?')
+                    || prompt.to_lowercase().contains("what")
+                    || prompt.to_lowercase().contains("how")
+                    || prompt.to_lowercase().contains("why")
+                    || prompt.to_lowercase().contains("where");
+
+                let bypass_termination_rejection = has_clarification_call || is_clarification_response || is_user_asking_question;
+
+                if is_shopping && !bypass_termination_rejection && !was_shopping_tool_executed(&messages, history_len) {
                     log::info!("[GoalEvaluation] Shopping intent detected, but no shopping tools were executed. Rejecting termination.");
                     if replans_without_tool >= 2 {
                         log::warn!("[GoalEvaluation] Too many replans without tool execution. Exiting agent loop.");
@@ -3652,9 +3680,14 @@ impl AgentCore {
                 .await;
         }
 
-        loop_state.transition(AgentPhase::ResultReporting);
-        loop_state.log_self_inspection();
-        "Error: Maximum tool call rounds exceeded".into()
+        self.finalize_prompt_text_with_memory(
+            session_id,
+            &messages,
+            "Error: Maximum tool call rounds exceeded".to_string(),
+            skip_memory_extraction,
+            &mut loop_state,
+        )
+        .await
     }
 }
 
