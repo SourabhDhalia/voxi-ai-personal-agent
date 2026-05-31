@@ -668,3 +668,5 @@
 | Voxi Capability Expansion | Supervisor Gate 4 | PASS | Compilation succeeds and binaries verified without direct cargo invocation. |
 | Voxi Capability Expansion | 5. Test/Review | PASS | Verified hooks policy, external skills scanning/drafts, event SSE streams, and UI layout animations via offline_suite scenario tests and git diff checking. |
 | Voxi Capability Expansion | Supervisor Gate 5 | PASS | Whitebox scenarios and UI layout components verified, with trailing whitespaces resolved and git checks clean. |
+| Voxi Capability Expansion | 6. Commit | PASS | Staged all changes and committed locally using commit message file .tmp/commit_msg.txt. |
+| Voxi Capability Expansion | Supervisor Gate 6 | PASS | Commit message rules (English, line lengths <= 80, concise title) fully met. |
