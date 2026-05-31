@@ -2096,9 +2096,39 @@ pub fn translate_cart_args(requested_name: &str, args: &Value) -> Value {
     final_args
 }
 
+/// Helper recursively searching for the first occurrence of specific keys.
+fn find_first_id_by_key(val: &Value, target_keys: &[&str]) -> Option<String> {
+    match val {
+        Value::Object(map) => {
+            for key in target_keys {
+                if let Some(id_val) = map.get(*key).and_then(Value::as_str) {
+                    return Some(id_val.to_string());
+                }
+            }
+            for v in map.values() {
+                if let Some(found) = find_first_id_by_key(v, target_keys) {
+                    return Some(found);
+                }
+            }
+        }
+        Value::Array(arr) => {
+            for v in arr {
+                if let Some(found) = find_first_id_by_key(v, target_keys) {
+                    return Some(found);
+                }
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
 /// Manages multiple MCP client connections.
 pub struct McpClientManager {
     clients: Vec<McpClient>,
+    pub last_swiggy_address_id: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    pub last_zepto_address_id: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    pub last_zepto_store_id: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Default for McpClientManager {
@@ -2111,6 +2141,9 @@ impl McpClientManager {
     pub fn new() -> Self {
         McpClientManager {
             clients: Vec::new(),
+            last_swiggy_address_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            last_zepto_address_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            last_zepto_store_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -2484,8 +2517,89 @@ impl McpClientManager {
                 }
             }
         }
+
+        // Capture addressId/storeId from input arguments if present
+        if let Some(obj) = final_args.as_object() {
+            let lower_name = requested_name.to_ascii_lowercase();
+            if lower_name.contains("swiggy") {
+                if let Some(addr_id) = obj.get("addressId").or_else(|| obj.get("address_id")).and_then(Value::as_str) {
+                    if let Ok(mut guard) = self.last_swiggy_address_id.lock() {
+                        *guard = Some(addr_id.to_string());
+                    }
+                }
+            } else if lower_name.contains("zepto") {
+                if let Some(addr_id) = obj.get("addressId").or_else(|| obj.get("address_id")).and_then(Value::as_str) {
+                    if let Ok(mut guard) = self.last_zepto_address_id.lock() {
+                        *guard = Some(addr_id.to_string());
+                    }
+                }
+                if let Some(store_id) = obj.get("storeId").or_else(|| obj.get("store_id")).and_then(Value::as_str) {
+                    if let Ok(mut guard) = self.last_zepto_store_id.lock() {
+                        *guard = Some(store_id.to_string());
+                    }
+                }
+            }
+        }
+
+        // Silent injection of missing required fields (addressId, storeId) from caches
+        if let Some(obj) = final_args.as_object_mut() {
+            let lower_name = requested_name.to_ascii_lowercase();
+            if lower_name.contains("swiggy") {
+                if !obj.contains_key("addressId") && !obj.contains_key("address_id") {
+                    if let Ok(guard) = self.last_swiggy_address_id.lock() {
+                        if let Some(addr_id) = guard.as_ref() {
+                            obj.insert("addressId".to_string(), Value::String(addr_id.clone()));
+                            obj.insert("address_id".to_string(), Value::String(addr_id.clone()));
+                        }
+                    }
+                }
+            } else if lower_name.contains("zepto") {
+                if !obj.contains_key("addressId") && !obj.contains_key("address_id") {
+                    if let Ok(guard) = self.last_zepto_address_id.lock() {
+                        if let Some(addr_id) = guard.as_ref() {
+                            obj.insert("addressId".to_string(), Value::String(addr_id.clone()));
+                            obj.insert("address_id".to_string(), Value::String(addr_id.clone()));
+                        }
+                    }
+                }
+                if !obj.contains_key("storeId") && !obj.contains_key("store_id") {
+                    if let Ok(guard) = self.last_zepto_store_id.lock() {
+                        if let Some(store_id) = guard.as_ref() {
+                            obj.insert("storeId".to_string(), Value::String(store_id.clone()));
+                            obj.insert("store_id".to_string(), Value::String(store_id.clone()));
+                        }
+                    }
+                }
+            }
+        }
         
-        Ok(self.clients[client_index].call_tool(&tool_info.original_name, &final_args))
+        let res = self.clients[client_index].call_tool(&tool_info.original_name, &final_args);
+
+        // Update caches if the call succeeded and returned ID metadata
+        if !res.get("error").is_some() {
+            let lower_name = requested_name.to_ascii_lowercase();
+            if lower_name.contains("get_addresses") || lower_name.contains("list_saved_addresses") {
+                if let Some(found_id) = find_first_id_by_key(&res, &["id", "addressId", "address_id"]) {
+                    if lower_name.contains("swiggy") {
+                        if let Ok(mut guard) = self.last_swiggy_address_id.lock() {
+                            *guard = Some(found_id);
+                        }
+                    } else if lower_name.contains("zepto") {
+                        if let Ok(mut guard) = self.last_zepto_address_id.lock() {
+                            *guard = Some(found_id);
+                        }
+                    }
+                }
+            } else if lower_name.contains("select_store") || lower_name.contains("select_saved_address") {
+                if let Some(found_id) = find_first_id_by_key(&res, &["id", "storeId", "store_id"]) {
+                    if let Ok(mut guard) = self.last_zepto_store_id.lock() {
+                        *guard = Some(found_id);
+                    }
+                }
+            }
+        }
+
+        Ok(res)
     }
 
 
@@ -2553,6 +2667,7 @@ mod tests {
     fn resolve_tool_alias_matches_safe_legacy_and_original_names() {
         let manager = McpClientManager {
             clients: vec![test_client("swiggy-instamart", &["list_saved_addresses"])],
+            ..Default::default()
         };
 
         let safe = manager
@@ -2582,6 +2697,7 @@ mod tests {
                 test_client("zepto", &["list_saved_addresses"]),
                 test_client("swiggy", &["list_saved_addresses"]),
             ],
+            ..Default::default()
         };
 
         match manager.resolve_tool_alias("list_saved_addresses") {
@@ -2602,6 +2718,7 @@ mod tests {
     fn requires_confirmation_checks_original_tool_alias() {
         let manager = McpClientManager {
             clients: vec![test_client("zepto", &["checkout"])],
+            ..Default::default()
         };
         let keywords = vec!["checkout".to_string()];
 

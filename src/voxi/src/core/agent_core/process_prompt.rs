@@ -151,7 +151,17 @@ impl AgentCore {
         selected
     }
 
-    fn is_shopping_intent(&self, prompt: &str) -> bool {
+    fn is_shopping_intent(&self, session_id: &str, prompt: &str) -> bool {
+        if let Ok(ss) = self.session_store.lock() {
+            if let Some(store) = ss.as_ref() {
+                let session_workdir = store.session_workdir(session_id);
+                let state_path = shopping_state_path(&session_workdir, session_id);
+                if state_path.exists() {
+                    return true;
+                }
+            }
+        }
+
         let prompt_lower = prompt.to_lowercase();
         let mut found = prompt_lower.contains("zepto")
             || prompt_lower.contains("swiggy")
@@ -842,14 +852,11 @@ impl AgentCore {
 
             // Apply dynamic shopping planner filtering
             let prompt_lower = prompt.to_lowercase();
-            let is_shopping = self.is_shopping_intent(prompt);
+            let is_shopping = self.is_shopping_intent(session_id, prompt);
 
             if is_shopping {
                 let has_zepto = prompt_lower.contains("zepto");
                 let has_swiggy = prompt_lower.contains("swiggy") || prompt_lower.contains("instamart");
-
-                let is_checkout_intent = prompt_lower.contains("checkout") || prompt_lower.contains("place order") || prompt_lower.contains("pay") || prompt_lower.contains("buy");
-                let is_cart_mutation_intent = prompt_lower.contains("add") || prompt_lower.contains("remove") || prompt_lower.contains("update") || prompt_lower.contains("clear") || prompt_lower.contains("delete");
 
                 tools.retain(|tool| {
                     let name = tool.name.to_lowercase();
@@ -868,11 +875,7 @@ impl AgentCore {
                         let is_cart_mutation_tool = name.contains("add_to_cart") || name.contains("update_cart") || name.contains("remove_from_cart") || name.contains("clear_cart");
                         let is_core_tool = name.contains("search") || name.contains("address") || name.contains("store") || name.contains("location") || name.contains("get_cart") || name.contains("view_cart");
 
-                        if is_checkout_tool {
-                            is_checkout_intent
-                        } else if is_cart_mutation_tool {
-                            is_checkout_intent || is_cart_mutation_intent
-                        } else if is_core_tool {
+                        if is_checkout_tool || is_cart_mutation_tool || is_core_tool {
                             true
                         } else {
                             false
@@ -1006,18 +1009,24 @@ impl AgentCore {
                 .unwrap_or(false);
         let prefer_direct_specialized_tools = prompt_prefers_direct_specialized_tools(prompt);
         if !restrict_to_generate_web_app && !tools_forbidden && !prefer_direct_specialized_tools {
-            // Add search_tools meta-tool for Two-Tier router
-            tools.push(crate::llm::backend::LlmToolDecl {
-                name: "search_tools".into(),
-                description: "Search available tools and MCP behavior summaries. Use this whenever the required capability, provider flow, identifier requirements, or verification tool is not already clear.".into(),
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "Keyword to search tools, or 'ALL'."}
-                    },
-                    "required": ["query"]
-                })
-            });
+            let mcp_servers_exist = {
+                let mcp_mgr = self.mcp_client_manager.read().await;
+                !mcp_mgr.get_all_tools().is_empty()
+            };
+            if mcp_servers_exist {
+                // Add search_tools meta-tool for Two-Tier router
+                tools.push(crate::llm::backend::LlmToolDecl {
+                    name: "search_tools".into(),
+                    description: "Search available tools and MCP behavior summaries. Use this whenever the required capability, provider flow, identifier requirements, or verification tool is not already clear.".into(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Keyword to search tools, or 'ALL'."}
+                        },
+                        "required": ["query"]
+                    })
+                });
+            }
         }
 
         // Build System Prompt
@@ -3529,7 +3538,7 @@ impl AgentCore {
                 // ── Phase 7: Evaluating — GoalAchieved ──────────────────
                 loop_state.transition(AgentPhase::Evaluating);
 
-                let is_shopping = self.is_shopping_intent(prompt);
+                let is_shopping = self.is_shopping_intent(session_id, prompt);
 
                 let has_clarification_call = messages[history_len.min(messages.len())..].iter().any(|msg| {
                     if msg.role == "assistant" {
@@ -3577,6 +3586,76 @@ impl AgentCore {
                     ));
                     loop_state.transition(AgentPhase::RePlanning);
                     continue;
+                }
+
+                if is_shopping {
+                    // Reset failed mutation retry count if the last cart mutation was successful
+                    for msg in messages.iter().rev() {
+                        if msg.role == "tool" {
+                            let name = msg.tool_name.to_ascii_lowercase();
+                            if is_cart_mutation_tool_name(&name) {
+                                if msg.tool_result.get("error").is_none() {
+                                    let path = shopping_state_path(&session_workdir, session_id);
+                                    if let Ok(state_text) = std::fs::read_to_string(&path) {
+                                        if let Ok(mut state) = serde_json::from_str::<Value>(&state_text) {
+                                            if state.get("failed_mutation_retry_count").and_then(Value::as_u64).unwrap_or(0) != 0 {
+                                                state["failed_mutation_retry_count"] = json!(0);
+                                                if let Ok(text) = serde_json::to_string_pretty(&state) {
+                                                    let _ = std::fs::write(&path, text);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    if let Some((tool_name, args, err_msg)) = last_cart_mutation_failed(&messages) {
+                        let path = shopping_state_path(&session_workdir, session_id);
+                        let mut state: Value = if let Ok(state_text) = std::fs::read_to_string(&path) {
+                            serde_json::from_str(&state_text).unwrap_or(json!({}))
+                        } else {
+                            json!({})
+                        };
+                        
+                        let current_retries = state.get("failed_mutation_retry_count").and_then(Value::as_u64).unwrap_or(0);
+                        if current_retries < 3 {
+                            log::warn!("[GoalEvaluation] Cart mutation failed: {}. Retrying (attempt {}/3)...", err_msg, current_retries + 1);
+                            
+                            state["failed_mutation_retry_count"] = json!(current_retries + 1);
+                            state["failed_task"] = json!({
+                                "tool_name": tool_name.clone(),
+                                "args": args.clone(),
+                                "error": err_msg.clone(),
+                                "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
+                            });
+                            
+                            if let Ok(text) = serde_json::to_string_pretty(&state) {
+                                let _ = std::fs::write(&path, text);
+                            }
+                            
+                            messages.push(LlmMessage {
+                                role: "assistant".into(),
+                                text: response.text.clone(),
+                                ..Default::default()
+                            });
+                            
+                            messages.push(LlmMessage::user(&format!(
+                                "System: The cart mutation tool `{}` failed with error: {}.\n\
+                                 Arguments used: {:?}.\n\
+                                 Please analyze this failure deeply. Correct any invalid parameters such as `addressId`/`storeId` (which are available from listing/selection tools or cached state), quantity, or payload shape. \
+                                 Do NOT restart the search flow. Continue with the selected option and retry the cart mutation tool with corrected arguments. Retry attempt {}/3.",
+                                tool_name, err_msg, args, current_retries + 1
+                            )));
+                            
+                            loop_state.transition(AgentPhase::RePlanning);
+                            continue;
+                        } else {
+                            log::error!("[GoalEvaluation] Cart mutation failed after 3 retries. Letting agent report failure.");
+                        }
+                    }
                 }
 
                 if is_shopping && shopping_cart_mutation_unverified(&messages) {
@@ -3818,6 +3897,31 @@ fn shopping_cart_mutation_unverified(messages: &[LlmMessage]) -> bool {
     pending_mutation
 }
 
+fn last_cart_mutation_failed(messages: &[LlmMessage]) -> Option<(String, Value, String)> {
+    for msg in messages.iter().rev() {
+        if msg.role == "tool" {
+            let name = msg.tool_name.to_ascii_lowercase();
+            if is_cart_mutation_tool_name(&name) {
+                if let Some(err) = msg.tool_result.get("error") {
+                    let mut args = Value::Null;
+                    for prev_msg in messages.iter().rev() {
+                        if prev_msg.role == "assistant" {
+                            if let Some(tc) = prev_msg.tool_calls.iter().find(|tc| tc.id == msg.tool_call_id) {
+                                args = tc.args.clone();
+                                break;
+                            }
+                        }
+                    }
+                    return Some((msg.tool_name.clone(), args, err.as_str().unwrap_or("unknown error").to_string()));
+                } else {
+                    return None;
+                }
+            }
+        }
+    }
+    None
+}
+
 fn shopping_state_path(session_workdir: &Path, session_id: &str) -> PathBuf {
     let safe_session = session_id
         .chars()
@@ -3918,10 +4022,23 @@ fn shopping_selection_context(
     session_id: &str,
     prompt: &str,
 ) -> Option<String> {
-    let selected_number = resolve_selection_index(session_workdir, session_id, prompt)?;
     let path = shopping_state_path(session_workdir, session_id);
-    let state_text = std::fs::read_to_string(path).ok()?;
-    let state: Value = serde_json::from_str(&state_text).ok()?;
+    let mut state: Value = if let Ok(state_text) = std::fs::read_to_string(&path) {
+        serde_json::from_str(&state_text).unwrap_or(json!({}))
+    } else {
+        json!({})
+    };
+
+    let selected_number = if let Some(num) = resolve_selection_index(session_workdir, session_id, prompt) {
+        state["selected_number"] = json!(num);
+        if let Ok(text) = serde_json::to_string_pretty(&state) {
+            let _ = std::fs::write(&path, text);
+        }
+        num
+    } else {
+        state.get("selected_number").and_then(Value::as_u64).map(|n| n as usize)?
+    };
+
     let options = state.get("options").and_then(Value::as_array)?;
     let selected = options.iter().find(|option| {
         option

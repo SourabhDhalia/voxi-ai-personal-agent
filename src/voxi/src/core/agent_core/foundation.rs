@@ -1130,23 +1130,41 @@ fn build_progress_marker(
 }
 
 fn extract_final_text(response_text: &str) -> String {
-    if let Some(start) = response_text.find("<final>") {
+    let raw = if let Some(start) = response_text.find("<final>") {
         if let Some(end) = response_text.rfind("</final>") {
             if end > start + 7 {
-                return response_text[start + 7..end].trim().to_string();
+                response_text[start + 7..end].trim().to_string()
+            } else {
+                response_text[start + 7..].trim().to_string()
             }
-            return response_text[start + 7..].trim().to_string();
+        } else {
+            response_text[start + 7..].trim().to_string()
         }
-        return response_text[start + 7..].trim().to_string();
-    }
-
-    let stripped_think = THINK_RE.replace_all(response_text, "");
-    let normalized = stripped_think.trim();
-    if normalized.is_empty() {
-        response_text.trim().to_string()
     } else {
-        normalized.to_string()
+        let stripped_think = THINK_RE.replace_all(response_text, "");
+        let normalized = stripped_think.trim();
+        if normalized.is_empty() {
+            response_text.trim().to_string()
+        } else {
+            normalized.to_string()
+        }
+    };
+
+    let mut cleaned_lines = Vec::new();
+    for line in raw.lines() {
+        let lower = line.to_lowercase();
+        if lower.contains("called tool 'mcp_")
+            || lower.contains("called tool 'action_")
+            || lower.contains("called tool '")
+            || lower.contains("with args:")
+            || lower.contains("failed to execute mcp tool")
+            || lower.contains("mcp_outcome")
+        {
+            continue;
+        }
+        cleaned_lines.push(line);
     }
+    cleaned_lines.join("\n").trim().to_string()
 }
 
 fn extract_json_block(text: &str) -> Option<String> {
