@@ -970,6 +970,8 @@
             if (old) old.remove();
         }
 
+        const actualDate = (data && data.length > 0) ? (data[0].date || dateStr) : dateStr;
+
         if (!data || data.length === 0) {
             logEl.innerHTML = '<div class="log-empty">No logs available' + (dateStr ? ' for ' + escHtml(dateStr) : '') + '.</div>';
             
@@ -984,7 +986,6 @@
 
         // On fresh load, resolve the actual date loaded
         if (!appendMode) {
-            const actualDate = data[0].date || dateStr;
             currentLogDate = actualDate;
 
             // Highlight in DateNav
@@ -1018,7 +1019,7 @@
 
             // Track pagination state per file
             if (!appendMode || !logPagination[label]) {
-                logPagination[label] = { offset: 0, totalLines: totalLines, date: dateStr };
+                logPagination[label] = { offset: 0, totalLines: totalLines, date: actualDate };
             }
 
             // Build file block
@@ -1044,13 +1045,13 @@
                 const earlier = document.createElement('button');
                 earlier.className = 'log-load-earlier';
                 earlier.dataset.label = label;
-                earlier.dataset.date = dateStr || '';
+                earlier.dataset.date = actualDate || '';
                 earlier.textContent = '\u2191 Load earlier lines (' + (totalLines - shownLines - logPagination[label].offset) + ' more)';
                 earlier.addEventListener('click', function() {
                     const newOffset = logPagination[label].offset + shownLines;
                     logPagination[label].offset = newOffset;
                     // Load older page and prepend
-                    loadLogEarlier(label, dateStr, newOffset, block);
+                    loadLogEarlier(label, actualDate, newOffset, block);
                 });
                 block.appendChild(earlier);
             }
@@ -1078,20 +1079,14 @@
             }
         });
 
-        // Wire up tail buttons
-        logEl.querySelectorAll('.log-tail-btn').forEach(function(btn) {
-            btn.addEventListener('click', function() {
-                const lbl = btn.dataset.label;
-                const pre = logEl.querySelector('.log-pre[data-label="' + lbl + '"]');
-                if (pre) pre.scrollIntoView({ behavior: 'smooth', block: 'end' });
-            });
-        });
     }
 
     async function loadLogEarlier(label, dateStr, offset, existingBlock) {
-        const endpoint = (dateStr
-            ? 'logs?date=' + encodeURIComponent(dateStr)
-            : 'logs') + '&lines=' + LOG_PAGE_SIZE + '&offset=' + offset;
+        const actualDate = dateStr || (logPagination[label] ? logPagination[label].date : null);
+        let endpoint = 'logs?lines=' + LOG_PAGE_SIZE + '&offset=' + offset;
+        if (actualDate) {
+            endpoint += '&date=' + encodeURIComponent(actualDate);
+        }
 
         const data = await apiFetch(endpoint);
         if (!data || !data.length) return;
@@ -1119,7 +1114,7 @@
         const headerMeta = existingBlock.querySelector('.log-file-meta');
         if (headerMeta) {
             const shownFrom = hasMore ? (totalLines - offset - shownLines + 1) : 1;
-            const shownTo = totalLines - logPagination[label].offset + shownLines;
+            const shownTo = totalLines;
             headerMeta.textContent = 'Lines ' + shownFrom + '\u2013' + shownTo + ' of ' + totalLines;
         }
 
@@ -1128,13 +1123,13 @@
             const earlier = document.createElement('button');
             earlier.className = 'log-load-earlier';
             earlier.dataset.label = label;
-            earlier.dataset.date = dateStr || '';
+            earlier.dataset.date = actualDate || '';
             const remaining = totalLines - offset - shownLines;
             earlier.textContent = '\u2191 Load earlier lines (' + remaining + ' more)';
             earlier.addEventListener('click', function() {
                 const newOffset = offset + shownLines;
                 logPagination[label].offset = newOffset;
-                loadLogEarlier(label, dateStr, newOffset, existingBlock);
+                loadLogEarlier(label, actualDate, newOffset, existingBlock);
             });
             // Insert before the pre element
             if (existingPre) {
@@ -3550,4 +3545,19 @@
     startOutboundPolling();
     initEventStream();
     loadDashboard();
+
+    // Wire up event delegation for log tail buttons once
+    const logContentEl = document.getElementById('log-content');
+    if (logContentEl) {
+        logContentEl.addEventListener('click', function(ev) {
+            const btn = ev.target.closest('.log-tail-btn');
+            if (btn) {
+                const lbl = btn.dataset.label;
+                const pre = logContentEl.querySelector('.log-pre[data-label="' + lbl + '"]');
+                if (pre) {
+                    pre.scrollTop = pre.scrollHeight;
+                }
+            }
+        });
+    }
 })();
