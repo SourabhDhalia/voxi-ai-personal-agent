@@ -9,8 +9,16 @@ use crate::core::agent_core::AgentCore;
 use crate::core::registration_store::RegistrationKind;
 
 const MAX_CONCURRENT_CLIENTS: usize = 8;
+// Long-lived event subscriptions (subscribe_events) are tracked separately from
+// short request/response RPCs so a stream of SSE subscribers can never starve
+// the request pool. They get their own, larger ceiling.
+const MAX_SUBSCRIPTIONS: usize = 64;
 const MAX_PAYLOAD_SIZE: usize = 10 * 1024 * 1024; // 10MB
 static SESSION_COUNTER: AtomicUsize = AtomicUsize::new(1);
+// Process-wide count of active event subscriptions. A single IpcServer exists
+// per daemon, so a static keeps the accounting simple without threading another
+// Arc through every handler signature.
+static ACTIVE_SUBSCRIPTIONS: AtomicUsize = AtomicUsize::new(0);
 
 pub struct IpcServer {
     running: Arc<AtomicBool>,
@@ -269,8 +277,15 @@ impl IpcServer {
             let rt_handle_clone = rt_handle.clone();
             active.fetch_add(1, Ordering::SeqCst);
 
+            let active_for_handler = active.clone();
             std::thread::spawn(move || {
-                Self::handle_client(rt_handle_clone, client_fd, agent, registry);
+                Self::handle_client(
+                    rt_handle_clone,
+                    client_fd,
+                    agent,
+                    registry,
+                    active_for_handler,
+                );
                 active.fetch_sub(1, Ordering::SeqCst);
                 unsafe {
                     libc::close(client_fd);
@@ -292,6 +307,7 @@ impl IpcServer {
         fd: i32,
         agent: Arc<AgentCore>,
         registry: Arc<Mutex<ChannelRegistry>>,
+        active_clients: Arc<AtomicUsize>,
     ) {
         loop {
             let mut len_buf = [0u8; 4];
@@ -324,7 +340,8 @@ impl IpcServer {
                 break;
             }
 
-            let response = Self::dispatch_request(&rt_handle, &raw_msg, &agent, &registry, fd);
+            let response =
+                Self::dispatch_request(&rt_handle, &raw_msg, &agent, &registry, fd, &active_clients);
             Self::send_response(fd, &response);
         }
     }
@@ -335,6 +352,7 @@ impl IpcServer {
         agent: &Arc<AgentCore>,
         registry: &Arc<Mutex<ChannelRegistry>>,
         client_fd: i32,
+        active_clients: &Arc<AtomicUsize>,
     ) -> String {
         let req: Value = match serde_json::from_str(raw) {
             Ok(v) => v,
@@ -771,6 +789,25 @@ impl IpcServer {
             }
 
             "subscribe_events" => {
+                // Enforce the dedicated subscription ceiling (separate from the
+                // request pool) so a flood of SSE subscribers cannot exhaust it.
+                if ACTIVE_SUBSCRIPTIONS.load(Ordering::SeqCst) >= MAX_SUBSCRIPTIONS {
+                    log::warn!("Max event subscriptions reached");
+                    return json!({
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "error": {"code": -32001, "message": "Subscription limit reached"}
+                    })
+                    .to_string();
+                }
+
+                // Reclassify this connection: it is now a long-lived subscription,
+                // not a short RPC. Release the request-pool slot and account for it
+                // under ACTIVE_SUBSCRIPTIONS instead, then restore the request slot
+                // on exit so the outer handler's decrement stays balanced.
+                active_clients.fetch_sub(1, Ordering::SeqCst);
+                ACTIVE_SUBSCRIPTIONS.fetch_add(1, Ordering::SeqCst);
+
                 let (tx, rx) = std::sync::mpsc::channel::<crate::core::event_bus::SystemEvent>();
                 let tx_clone = tx.clone();
                 let sub_id = agent.event_bus().subscribe_all(move |event| {
@@ -787,6 +824,24 @@ impl IpcServer {
 
                 let mut last_heartbeat = std::time::Instant::now();
                 loop {
+                    // Detect a closed peer promptly so the subscription frees its
+                    // resources instead of lingering until the next write fails.
+                    // MSG_PEEK|MSG_DONTWAIT returns 0 on EOF (peer closed), -1 with
+                    // EAGAIN when alive-but-idle, or >0 if the peer sent data.
+                    let mut peek_buf = [0u8; 1];
+                    let peeked = unsafe {
+                        libc::recv(
+                            client_fd,
+                            peek_buf.as_mut_ptr() as *mut _,
+                            1,
+                            libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                        )
+                    };
+                    if peeked == 0 {
+                        // Orderly shutdown from the peer (e.g. dashboard restarted).
+                        break;
+                    }
+
                     // Receive with 1 second timeout to allow periodic heartbeat/exit check
                     match rx.recv_timeout(std::time::Duration::from_millis(1000)) {
                         Ok(event) => {
@@ -850,6 +905,13 @@ impl IpcServer {
                 }
 
                 agent.event_bus().unsubscribe(sub_id);
+
+                // Balance the accounting: drop the subscription count and restore
+                // the request-pool slot we released on entry, so the outer
+                // handler's unconditional fetch_sub(1) nets out correctly.
+                ACTIVE_SUBSCRIPTIONS.fetch_sub(1, Ordering::SeqCst);
+                active_clients.fetch_add(1, Ordering::SeqCst);
+
                 // Return a result, even though socket is closed
                 json!({"status": "unsubscribed"})
             }

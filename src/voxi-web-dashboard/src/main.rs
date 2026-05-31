@@ -121,6 +121,12 @@ struct AppState {
     admin_pw_hash: Arc<Mutex<String>>,
     active_tokens: Arc<Mutex<HashSet<String>>>,
     bridge_rate: Arc<Mutex<HashMap<String, Vec<u64>>>>,
+    // Single shared daemon event subscription, fanned out to all browser SSE
+    // clients. One IPC `subscribe_events` connection exists per dashboard
+    // process — never one-per-browser — so reloads cannot exhaust the daemon's
+    // IPC pool.
+    event_hub: tokio::sync::broadcast::Sender<String>,
+    event_pump_started: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -271,6 +277,8 @@ async fn main() {
         admin_pw_hash: Arc::new(Mutex::new(pw_hash)),
         active_tokens: Arc::new(Mutex::new(HashSet::new())),
         bridge_rate: Arc::new(Mutex::new(HashMap::new())),
+        event_hub: tokio::sync::broadcast::channel::<String>(1024).0,
+        event_pump_started: Arc::new(AtomicBool::new(false)),
     };
 
     let bind_addr = if localhost_only {
@@ -1800,112 +1808,132 @@ async fn api_events(
         return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
     }
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-
-    tokio::task::spawn_blocking(move || {
-        unsafe {
-            let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
-            if fd < 0 {
-                return;
-            }
-
-            let (addr, addr_len) = match get_ipc_addr() {
-                Ok(val) => val,
-                Err(_) => {
-                    libc::close(fd);
-                    return;
-                }
-            };
-
-            // Set recv timeout to zero (blocking) since we stream events
-            let timeout = libc::timeval {
-                tv_sec: 0,
-                tv_usec: 0,
-            };
-            libc::setsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_RCVTIMEO,
-                &timeout as *const _ as *const libc::c_void,
-                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
-            );
-
-            if libc::connect(fd, &addr as *const _ as *const libc::sockaddr, addr_len) < 0 {
-                libc::close(fd);
-                return;
-            }
-
-            // Call subscribe_events
-            let req = json!({
-                "jsonrpc": "2.0",
-                "method": "subscribe_events",
-                "id": 1,
-                "params": {}
-            });
-            let data = req.to_string();
-            let len_bytes = (data.len() as u32).to_be_bytes();
-            if libc::write(fd, len_bytes.as_ptr() as *const _, 4) != 4 {
-                libc::close(fd);
-                return;
-            }
-            if libc::write(fd, data.as_ptr() as *const _, data.len()) as usize != data.len() {
-                libc::close(fd);
-                return;
-            }
-
-            // Read the JSON-RPC acknowledgment
-            let mut ack_len_buf = [0u8; 4];
-            if libc::recv(fd, ack_len_buf.as_mut_ptr() as *mut _, 4, libc::MSG_WAITALL) != 4 {
-                libc::close(fd);
-                return;
-            }
-            let ack_len = u32::from_be_bytes(ack_len_buf) as usize;
-            let mut ack_buf = vec![0u8; ack_len];
-            if libc::recv(fd, ack_buf.as_mut_ptr() as *mut _, ack_len, libc::MSG_WAITALL) as usize != ack_len {
-                libc::close(fd);
-                return;
-            }
-
-            // Receive raw events (newline delimited)
-            let mut read_buf = [0u8; 4096];
-            let mut line_accumulator = Vec::new();
-
-            loop {
-                let n = libc::recv(fd, read_buf.as_mut_ptr() as *mut _, read_buf.len(), 0);
-                if n <= 0 {
-                    break;
-                }
-
-                for &byte in &read_buf[..n as usize] {
-                    if byte == b'\n' {
-                        if !line_accumulator.is_empty() {
-                            let line = String::from_utf8_lossy(&line_accumulator).to_string();
-                            if tx.send(line).is_err() {
-                                break;
-                            }
-                            line_accumulator.clear();
-                        }
-                    } else {
-                        line_accumulator.push(byte);
-                    }
-                }
-            }
-
-            libc::close(fd);
-        }
-    });
+    // Make sure the single per-process IPC subscription pump is running, then
+    // attach this browser as a broadcast receiver. No new daemon IPC connection
+    // is opened per browser, so dashboard reloads cannot exhaust the IPC pool.
+    ensure_event_pump(&state);
+    let rx = state.event_hub.subscribe();
 
     let event_stream = futures_util::stream::unfold(rx, |mut rx| async move {
-        match rx.recv().await {
-            Some(line) => {
-                let sse_event = axum::response::sse::Event::default().data(line);
-                Some((Ok::<_, std::convert::Infallible>(sse_event), rx))
+        loop {
+            match rx.recv().await {
+                Ok(line) => {
+                    let sse_event = axum::response::sse::Event::default().data(line);
+                    return Some((Ok::<_, std::convert::Infallible>(sse_event), rx));
+                }
+                // This client fell behind the broadcast buffer; skip and continue.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                // Hub closed (pump dropped); end this SSE stream.
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
             }
-            None => None,
         }
     });
 
     Ok(axum::response::Sse::new(event_stream).keep_alive(axum::response::sse::KeepAlive::default()))
+}
+
+/// Start the single per-process IPC event pump if it isn't already running.
+/// It keeps one `subscribe_events` connection to the daemon and rebroadcasts each
+/// event line to every SSE client, reconnecting automatically if the daemon
+/// restarts. This guarantees at most one daemon IPC slot is used for events,
+/// regardless of how many browsers (or reloads) are connected.
+fn ensure_event_pump(state: &AppState) {
+    if state
+        .event_pump_started
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return; // pump already running
+    }
+
+    let tx = state.event_hub.clone();
+    std::thread::spawn(move || loop {
+        run_event_subscription(&tx);
+        // Connection dropped (e.g. daemon restart) — back off then reconnect.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    });
+}
+
+/// Open one IPC `subscribe_events` connection and forward newline-delimited event
+/// lines into the broadcast channel until the connection closes.
+fn run_event_subscription(tx: &tokio::sync::broadcast::Sender<String>) {
+    unsafe {
+        let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+        if fd < 0 {
+            return;
+        }
+
+        let (addr, addr_len) = match get_ipc_addr() {
+            Ok(val) => val,
+            Err(_) => {
+                libc::close(fd);
+                return;
+            }
+        };
+
+        if libc::connect(fd, &addr as *const _ as *const libc::sockaddr, addr_len) < 0 {
+            libc::close(fd);
+            return;
+        }
+
+        // Send subscribe_events request.
+        let req = json!({
+            "jsonrpc": "2.0",
+            "method": "subscribe_events",
+            "id": 1,
+            "params": {}
+        });
+        let data = req.to_string();
+        let len_bytes = (data.len() as u32).to_be_bytes();
+        if libc::write(fd, len_bytes.as_ptr() as *const _, 4) != 4 {
+            libc::close(fd);
+            return;
+        }
+        if libc::write(fd, data.as_ptr() as *const _, data.len()) as usize != data.len() {
+            libc::close(fd);
+            return;
+        }
+
+        // Read the JSON-RPC acknowledgment frame.
+        let mut ack_len_buf = [0u8; 4];
+        if libc::recv(fd, ack_len_buf.as_mut_ptr() as *mut _, 4, libc::MSG_WAITALL) != 4 {
+            libc::close(fd);
+            return;
+        }
+        let ack_len = u32::from_be_bytes(ack_len_buf) as usize;
+        let mut ack_buf = vec![0u8; ack_len];
+        if libc::recv(fd, ack_buf.as_mut_ptr() as *mut _, ack_len, libc::MSG_WAITALL) as usize
+            != ack_len
+        {
+            libc::close(fd);
+            return;
+        }
+
+        // Stream raw events (newline delimited) into the broadcast hub.
+        let mut read_buf = [0u8; 4096];
+        let mut line_accumulator = Vec::new();
+        loop {
+            let n = libc::recv(fd, read_buf.as_mut_ptr() as *mut _, read_buf.len(), 0);
+            if n <= 0 {
+                break;
+            }
+            for &byte in &read_buf[..n as usize] {
+                if byte == b'\n' {
+                    if !line_accumulator.is_empty() {
+                        let line = String::from_utf8_lossy(&line_accumulator).to_string();
+                        // A send error just means no browsers are attached right
+                        // now; keep the connection alive for the next one.
+                        let _ = tx.send(line);
+                        line_accumulator.clear();
+                    }
+                } else {
+                    line_accumulator.push(byte);
+                }
+            }
+        }
+
+        libc::close(fd);
+    }
 }
 
 async fn api_bridge_data_get(
