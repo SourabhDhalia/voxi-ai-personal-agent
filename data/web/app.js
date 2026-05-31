@@ -253,7 +253,7 @@
                     '<span class="date-nav-sep"' +
                     '>›</span>' +
                     '<span class="date-nav-chip' +
-                    ' active">' +
+                    ' breadcrumb-current">' +
                     this.selYear + '</span>' +
                     '<span class="date-nav-sep"' +
                     '>›</span>';
@@ -284,7 +284,7 @@
                     '<span class="date-nav-sep"' +
                     '>›</span>' +
                     '<span class="date-nav-chip' +
-                    ' active">' +
+                    ' breadcrumb-current">' +
                     MONTHS[
                         parseInt(this.selMonth,
                             10) - 1] +

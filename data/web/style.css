@@ -454,6 +454,21 @@ body {
     border: none;
 }
 
+.date-nav-chip.breadcrumb-current {
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    color: var(--text-primary) !important;
+    font-weight: 600;
+    cursor: default;
+    padding: 3px 6px;
+}
+
+.date-nav-chip.breadcrumb-current:hover {
+    background: transparent !important;
+    border-color: transparent !important;
+    color: var(--text-primary) !important;
+}
+
 .date-nav-all {
     font-size: 0.72rem;
     color: var(--text-muted);
