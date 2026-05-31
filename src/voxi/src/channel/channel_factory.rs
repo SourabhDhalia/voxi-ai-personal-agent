@@ -20,7 +20,10 @@ pub fn create_channel(
             config,
         ))),
         "slack" => Some(Box::new(super::slack_channel::SlackChannel::new(config))),
-        "voice" => Some(Box::new(super::voice_channel::VoiceChannel::new(config))),
+        "voice" => Some(Box::new(super::voice_channel::VoiceChannel::new(
+            config,
+            agent.clone(),
+        ))),
         "a2a" => {
             if let Some(a) = agent {
                 Some(Box::new(super::a2a_handler::A2aHandler::new(config, a)))

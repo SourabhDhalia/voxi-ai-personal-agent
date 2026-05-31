@@ -1,0 +1,36 @@
+[package]
+name = "voxi-voice"
+version = "1.0.0"
+edition = "2021"
+description = "Bidirectional voice pipeline (STT -> agent -> TTS) for the Voxi daemon"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+tokio = { version = "1", features = ["sync", "rt", "time"] }
+
+[features]
+# Default build is dependency-light and offline-safe: null audio backend +
+# energy VAD only. No unvendored native crates are pulled.
+default = []
+
+# Real microphone/speaker I/O via CPAL. Enabling this requires vendoring the
+# `cpal` crate first (deferred to the embedded/desktop packaging stages); the
+# gated `audio::cpal_backend` module is the only consumer.
+cpal-audio = []
+
+# ONNX-backed engines. The Moonshine/Kokoro modules are pure-Rust scaffolds in
+# Stage 1 (model resolution + buffering); the `ort` inference session is wired
+# in a later stage once the model URLs/checksums in the plan are confirmed.
+onnx-stt = []
+onnx-tts = []
+onnx = ["onnx-stt", "onnx-tts"]
+
+# Picovoice Porcupine wake-word FFI. Like the ONNX engines, the detector is a
+# scaffold until the FFI binding is linked in the packaging stage; enabling the
+# feature only compiles the `wake_word::porcupine` module and validates assets.
+porcupine = []
+
+[dev-dependencies]
+tempfile = "3"

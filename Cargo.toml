@@ -8,6 +8,7 @@ members = [
     "src/voxi-tests",
     "src/voxi-web-dashboard",
     "src/voxi-tool-executor",
+    "src/voxi-voice",
 ]
 
 [profile.release]

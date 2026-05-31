@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "sync", "rt", "process", "net"] }
 voxi_core = { package = "voxi-core", path = "../voxi-core" }
+voxi-voice = { path = "../voxi-voice" }
 
 # JSON
 serde = { version = "1", features = ["derive"] }

@@ -1,0 +1,88 @@
+{
+  "models": [
+    {
+      "model_id": "moonshine-tiny",
+      "task": "stt",
+      "backend": "onnx",
+      "size_mb": 27,
+      "device_class": "embedded",
+      "language": "multilingual",
+      "recommended_sample_rate": 16000,
+      "memory_mb": 150,
+      "download_url": "https://huggingface.co/onnx-community/moonshine-tiny-ONNX/resolve/main/",
+      "sha256": "<to-be-verified>",
+      "files": ["model.onnx", "tokenizer.json", "config.json"],
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "moonshine-base",
+      "task": "stt",
+      "backend": "onnx",
+      "size_mb": 65,
+      "device_class": "desktop",
+      "language": "multilingual",
+      "recommended_sample_rate": 16000,
+      "memory_mb": 300,
+      "download_url": "https://huggingface.co/onnx-community/moonshine-base-ONNX/resolve/main/",
+      "sha256": "<to-be-verified>",
+      "files": ["model.onnx", "tokenizer.json", "config.json"],
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "kokoro-82m",
+      "task": "tts",
+      "backend": "onnx",
+      "size_mb": 120,
+      "device_class": "embedded",
+      "language": "multilingual",
+      "recommended_sample_rate": 24000,
+      "memory_mb": 200,
+      "download_url": "https://huggingface.co/onnx-community/Kokoro-82M-ONNX/resolve/main/",
+      "sha256": "<to-be-verified>",
+      "files": ["model.onnx", "voices.bin", "config.json"],
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "tinytts",
+      "task": "tts",
+      "backend": "onnx",
+      "size_mb": 4,
+      "device_class": "embedded",
+      "language": "en",
+      "recommended_sample_rate": 44100,
+      "memory_mb": 50,
+      "download_url": "https://huggingface.co/onnx-community/tinytts-ONNX/resolve/main/",
+      "sha256": "<to-be-verified>",
+      "files": ["model.onnx", "config.json"],
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "qwen2.5-0.5b-correction",
+      "task": "correction",
+      "backend": "onnx",
+      "size_mb": 350,
+      "device_class": "embedded",
+      "language": "multilingual",
+      "recommended_sample_rate": null,
+      "memory_mb": 400,
+      "download_url": "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-ONNX/resolve/main/",
+      "sha256": "<to-be-verified>",
+      "files": ["model.onnx", "tokenizer.json", "config.json", "generation_config.json"],
+      "version": "1.0.0"
+    },
+    {
+      "model_id": "smollm2-360m-correction",
+      "task": "correction",
+      "backend": "onnx",
+      "size_mb": 180,
+      "device_class": "embedded",
+      "language": "multilingual",
+      "recommended_sample_rate": null,
+      "memory_mb": 250,
+      "download_url": "https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct/resolve/main/",
+      "sha256": "<to-be-verified>",
+      "files": ["model.onnx", "tokenizer.json", "config.json"],
+      "version": "1.0.0"
+    }
+  ]
+}
