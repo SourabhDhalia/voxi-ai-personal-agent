@@ -149,6 +149,8 @@ struct LogEntry {
     file: String,
     label: String,
     content: String,
+    total_lines: usize,
+    has_more: bool,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -1009,6 +1011,10 @@ async fn api_tasks_delete(
 #[derive(serde::Deserialize)]
 struct LogQuery {
     date: Option<String>,
+    /// Number of lines to return (default 500, max 2000)
+    lines: Option<usize>,
+    /// Line offset from the END of the file (0 = newest lines)
+    offset: Option<usize>,
 }
 
 async fn api_logs(
@@ -1024,14 +1030,18 @@ async fn api_logs(
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid date format"));
     }
 
-    let logs = collect_logs_for_date(&state.data_dir.join("logs"), &date)
+    let max_lines = q.lines.unwrap_or(500).clamp(1, 2000);
+    let offset = q.offset.unwrap_or(0);
+    let logs = collect_logs_for_date(&state.data_dir.join("logs"), &date, max_lines, offset)
         .into_iter()
         .map(|entry| {
             json!({
                 "date": entry.date,
                 "file": entry.file,
                 "label": entry.label,
-                "content": entry.content
+                "content": entry.content,
+                "total_lines": entry.total_lines,
+                "has_more": entry.has_more
             })
         })
         .collect::<Vec<_>>();
@@ -2366,7 +2376,38 @@ fn collect_log_dates(logs_dir: &std::path::Path) -> Vec<String> {
     dates.into_iter().collect()
 }
 
-fn collect_logs_for_date(logs_dir: &std::path::Path, date: &str) -> Vec<LogEntry> {
+/// Read the tail of a log file efficiently without loading the whole file.
+/// Returns (lines_window, total_line_count).
+fn read_log_tail(path: &std::path::Path, max_lines: usize, offset: usize) -> (String, usize, bool) {
+    use std::io::{BufRead, BufReader};
+
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return (String::new(), 0, false),
+    };
+
+    // Collect all lines into a vector (streaming, not all into one String).
+    // For files that may be large we still read line-by-line but never
+    // build the full joined string — we only join the window we need.
+    let reader = BufReader::new(file);
+    let all_lines: Vec<String> = reader.lines().filter_map(|l| l.ok()).collect();
+    let total = all_lines.len();
+
+    // Window: from the END, skip `offset` lines, then take `max_lines`.
+    let end = total.saturating_sub(offset);
+    let start = end.saturating_sub(max_lines);
+    let has_more = start > 0;
+
+    let window = all_lines[start..end].join("\n");
+    (window, total, has_more)
+}
+
+fn collect_logs_for_date(
+    logs_dir: &std::path::Path,
+    date: &str,
+    max_lines: usize,
+    offset: usize,
+) -> Vec<LogEntry> {
     let day_dir = logs_dir.join(date.replace('-', "/"));
     let mut entries = Vec::new();
     let read_dir = match std::fs::read_dir(day_dir) {
@@ -2388,12 +2429,14 @@ fn collect_logs_for_date(logs_dir: &std::path::Path, date: &str) -> Vec<LogEntry
 
         let file = entry.file_name().to_string_lossy().to_string();
         let label = file.trim_end_matches(".log").to_string();
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let (content, total_lines, has_more) = read_log_tail(&path, max_lines, offset);
         entries.push(LogEntry {
             date: date.to_string(),
             file,
             label,
             content,
+            total_lines,
+            has_more,
         });
     }
 

@@ -874,6 +874,9 @@
 
     // --- Logs ---
     let logDateNav = null;
+    // Per-file pagination state: { [label]: { offset: 0, totalLines: 0 } }
+    let logPagination = {};
+    const LOG_PAGE_SIZE = 500;
 
     async function loadLogs(dateStr) {
         // Init date nav once
@@ -881,48 +884,177 @@
             logDateNav = new DateNav(
                 'log-date-nav',
                 function (date) {
+                    logPagination = {};
                     loadLogContent(date);
                 });
-            // Load available dates
-            const datesResp =
-                await apiFetch('logs/dates');
+            const datesResp = await apiFetch('logs/dates');
             if (datesResp && datesResp.dates) {
-                logDateNav.setDates(
-                    datesResp.dates);
+                logDateNav.setDates(datesResp.dates);
             }
         }
-
-        // Load today by default
+        logPagination = {};
         loadLogContent(dateStr || null);
     }
 
-    async function loadLogContent(dateStr) {
-        const logEl =
-            document.getElementById('log-content');
-        logEl.textContent = 'Loading...';
+    async function loadLogContent(dateStr, appendMode, fileLabel, appendOffset) {
+        const logEl = document.getElementById('log-content');
 
-        const endpoint = dateStr
-            ? 'logs?date=' +
-            encodeURIComponent(dateStr)
-            : 'logs';
+        if (!appendMode) {
+            logEl.innerHTML = '<div class="log-loading">Loading logs\u2026</div>';
+        }
+
+        let endpoint = dateStr
+            ? 'logs?date=' + encodeURIComponent(dateStr) + '&lines=' + LOG_PAGE_SIZE
+            : 'logs?lines=' + LOG_PAGE_SIZE;
+
+        if (appendMode && appendOffset != null) {
+            endpoint += '&offset=' + appendOffset;
+        }
+
         const data = await apiFetch(endpoint);
 
+        if (!appendMode) {
+            logEl.innerHTML = '';
+        } else {
+            // Remove any existing load-earlier button for this label
+            const old = logEl.querySelector('.log-load-earlier[data-label="' + (fileLabel || '') + '"]');
+            if (old) old.remove();
+        }
+
         if (!data || data.length === 0) {
-            logEl.textContent = dateStr
-                ? 'No logs for ' + dateStr
-                : 'No logs available.';
+            logEl.innerHTML = '<div class="log-empty">No logs available' + (dateStr ? ' for ' + escHtml(dateStr) : '') + '.</div>';
             return;
         }
 
-        const markdown = data.map(l =>
-            '### ' + (l.label || l.file || 'Log') +
-            '\n' + l.content)
-            .join('\n\n');
+        data.forEach(function(l) {
+            const label = l.label || l.file || 'Log';
+            const totalLines = l.total_lines || 0;
+            const hasMore = l.has_more || false;
 
-        if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
-            logEl.innerHTML = marked.parse(markdown);
-        } else {
-            logEl.textContent = markdown;
+            // Track pagination state per file
+            if (!appendMode || !logPagination[label]) {
+                logPagination[label] = { offset: 0, totalLines: totalLines, date: dateStr };
+            }
+
+            // Build file block
+            const block = document.createElement('div');
+            block.className = 'log-file-block';
+            block.dataset.label = label;
+
+            // Header with stats
+            const header = document.createElement('div');
+            header.className = 'log-file-header';
+            const shownLines = (l.content || '').split('\n').length;
+            const shownFrom = hasMore ? (totalLines - logPagination[label].offset - shownLines + 1) : 1;
+            const shownTo = totalLines - logPagination[label].offset;
+            header.innerHTML =
+                '<span class="log-file-label">' + escHtml(label) + '</span>' +
+                '<span class="log-file-meta">Lines ' + shownFrom + '\u2013' + shownTo +
+                ' of ' + totalLines + '</span>' +
+                '<button class="log-tail-btn" title="Jump to end" data-label="' + escHtml(label) + '">\u25bc Tail</button>';
+            block.appendChild(header);
+
+            // Load Earlier button (only if there are older lines)
+            if (hasMore) {
+                const earlier = document.createElement('button');
+                earlier.className = 'log-load-earlier';
+                earlier.dataset.label = label;
+                earlier.dataset.date = dateStr || '';
+                earlier.textContent = '\u2191 Load earlier lines (' + (totalLines - shownLines - logPagination[label].offset) + ' more)';
+                earlier.addEventListener('click', function() {
+                    const newOffset = logPagination[label].offset + shownLines;
+                    logPagination[label].offset = newOffset;
+                    // Load older page and prepend
+                    loadLogEarlier(label, dateStr, newOffset, block);
+                });
+                block.appendChild(earlier);
+            }
+
+            // Log content as plain monospace pre — NO markdown parsing
+            const pre = document.createElement('pre');
+            pre.className = 'log-pre';
+            pre.dataset.label = label;
+            pre.textContent = l.content || '';
+            block.appendChild(pre);
+
+            if (appendMode && fileLabel === label) {
+                // Prepend new lines before existing pre
+                const existingBlock = logEl.querySelector('.log-file-block[data-label="' + label + '"]');
+                if (existingBlock) {
+                    existingBlock.replaceWith(block);
+                    return;
+                }
+            }
+            logEl.appendChild(block);
+
+            // Auto-scroll to bottom of latest log on first load
+            if (!appendMode) {
+                pre.scrollTop = pre.scrollHeight;
+            }
+        });
+
+        // Wire up tail buttons
+        logEl.querySelectorAll('.log-tail-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                const lbl = btn.dataset.label;
+                const pre = logEl.querySelector('.log-pre[data-label="' + lbl + '"]');
+                if (pre) pre.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            });
+        });
+    }
+
+    async function loadLogEarlier(label, dateStr, offset, existingBlock) {
+        const endpoint = (dateStr
+            ? 'logs?date=' + encodeURIComponent(dateStr)
+            : 'logs') + '&lines=' + LOG_PAGE_SIZE + '&offset=' + offset;
+
+        const data = await apiFetch(endpoint);
+        if (!data || !data.length) return;
+
+        const entry = data.find(function(l) { return (l.label || l.file) === label; });
+        if (!entry) return;
+
+        const container = document.getElementById('log-content');
+
+        // Remove old earlier button
+        const oldBtn = existingBlock.querySelector('.log-load-earlier');
+        if (oldBtn) oldBtn.remove();
+
+        const totalLines = entry.total_lines || 0;
+        const shownLines = (entry.content || '').split('\n').length;
+        const hasMore = entry.has_more || false;
+
+        // Prepend new content to the existing pre
+        const existingPre = existingBlock.querySelector('.log-pre');
+        if (existingPre) {
+            existingPre.textContent = (entry.content || '') + '\n' + existingPre.textContent;
+        }
+
+        // Update header stats
+        const headerMeta = existingBlock.querySelector('.log-file-meta');
+        if (headerMeta) {
+            const shownFrom = hasMore ? (totalLines - offset - shownLines + 1) : 1;
+            const shownTo = totalLines - logPagination[label].offset + shownLines;
+            headerMeta.textContent = 'Lines ' + shownFrom + '\u2013' + shownTo + ' of ' + totalLines;
+        }
+
+        // Add new Load Earlier button if still more
+        if (hasMore) {
+            const earlier = document.createElement('button');
+            earlier.className = 'log-load-earlier';
+            earlier.dataset.label = label;
+            earlier.dataset.date = dateStr || '';
+            const remaining = totalLines - offset - shownLines;
+            earlier.textContent = '\u2191 Load earlier lines (' + remaining + ' more)';
+            earlier.addEventListener('click', function() {
+                const newOffset = offset + shownLines;
+                logPagination[label].offset = newOffset;
+                loadLogEarlier(label, dateStr, newOffset, existingBlock);
+            });
+            // Insert before the pre element
+            if (existingPre) {
+                existingBlock.insertBefore(earlier, existingPre);
+            }
         }
     }
 

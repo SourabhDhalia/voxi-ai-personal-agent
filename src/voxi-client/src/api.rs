@@ -429,6 +429,94 @@ impl Voxi {
         self.call_method("list_registered_paths", json!({}))
     }
 
+    /// List saved chat sessions by scanning the sessions directory on disk.
+    ///
+    /// Returns a `Vec<Value>` with each entry containing at least:
+    /// `id`, `title`, `modified` (unix timestamp), `message_count`.
+    pub fn list_sessions(&self) -> Result<Vec<Value>, String> {
+        let data_dir = std::env::var("VOXI_DATA_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                std::path::PathBuf::from(home).join(".voxi")
+            });
+        let sessions_dir = data_dir.join("sessions");
+
+        let mut sessions: Vec<Value> = Vec::new();
+
+        let entries = match std::fs::read_dir(&sessions_dir) {
+            Ok(e) => e,
+            Err(_) => return Ok(vec![]),
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() { continue; }
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if ext != "json" { continue; }
+
+            let id = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            if id.is_empty() { continue; }
+
+            let modified = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+
+            // Parse the JSON to get title and message_count
+            let content = std::fs::read_to_string(&path).unwrap_or_default();
+            let doc: Value = serde_json::from_str(&content).unwrap_or(json!({}));
+
+            let title = doc
+                .get("title")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| id.clone());
+
+            let message_count = doc
+                .get("messages")
+                .and_then(Value::as_array)
+                .map(|m| m.len() as i64)
+                .or_else(|| doc.get("message_count").and_then(Value::as_i64))
+                .unwrap_or(0);
+
+            let content_preview = doc
+                .get("messages")
+                .and_then(Value::as_array)
+                .and_then(|msgs| msgs.first())
+                .and_then(|msg| msg.get("text").or_else(|| msg.get("content")))
+                .and_then(Value::as_str)
+                .map(|s| s.chars().take(80).collect::<String>())
+                .unwrap_or_default();
+
+            sessions.push(json!({
+                "id": id,
+                "title": title,
+                "modified": modified,
+                "message_count": message_count,
+                "content_preview": content_preview,
+            }));
+        }
+
+        // Sort by most recently modified first
+        sessions.sort_by(|a, b| {
+            let ta = a.get("modified").and_then(Value::as_i64).unwrap_or(0);
+            let tb = b.get("modified").and_then(Value::as_i64).unwrap_or(0);
+            tb.cmp(&ta)
+        });
+
+        // Return at most 50
+        sessions.truncate(50);
+        Ok(sessions)
+    }
+
     /// Shutdown and release resources.
     pub fn shutdown(&mut self) {
         if self.initialized {

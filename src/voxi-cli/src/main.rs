@@ -741,7 +741,194 @@ fn cmd_dashboard(client: &Voxi, command: &str) {
     }
 }
 
-/// Interactive REPL mode.
+// ─── ANSI colour helpers ─────────────────────────────────────────────────────
+
+fn ansi(code: &str, text: &str) -> String {
+    if is_tty() {
+        format!("\x1b[{}m{}\x1b[0m", code, text)
+    } else {
+        text.to_string()
+    }
+}
+
+fn is_tty() -> bool {
+    // Simple heuristic: check if stdout is a terminal via libc
+    // Falls back to true so colours show by default.
+    #[cfg(unix)]
+    {
+        unsafe { libc::isatty(libc::STDOUT_FILENO) != 0 }
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn dim(text: &str) -> String { ansi("2", text) }
+fn bold(text: &str) -> String { ansi("1", text) }
+fn green(text: &str) -> String { ansi("32", text) }
+fn cyan(text: &str) -> String { ansi("36", text) }
+fn yellow(text: &str) -> String { ansi("33", text) }
+fn magenta(text: &str) -> String { ansi("35", text) }
+
+// ─── Chat REPL ───────────────────────────────────────────────────────────────
+
+fn print_chat_help() {
+    println!("{}", bold("Voxi Chat — available commands:"));
+    println!("  {}   Start a brand-new conversation", cyan("/new"));
+    println!("  {}   List recent sessions", cyan("/sessions"));
+    println!("  {} {}  Switch to a previous session", cyan("/switch"), dim("<id>"));
+    println!("  {}      Show current session ID", cyan("/session"));
+    println!("  {}        Show token usage", cyan("/usage"));
+    println!("  {}         Show this help", cyan("/help"));
+    println!("  {} {}        Start/stop web dashboard", cyan("/dashboard"), dim("<start|stop|status>"));
+    println!("  {}   Exit chat", cyan("/exit  quit  exit"));
+    println!();
+    println!("  {} {}   Send prompt with streaming (default on)", dim("--no-stream"), dim("flag"));
+    println!("  {}   Anything else is sent as a message to the agent", dim("<message>"));
+}
+
+fn list_sessions_compact(client: &Voxi) {
+    match client.list_sessions() {
+        Ok(sessions) => {
+            if sessions.is_empty() {
+                println!("{}", dim("No saved sessions found."));
+                return;
+            }
+            println!("{}", bold("Recent sessions:"));
+            for s in sessions.iter().take(20) {
+                let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                let title = s.get("title").and_then(|v| v.as_str()).unwrap_or("(untitled)");
+                let modified = s.get("modified").and_then(|v| v.as_i64())
+                    .map(|ts| {
+                        // Format as HH:MM or date depending on age
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64;
+                        let age = now - ts;
+                        if age < 86400 {
+                            format!("{}h ago", age / 3600)
+                        } else {
+                            format!("{}d ago", age / 86400)
+                        }
+                    })
+                    .unwrap_or_default();
+                let msgs = s.get("message_count").and_then(|v| v.as_i64()).unwrap_or(0);
+                println!("  {} {} {} {}",
+                    cyan(id),
+                    dim(&format!("{} msgs", msgs)),
+                    dim(&modified),
+                    dim(title)
+                );
+            }
+        }
+        Err(e) => eprintln!("{} {}", yellow("[sessions error]"), e),
+    }
+}
+
+/// Full-featured interactive chat REPL.
+fn cmd_chat(client: &Voxi, start_session: Option<String>, stream: bool) {
+    let mut session_id = start_session.unwrap_or_else(generate_session_id);
+
+    // Banner
+    println!();
+    println!("  {} {}", bold(&green("Voxi")), bold("Chat"));
+    println!("  {}", dim("Type /help for commands. Press Ctrl-C or type /exit to quit."));
+    println!("  Session: {}", cyan(&session_id));
+    println!();
+
+    let stdin = io::stdin();
+    loop {
+        // Prompt
+        print!("{}  ", bold(&magenta("you›")));
+        io::stdout().flush().ok();
+
+        let mut line = String::new();
+        match stdin.lock().read_line(&mut line) {
+            Ok(0) => break,  // EOF / Ctrl-D
+            Err(_) => break,
+            Ok(_) => {}
+        }
+        let input = line.trim();
+        if input.is_empty() { continue; }
+
+        match input {
+            "exit" | "quit" | "/exit" | "/quit" => {
+                println!("{}", dim("Goodbye."));
+                break;
+            }
+            "/help" => print_chat_help(),
+
+            "/new" => {
+                session_id = generate_session_id();
+                println!("{} {}", green("✓ New session:"), cyan(&session_id));
+            }
+
+            "/session" => {
+                println!("Session: {}", cyan(&session_id));
+            }
+
+            "/sessions" => list_sessions_compact(client),
+
+            cmd if cmd.starts_with("/switch ") => {
+                let new_id = cmd.trim_start_matches("/switch ").trim();
+                if new_id.is_empty() {
+                    println!("{}", yellow("Usage: /switch <session-id>"));
+                } else {
+                    session_id = new_id.to_string();
+                    println!("{} {}", green("✓ Switched to:"), cyan(&session_id));
+                }
+            }
+
+            "/usage" => show_usage(client, Some(&session_id), None),
+
+            cmd if cmd.starts_with("/dashboard ") => {
+                let action = cmd.trim_start_matches("/dashboard ").trim();
+                cmd_dashboard(client, action);
+            }
+
+            prompt => {
+                // Print the agent label before streaming starts
+                print!("\n{}  ", bold(&cyan("voxi›")));
+                io::stdout().flush().ok();
+
+                let result = if stream {
+                    client.process_prompt_streaming(&session_id, prompt, |chunk| {
+                        print!("{}", chunk);
+                        io::stdout().flush().ok();
+                    })
+                } else {
+                    let text_result = client.process_prompt(&session_id, prompt);
+                    text_result.map(|text| {
+                        print!("{}", text);
+                        voxi::api::PromptResponse {
+                            session_id: session_id.clone(),
+                            text,
+                            stream_received: false,
+                        }
+                    })
+                };
+
+                match result {
+                    Ok(resp) => {
+                        println!("\n");
+                        // Keep session_id in sync (agent may have assigned one)
+                        if !resp.session_id.is_empty() {
+                            session_id = resp.session_id;
+                        }
+                    }
+                    Err(e) => {
+                        println!();
+                        eprintln!("{} {}", yellow("[error]"), e);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Legacy interactive REPL mode (kept for --no-chat compat, used by bare `voxi-cli`).
 fn interactive_mode(client: &Voxi, explicit_session_id: Option<&str>, stream: bool) {
     match explicit_session_id {
         Some(session_id) => println!("Voxi Interactive CLI (session: {})", session_id),
@@ -771,9 +958,14 @@ fn interactive_mode(client: &Voxi, explicit_session_id: Option<&str>, stream: bo
                 println!("  /dashboard start [--port N] Start web dashboard");
                 println!("  /dashboard stop   Stop web dashboard");
                 println!("  /dashboard status Show dashboard status");
+                println!("  /chat             Enter full chat mode (persistent session)");
                 println!("  -s <id>           Re-run CLI with a fixed session");
                 println!("  quit, exit        Exit");
                 println!("  <text>            Send prompt");
+            }
+            "/chat" => {
+                cmd_chat(client, None, stream);
+                return;
             }
             cmd if cmd.starts_with("/usage") => {
                 show_usage(client, explicit_session_id, None);
@@ -874,6 +1066,9 @@ fn print_usage() {
     eprintln!("voxi-cli — Voxi CLI\n");
     eprintln!("Usage:");
     eprintln!("  voxi-cli [options] [prompt]\n");
+    eprintln!("Chat commands:");
+    eprintln!("  voxi-cli chat              Start persistent interactive chat");
+    eprintln!("  voxi-cli chat -s <id>      Resume a specific session\n");
     eprintln!("Options:");
     eprintln!("  -s <id>           Reuse a fixed session ID");
     eprintln!("  --no-stream       Disable real-time streaming");
@@ -906,6 +1101,7 @@ fn print_usage() {
     eprintln!("  voxi-cli model switch <task> <model_id>");
     eprintln!("  voxi-cli model doctor\n");
     eprintln!("If no prompt given, starts interactive mode.");
+    eprintln!("Tip: use 'voxi-cli chat' for the full persistent chat experience.");
 }
 
 fn cmd_register(client: &Voxi, kind: &str, path: &str) {
@@ -1203,6 +1399,26 @@ fn main() {
             }
             "model" => {
                 cmd_model(&args[i + 1..]);
+                return;
+            }
+            "chat" => {
+                // Collect remaining args to parse -s <id> and --no-stream
+                let mut chat_session: Option<String> = session_id.clone();
+                let mut chat_stream = stream;
+                let mut j = i + 1;
+                while j < args.len() {
+                    match args[j].as_str() {
+                        "-s" if j + 1 < args.len() => {
+                            j += 1;
+                            chat_session = Some(args[j].clone());
+                        }
+                        "--no-stream" => chat_stream = false,
+                        _ => {}
+                    }
+                    j += 1;
+                }
+                let client = create_client().unwrap_or_else(|err| print_error_and_exit(&err));
+                cmd_chat(&client, chat_session, chat_stream);
                 return;
             }
             "dashboard" => {
