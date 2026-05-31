@@ -1183,9 +1183,24 @@
         // Check if last message is from user, indicating the agent is still running/thinking
         const lastMsg = resp.messages[resp.messages.length - 1];
         if (lastMsg && lastMsg.role === 'user') {
-            const reqId = sessionStorage.getItem('active_request_id_' + sessionId) || 'unknown';
-            showThinkingIndicator(sessionId, reqId);
-            startPollingSession(sessionId);
+            const activeResp = await apiFetch('chat/active');
+            let isActive = false;
+            let reqId = 'unknown';
+            if (activeResp && Array.isArray(activeResp.active_requests)) {
+                const activeReq = activeResp.active_requests.find(r => r.session_id === sessionId);
+                if (activeReq) {
+                    isActive = true;
+                    reqId = activeReq.request_id;
+                    sessionStorage.setItem('active_request_id_' + sessionId, reqId);
+                }
+            }
+
+            if (isActive) {
+                showThinkingIndicator(sessionId, reqId);
+                startPollingSession(sessionId);
+            } else {
+                sessionStorage.removeItem('active_request_id_' + sessionId);
+            }
         }
     }
 
@@ -1215,10 +1230,13 @@
         thinking.className = 'chat-thinking';
         thinking.id = thinkingId;
         thinking.innerHTML =
+            '<div class="chat-thinking-header">' +
             '<span class="chat-thinking-dot"></span>' +
             '<span class="chat-thinking-dot"></span>' +
             '<span class="chat-thinking-dot"></span>' +
-            '<button class="chat-stop-btn" title="Stop generating">Stop</button>';
+            '<button class="chat-stop-btn" title="Stop generating">Stop</button>' +
+            '</div>' +
+            '<div class="chat-thinking-logs"></div>';
         chatMessages.appendChild(thinking);
         chatMessages.scrollTop = chatMessages.scrollHeight;
 
@@ -1251,12 +1269,45 @@
         if (window.chatPollInterval) {
             clearInterval(window.chatPollInterval);
         }
+        let lastOutboundCursor = 0;
         window.chatPollInterval = setInterval(async () => {
             if (sessionId !== currentChatSessionId) {
                 clearInterval(window.chatPollInterval);
                 window.chatPollInterval = null;
                 return;
             }
+
+            // Poll outbound messages to show live logs
+            try {
+                const outboundResp = await apiFetch('outbound/messages?session_id=' + encodeURIComponent(sessionId) + '&since=' + lastOutboundCursor);
+                if (outboundResp && Array.isArray(outboundResp.messages) && outboundResp.messages.length > 0) {
+                    const reqId = sessionStorage.getItem('active_request_id_' + sessionId);
+                    const thinkingId = 'think-' + (reqId || 'unknown');
+                    const thinkingEl = document.getElementById(thinkingId);
+                    if (thinkingEl) {
+                        let logsEl = thinkingEl.querySelector('.chat-thinking-logs');
+                        if (logsEl) {
+                            outboundResp.messages.forEach(msg => {
+                                const text = msg.message;
+                                const exists = Array.from(logsEl.children).some(child => child.textContent === text);
+                                if (!exists) {
+                                    const logMsgEl = document.createElement('div');
+                                    logMsgEl.className = 'chat-thinking-log-entry';
+                                    logMsgEl.textContent = text;
+                                    logsEl.appendChild(logMsgEl);
+                                }
+                            });
+                            chatMessages.scrollTop = chatMessages.scrollHeight;
+                        }
+                    }
+                    if (typeof outboundResp.cursor === 'number' && outboundResp.cursor >= lastOutboundCursor) {
+                        lastOutboundCursor = outboundResp.cursor;
+                    }
+                }
+            } catch (err) {
+                console.error('Error fetching thinking logs:', err);
+            }
+
             const resp = await apiFetch('sessions/' + encodeURIComponent(sessionId));
             if (resp && Array.isArray(resp.messages) && resp.messages.length > 0) {
                 const lastMsg = resp.messages[resp.messages.length - 1];
@@ -1267,7 +1318,7 @@
                     await loadChatSessions();
                 }
             }
-        }, 2000);
+        }, 1500);
     }
 
     async function sendChat() {

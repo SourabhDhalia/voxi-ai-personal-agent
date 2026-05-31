@@ -232,6 +232,14 @@ impl AgentCore {
         Err("Request not found".to_string())
     }
 
+    pub fn get_active_requests(&self) -> Vec<RequestState> {
+        if let Ok(active) = self.active_requests.lock() {
+            active.values().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     pub async fn process_prompt(
         &self,
         session_id: &str,
@@ -1618,6 +1626,12 @@ impl AgentCore {
 
             // ── Phase 4: DecisionMaking / LLM call ──────────────────────
             loop_state.transition(AgentPhase::DecisionMaking);
+            let _ = append_dashboard_outbound_message(
+                &self.platform.paths.data_dir,
+                Some("Reasoning"),
+                &format!("🤖 Thinking (Round {})...", loop_state.round),
+                Some(session_id),
+            );
             log::debug!(
                 "[AgentLoop] Round {} | session='{}' phase=DecisionMaking msgs={}",
                 loop_state.round,
@@ -1917,6 +1931,14 @@ impl AgentCore {
                 let grounded_csv_headers_snapshot = collect_grounded_csv_headers(&messages);
 
                 for tc in detected_tool_calls.iter() {
+                    let tc_args_str = serde_json::to_string(&tc.args).unwrap_or_default();
+                    let _ = append_dashboard_outbound_message(
+                        &self.platform.paths.data_dir,
+                        Some("Tool Start"),
+                        &format!("🛠️ Calling tool `{}` with arguments: {}", tc.name, tc_args_str),
+                        Some(session_id),
+                    );
+
                     let skills_dir = self.platform.paths.skills_dir.clone();
                     let skill_roots = skill_capability_manager::load_snapshot(
                         &self.platform.paths,
@@ -2932,6 +2954,24 @@ impl AgentCore {
                 }
 
                 let results = futures_util::future::join_all(futures_list).await;
+
+                for res in &results {
+                    let outcome_str = if let Some(err) = res.tool_result.get("error") {
+                        if err == "CONFIRM_REQUIRED" {
+                            "⚠️ safety confirmation required".to_string()
+                        } else {
+                            format!("❌ failed: {}", err)
+                        }
+                    } else {
+                        "✅ completed".to_string()
+                    };
+                    let _ = append_dashboard_outbound_message(
+                        &self.platform.paths.data_dir,
+                        Some("Tool Finished"),
+                        &format!("Tool `{}` {}", res.tool_name, outcome_str),
+                        Some(session_id),
+                    );
+                }
                 
                 // Check if any tool call required safety confirmation
                 let mut confirm_needed = None;

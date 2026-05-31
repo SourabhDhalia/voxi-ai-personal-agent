@@ -424,6 +424,21 @@ impl IpcServer {
                 }
             }
 
+            "get_active_requests" => {
+                let active = agent.get_active_requests();
+                let list = active.into_iter().map(|req| {
+                    json!({
+                        "session_id": req.session_id,
+                        "request_id": req.request_id,
+                        "cancelled": req.cancelled.load(std::sync::atomic::Ordering::SeqCst)
+                    })
+                }).collect::<Vec<_>>();
+                json!({
+                    "status": "ok",
+                    "active_requests": list
+                })
+            }
+
             "get_usage" => {
                 if let Some(ss_ref) = agent.get_session_store() {
                     let session_id = params

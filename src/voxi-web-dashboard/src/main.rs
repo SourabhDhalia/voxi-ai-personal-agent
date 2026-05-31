@@ -285,6 +285,7 @@ async fn main() {
         .route("/api/metrics", get(api_metrics))
         .route("/api/chat", post(api_chat))
         .route("/api/chat/stop", post(api_chat_stop))
+        .route("/api/chat/active", get(api_chat_active))
         .route("/api/sessions/dates", get(api_session_dates))
         .route(
             "/api/sessions",
@@ -805,6 +806,19 @@ async fn api_chat_stop(Json(payload): Json<Value>) -> Result<Json<Value>, (Statu
     let rid = request_id.clone();
     let response = tokio::task::spawn_blocking(move || {
         ipc_call("cancel_request", json!({"session_id": sid, "request_id": rid}))
+    })
+    .await
+    .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
+
+    match response {
+        Ok(val) => Ok(Json(val)),
+        Err(e) => Err(json_error(StatusCode::BAD_GATEWAY, &format!("IPC error: {}", e))),
+    }
+}
+
+async fn api_chat_active() -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let response = tokio::task::spawn_blocking(move || {
+        ipc_call("get_active_requests", json!({}))
     })
     .await
     .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
