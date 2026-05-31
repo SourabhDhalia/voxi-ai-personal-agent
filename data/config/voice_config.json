@@ -3,15 +3,50 @@
   "language": "en-US",
   "speak_replies": true,
   "browser_voice": "",
-  "available_engines": ["browser", "device"],
-  "device": {
-    "audio_backend": "auto",
-    "stt_model": "moonshine-tiny",
-    "tts_model": "kokoro-82m",
-    "correction_model": null,
-    "trigger_mode": "vad",
-    "wake_word": "hey voxi",
-    "sample_rate": 16000,
-    "confidence_threshold": 0.85
-  }
+  "available_engines": [
+    "kokoro_browser",
+    "pocket_local",
+    "indextts2_local",
+    "cloud_tts"
+  ],
+  "priorities": {
+    "chat": "kokoro_browser",
+    "assistant": "pocket_local",
+    "storytelling": "indextts2_local"
+  },
+  "engines": {
+    "kokoro_browser": {
+      "model_path": "models/kokoro-82m.onnx",
+      "tokenizer_path": null,
+      "voice": "af_bella",
+      "gender": "female",
+      "enabled": true
+    },
+    "pocket_local": {
+      "model_path": "models/pocket-voice.onnx",
+      "tokenizer_path": null,
+      "voice": "en_US-lessac-medium",
+      "gender": "male",
+      "enabled": true
+    },
+    "indextts2_local": {
+      "model_path": "models/style_tts2.onnx",
+      "tokenizer_path": null,
+      "voice": "expressive_cloned",
+      "gender": "female",
+      "enabled": true
+    },
+    "cloud_tts": {
+      "model_path": null,
+      "tokenizer_path": null,
+      "voice": "alloy",
+      "gender": "neutral",
+      "enabled": false
+    }
+  },
+  "fallback_order": [
+    "indextts2_local",
+    "pocket_local",
+    "kokoro_browser"
+  ]
 }

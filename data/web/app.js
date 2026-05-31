@@ -1753,9 +1753,20 @@
             null;
     }
 
-    function speakText(raw) {
+    let kokoroModel = null;
+    async function loadKokoroLibrary() {
+        if (kokoroModel) return kokoroModel;
+        const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0-alpha.5');
+        kokoroModel = await pipeline('text-to-speech', 'onnx-community/Kokoro-82M-v1.0-ONNX', {
+            dtype: 'fp32',
+            device: 'webgpu'
+        });
+        return kokoroModel;
+    }
+
+    async function speakText(raw) {
         if (!voiceConfig.speak_replies) return;
-        if (!('speechSynthesis' in window) || !raw) return;
+        if (!raw) return;
         const spoken = raw
             .replace(/```[\s\S]*?```/g, ' code block ')
             .replace(/[#*_`>~|]/g, '')
@@ -1763,6 +1774,26 @@
             .replace(/\s+/g, ' ')
             .trim();
         if (!spoken) return;
+
+        if (voiceConfig.engine === 'kokoro_browser') {
+            try {
+                const model = await loadKokoroLibrary();
+                const output = await model(spoken, {
+                    speaker: voiceConfig.browser_voice || 'af_bella'
+                });
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const audioBuffer = audioContext.createBuffer(1, output.audio.length, output.sampling_rate);
+                audioBuffer.getChannelData(0).set(output.audio);
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioContext.destination);
+                source.start(0);
+                return;
+            } catch (err) {
+                console.warn('Client-side neural speech (kokoro_browser) failed, falling back to Web Speech API:', err);
+            }
+        }
+
         try {
             window.speechSynthesis.cancel();
             const utter = new SpeechSynthesisUtterance(spoken);
@@ -1774,6 +1805,7 @@
             console.error('TTS failed:', err);
         }
     }
+
 
     function setMicState(listening) {
         voiceListening = listening;
@@ -1885,6 +1917,8 @@
     let slashItems = [];
     let slashActiveIdx = 0;
     let capabilitiesCache = null;
+    let skillsCache = null;
+    let paletteFilter = '';
 
     const CLIENT_COMMANDS = [
         { cmd: '/help', label: 'Show available commands & tools', kind: 'command' },
@@ -1929,6 +1963,25 @@
             });
         });
         return items;
+    }
+
+    async function loadSkillsList() {
+        if (skillsCache) return skillsCache;
+        try {
+            const res = await fetch(API + '/api/skills');
+            const j = res.ok ? await res.json() : {};
+            skillsCache = (j.skills || []).map(s => ({
+                name: s.name, desc: s.description || ''
+            }));
+        } catch (e) { skillsCache = []; }
+        return skillsCache;
+    }
+
+    function buildMentionItems(skills) {
+        return (skills || []).map(s => ({
+            type: 'skill', key: s.name,
+            label: s.desc || 'Skill', group: 'Skills (@mention)'
+        }));
     }
 
     function renderSlash(filter) {
@@ -1979,6 +2032,13 @@
             chatInput.value = '';
             return;
         }
+        if (item.type === 'skill') {
+            // Replace the trailing @token with the chosen skill mention so the
+            // agent force-prefetches that skill for this prompt.
+            chatInput.value = chatInput.value.replace(/@[\w-]*$/, '@' + item.key + ' ');
+            chatInput.focus();
+            return;
+        }
         // Tool/workflow: insert a starter prompt for the user to complete.
         chatInput.value = 'Use ' + item.key + ' to ';
         chatInput.focus();
@@ -2023,11 +2083,16 @@
     if (chatInput && slashPalette) {
         chatInput.addEventListener('input', async () => {
             const val = chatInput.value;
+            // `@word` as the most recent token → skill mention picker.
+            const mention = val.match(/(^|\s)@([\w-]*)$/);
             if (val.startsWith('/') && !val.includes('\n')) {
-                if (!slashItems.length) {
-                    slashItems = buildSlashItems(await loadCapabilities());
-                }
-                renderSlash(val.slice(1));
+                slashItems = buildSlashItems(await loadCapabilities());
+                paletteFilter = val.slice(1);
+                renderSlash(paletteFilter);
+            } else if (mention) {
+                slashItems = buildMentionItems(await loadSkillsList());
+                paletteFilter = mention[2];
+                renderSlash(paletteFilter);
             } else {
                 closeSlash();
             }
@@ -2039,11 +2104,11 @@
             if (e.key === 'ArrowDown') {
                 e.preventDefault(); e.stopPropagation();
                 slashActiveIdx = (slashActiveIdx + 1) % matches.length;
-                renderSlash(chatInput.value.slice(1));
+                renderSlash(paletteFilter);
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault(); e.stopPropagation();
                 slashActiveIdx = (slashActiveIdx - 1 + matches.length) % matches.length;
-                renderSlash(chatInput.value.slice(1));
+                renderSlash(paletteFilter);
             } else if (e.key === 'Enter') {
                 e.preventDefault(); e.stopPropagation();
                 chooseSlash(matches[slashActiveIdx]);
@@ -2070,6 +2135,8 @@
         'tunnel_config.json': 'Tunnel Configuration',
         'web_search_config.json': 'Web Search',
         'voice_config.json': 'Voice Configuration',
+        'hooks.json': 'Tool Hooks',
+        'skills_state.json': 'Skills Activation',
         'system_prompt.txt': 'System Prompt'
     };
     const CONFIG_DESCRIPTIONS = {
@@ -2084,6 +2151,8 @@
         'tunnel_config.json': 'Manage tunnel endpoints and authentication tokens.',
         'web_search_config.json': 'Configure search providers and search options.',
         'voice_config.json': 'Select the voice engine, language, and spoken-reply preferences.',
+        'hooks.json': 'Pre/post-tool hooks with allow, deny, and ask approval gates.',
+        'skills_state.json': 'Enable or disable skills and opt into project-level skill scanning.',
         'system_prompt.txt': 'Edit the core system instructions and behavioral constraints of the agent.'
     };
     let adminConfigsCache = [];
@@ -2232,52 +2301,199 @@
         });
 
     // --- Config Management ---
+    // ── Config layout (prioritized primary grid + "Less Used" accordion) ──
+    const CONFIG_LAYOUT_KEY = 'voxi_config_layout';
+    const DEFAULT_PRIMARY_CONFIGS = [
+        'llm_config.json', 'mcp_servers.json', 'agent_roles.json',
+        'tool_policy.json', 'hooks.json', 'voice_config.json',
+        'skills_state.json'
+    ];
+    const DEFAULT_HIDDEN_CONFIGS = [
+        'telegram_config.json', 'slack_config.json', 'discord_config.json',
+        'webhook_config.json', 'tunnel_config.json', 'web_search_config.json',
+        'system_prompt.txt'
+    ];
+
+    function loadConfigLayout() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(CONFIG_LAYOUT_KEY));
+            if (saved && Array.isArray(saved.primary) &&
+                Array.isArray(saved.hidden)) {
+                return { primary: saved.primary, hidden: saved.hidden };
+            }
+        } catch (e) { /* fall through to defaults */ }
+        return {
+            primary: DEFAULT_PRIMARY_CONFIGS.slice(),
+            hidden: DEFAULT_HIDDEN_CONFIGS.slice()
+        };
+    }
+
+    function saveConfigLayout(layout) {
+        try {
+            localStorage.setItem(CONFIG_LAYOUT_KEY, JSON.stringify(layout));
+        } catch (e) { /* storage unavailable; non-fatal */ }
+    }
+
+    // Keep the saved layout in sync with what the server actually exposes:
+    // drop unknown names, append any newly-available configs to primary.
+    function reconcileConfigLayout(layout, available) {
+        const avail = new Set(available);
+        const seen = new Set();
+        const primary = layout.primary.filter(
+            n => avail.has(n) && !seen.has(n) && seen.add(n));
+        const hidden = layout.hidden.filter(
+            n => avail.has(n) && !seen.has(n) && seen.add(n));
+        available.forEach(n => { if (!seen.has(n)) { primary.push(n); seen.add(n); } });
+        return { primary, hidden };
+    }
+
+    let configLayout = loadConfigLayout();
+
+    function configCardHtml(c, hidden) {
+        const label = CONFIG_LABELS[c.name] || c.name;
+        const statusClass = c.exists ? 'exists' : 'missing';
+        const statusText = c.exists ? '● Active' : '○ Sample';
+        const handle = hidden ? '' :
+            '<span class="config-drag-handle" title="Drag to reorder" ' +
+            'aria-hidden="true">⠿</span>';
+        const toggleLabel = hidden ? 'Show' : 'Hide';
+        const toggleIcon = hidden ? '👁' : '🚫';
+        return '<div class="config-card" draggable="' +
+            (hidden ? 'false' : 'true') + '" data-config="' +
+            escHtml(c.name) + '">' +
+            handle +
+            '<div class="config-card-header">' +
+            '<div class="config-card-copy">' +
+            '<span class="config-card-title">' + escHtml(label) + '</span>' +
+            '<p class="config-card-desc">' +
+            escHtml(CONFIG_DESCRIPTIONS[c.name] || 'Configuration editor') +
+            '</p></div>' +
+            '<div class="config-card-side">' +
+            '<span class="config-card-status ' + statusClass + '">' +
+            statusText + '</span>' +
+            '<button type="button" class="config-card-toggle" ' +
+            'data-toggle="' + escHtml(c.name) + '" ' +
+            'title="' + toggleLabel + ' this setting">' + toggleIcon +
+            '</button>' +
+            '<span class="config-card-open">Open</span>' +
+            '</div></div></div>';
+    }
+
     async function loadConfigs() {
-        const list = document.getElementById(
-            'config-list');
+        const list = document.getElementById('config-list');
         const data = await apiFetch('config/list');
 
         if (!data || !data.configs) {
             list.innerHTML =
-                '<p class="empty-state">' +
-                'Failed to load configs</p>';
+                '<p class="empty-state">Failed to load configs</p>';
             return;
         }
 
         adminConfigsCache = data.configs.slice();
-        list.innerHTML = data.configs.map(c => {
-            const label =
-                CONFIG_LABELS[c.name] || c.name;
-            const statusClass =
-                c.exists ? 'exists' : 'missing';
-            const statusText =
-                c.exists ? '● Active' : '○ Sample';
+        const byName = {};
+        data.configs.forEach(c => { byName[c.name] = c; });
+        configLayout = reconcileConfigLayout(
+            configLayout, data.configs.map(c => c.name));
+        saveConfigLayout(configLayout);
 
-            return '<button type="button" class="config-card"' +
-                ' data-config="' + escHtml(c.name) + '">' +
-                '<div class="config-card-header">' +
-                '<div class="config-card-copy">' +
-                '<span class="config-card-title">' +
-                escHtml(label) + '</span>' +
-                '<p class="config-card-desc">' +
-                escHtml(CONFIG_DESCRIPTIONS[c.name] ||
-                    'Configuration editor') + '</p>' +
-                '</div>' +
-                '<div class="config-card-side">' +
-                '<span class="config-card-status ' +
-                statusClass + '">' +
-                statusText + '</span>' +
-                '<span class="config-card-open">Open</span>' +
-                '</div></div></button>';
-        }).join('');
+        const primaryCards = configLayout.primary
+            .map(n => configCardHtml(byName[n], false)).join('');
+        const hiddenCards = configLayout.hidden
+            .map(n => configCardHtml(byName[n], true)).join('') ||
+            '<p class="empty-state">No hidden settings.</p>';
 
-        list.querySelectorAll('.config-card')
-            .forEach(card => {
-                card.addEventListener('click', () => {
-                    openConfigModal(
-                        card.dataset.config);
-                });
+        list.innerHTML =
+            '<div id="config-primary-list" class="config-primary-list">' +
+            primaryCards + '</div>' +
+            '<div id="config-less-used-section" class="config-less-used-section">' +
+            '<button type="button" id="config-less-used-header" ' +
+            'class="config-less-used-header">' +
+            '<span class="config-less-used-chevron">▶</span>' +
+            '<span>Less Used Settings</span>' +
+            '<span class="config-less-used-count">' +
+            configLayout.hidden.length + '</span></button>' +
+            '<div id="config-less-used-list" class="config-less-used-list">' +
+            hiddenCards + '</div></div>';
+
+        wireConfigCardEvents(list);
+    }
+
+    function wireConfigCardEvents(list) {
+        // Open the editor when the card body (not a control) is clicked.
+        list.querySelectorAll('.config-card').forEach(card => {
+            card.addEventListener('click', (ev) => {
+                if (ev.target.closest('.config-card-toggle')) return;
+                openConfigModal(card.dataset.config);
             });
+        });
+
+        // Hide/Show: move a config between primary and hidden lists.
+        list.querySelectorAll('.config-card-toggle').forEach(btn => {
+            btn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                const name = btn.dataset.toggle;
+                const pi = configLayout.primary.indexOf(name);
+                if (pi >= 0) {
+                    configLayout.primary.splice(pi, 1);
+                    configLayout.hidden.push(name);
+                } else {
+                    const hi = configLayout.hidden.indexOf(name);
+                    if (hi >= 0) configLayout.hidden.splice(hi, 1);
+                    configLayout.primary.push(name);
+                }
+                saveConfigLayout(configLayout);
+                loadConfigs();
+            });
+        });
+
+        // Collapsible accordion toggle.
+        const header = list.querySelector('#config-less-used-header');
+        const section = list.querySelector('#config-less-used-section');
+        if (header && section) {
+            header.addEventListener('click', () => {
+                section.classList.toggle('open');
+            });
+        }
+
+        // HTML5 drag-and-drop reordering within the primary grid.
+        const primaryList = list.querySelector('#config-primary-list');
+        if (!primaryList) return;
+        let dragName = null;
+        primaryList.querySelectorAll('.config-card').forEach(card => {
+            card.addEventListener('dragstart', (ev) => {
+                dragName = card.dataset.config;
+                card.classList.add('dragging');
+                ev.dataTransfer.effectAllowed = 'move';
+            });
+            card.addEventListener('dragend', () => {
+                card.classList.remove('dragging');
+                primaryList.querySelectorAll('.config-card-dropzone')
+                    .forEach(c => c.classList.remove('config-card-dropzone'));
+            });
+            card.addEventListener('dragover', (ev) => {
+                ev.preventDefault();
+                if (card.dataset.config !== dragName) {
+                    card.classList.add('config-card-dropzone');
+                }
+            });
+            card.addEventListener('dragleave', () => {
+                card.classList.remove('config-card-dropzone');
+            });
+            card.addEventListener('drop', (ev) => {
+                ev.preventDefault();
+                card.classList.remove('config-card-dropzone');
+                const target = card.dataset.config;
+                if (!dragName || dragName === target) return;
+                const arr = configLayout.primary;
+                const from = arr.indexOf(dragName);
+                const to = arr.indexOf(target);
+                if (from < 0 || to < 0) return;
+                arr.splice(from, 1);
+                arr.splice(to, 0, dragName);
+                saveConfigLayout(configLayout);
+                loadConfigs();
+            });
+        });
     }
 
     async function fetchConfigContent(name) {

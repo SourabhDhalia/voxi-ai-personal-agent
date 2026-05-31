@@ -1,0 +1,22 @@
+{
+  "name": "skills-direct-invocation",
+  "offline_safe": true,
+  "description": "Verifies the list_skills IPC contract that backs @-mention discovery: the daemon returns a well-formed skills snapshot the chat @-picker reads. The specific @-mention prefetch boost is covered by unit tests in foundation.rs (it runs on the LLM-driven prompt path, which is not offline-safe), and the trusted-root scan is verified live. This scenario stays environment-agnostic because an isolated runtime root has an empty skills catalog by design.",
+  "steps": [
+    {
+      "name": "list-skills-contract",
+      "method": "list_skills",
+      "params": {},
+      "assertions": [
+        {
+          "path": "skills",
+          "exists": true
+        },
+        {
+          "path": "total_count",
+          "exists": true
+        }
+      ]
+    }
+  ]
+}

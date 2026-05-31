@@ -954,6 +954,16 @@ fn select_relevant_skills(
 ) -> Vec<TextualSkill> {
     let prompt_emb = memory_store.and_then(|ms| ms.encode_text_embedding(prompt));
 
+    // Explicit @skill mentions force pre-fetch regardless of keyword/semantic
+    // score. Tokens are normalized the same way skill names are (hyphen/
+    // underscore/whitespace folding) so "@shopping_assistant" and
+    // "@Shopping-Assistant" both resolve to "shopping-assistant".
+    let mentioned: std::collections::HashSet<String> = prompt
+        .split_whitespace()
+        .filter_map(|tok| tok.strip_prefix('@'))
+        .filter_map(|name| crate::core::skill_support::normalize_skill_name(name).ok())
+        .collect();
+
     let mut scored: Vec<(f32, TextualSkill)> = skills
         .iter()
         .cloned()
@@ -967,6 +977,15 @@ fn select_relevant_skills(
                     let similarity: f32 = p_emb.iter().zip(s_emb.iter()).map(|(a, b)| a * b).sum();
                     // Align similarity with keyword scores; similarity is range [-1, 1], usually [0, 1]
                     score += similarity * 10.0;
+                }
+            }
+
+            // Force-select explicitly @-mentioned skills.
+            if !mentioned.is_empty() {
+                let normalized = crate::core::skill_support::normalize_skill_name(&skill.file_name)
+                    .unwrap_or_default();
+                if mentioned.contains(&normalized) {
+                    score += 10000.0;
                 }
             }
 
@@ -2360,4 +2379,49 @@ fn text_contains_specific_location(text: &str) -> bool {
     )
     .map(|re| re.is_match(text))
     .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod select_skill_tests {
+    use super::*;
+    use crate::core::textual_skill_scanner::TextualSkill;
+
+    fn skill(name: &str) -> TextualSkill {
+        TextualSkill {
+            file_name: name.to_string(),
+            description: format!("{} skill", name),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn at_mention_forces_skill_selection() {
+        let skills = vec![
+            skill("shopping-assistant"),
+            skill("rust-engineer"),
+            skill("api-designer"),
+        ];
+        // A prompt with no keyword overlap would normally rank these at zero and
+        // drop them; the @mention must force the named skill to the top.
+        let picked = select_relevant_skills("please @shopping-assistant now", &skills, 1, None);
+        assert_eq!(picked.len(), 1);
+        assert_eq!(picked[0].file_name, "shopping-assistant");
+    }
+
+    #[test]
+    fn at_mention_normalizes_separators() {
+        let skills = vec![skill("shopping-assistant"), skill("rust-engineer")];
+        // Underscore / mixed case should still resolve to shopping-assistant.
+        let picked = select_relevant_skills("run @Shopping_Assistant", &skills, 1, None);
+        assert_eq!(picked.len(), 1);
+        assert_eq!(picked[0].file_name, "shopping-assistant");
+    }
+
+    #[test]
+    fn no_mention_does_not_force_unrelated_skill() {
+        let skills = vec![skill("shopping-assistant")];
+        // No @mention and no keyword overlap → nothing forced in.
+        let picked = select_relevant_skills("the quick brown fox", &skills, 3, None);
+        assert!(picked.is_empty());
+    }
 }

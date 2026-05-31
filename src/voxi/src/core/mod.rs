@@ -53,3 +53,7 @@ pub mod wordpiece_tokenizer;
 pub mod clawhub_client;
 // Provider selection layer
 pub mod provider_selection;
+
+// TTS routing layer
+pub mod tts_router;
+

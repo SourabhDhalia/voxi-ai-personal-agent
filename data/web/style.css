@@ -1443,6 +1443,7 @@ body {
 
 .config-card {
     appearance: none;
+    position: relative;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -1506,6 +1507,116 @@ body {
     font-size: 0.75rem;
     font-weight: 600;
     color: var(--accent-strong);
+}
+
+/* ── Config prioritization: drag-reorder grid + Less Used accordion ── */
+.config-primary-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+}
+
+.config-drag-handle {
+    position: absolute;
+    top: 50%;
+    left: 4px;
+    transform: translateY(-50%);
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1;
+    cursor: grab;
+    opacity: 0;
+    transition: opacity 0.15s;
+    user-select: none;
+}
+
+.config-card:hover .config-drag-handle { opacity: 0.7; }
+.config-card[draggable="true"] .config-card-header { padding-left: 24px; }
+
+.config-card.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+}
+
+.config-card-dropzone {
+    border-color: var(--accent-strong);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.35);
+}
+
+.config-card-toggle {
+    appearance: none;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: var(--radius-sm);
+    opacity: 0.55;
+    transition: opacity 0.15s, background 0.15s;
+}
+
+.config-card-toggle:hover {
+    opacity: 1;
+    background: var(--bg-primary);
+}
+
+.config-less-used-section {
+    margin-top: 18px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+}
+
+.config-less-used-header {
+    appearance: none;
+    background: transparent;
+    border: none;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    padding: 8px 4px;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.config-less-used-chevron {
+    display: inline-block;
+    font-size: 0.7rem;
+    transition: transform 0.18s ease;
+}
+
+.config-less-used-section.open .config-less-used-chevron {
+    transform: rotate(90deg);
+}
+
+.config-less-used-count {
+    margin-left: auto;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 9px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+.config-less-used-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    margin-top: 0;
+    transition: max-height 0.25s ease, opacity 0.2s ease, margin-top 0.2s ease;
+}
+
+.config-less-used-section.open .config-less-used-list {
+    max-height: 2000px;
+    opacity: 1;
+    margin-top: 12px;
 }
 
 .config-editor {
