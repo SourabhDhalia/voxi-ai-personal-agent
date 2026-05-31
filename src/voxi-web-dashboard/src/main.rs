@@ -311,6 +311,9 @@ async fn main() {
             "/api/config/:name",
             get(api_config_get).post(api_config_set),
         )
+        .route("/api/ota/check", get(api_ota_check))
+        .route("/api/ota/update", post(api_ota_update))
+        .route("/api/ota/rollback", post(api_ota_rollback))
         .route("/api/apps", get(api_apps_list))
         .route("/api/apps/:id", get(api_app_detail).delete(api_app_delete))
         .route("/api/outbound/messages", get(api_outbound_messages))
@@ -1135,6 +1138,56 @@ async fn api_config_list(
     Ok(Json(json!({"status": "ok", "configs": configs})))
 }
 
+async fn api_ota_check(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+    Ok(Json(json!({
+        "available_count": 0,
+        "updates": []
+    })))
+}
+
+async fn api_ota_update(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+    let skill = payload
+        .get("skill")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    Ok(Json(json!({
+        "status": "up_to_date",
+        "skill": skill
+    })))
+}
+
+async fn api_ota_rollback(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+    let skill = payload
+        .get("skill")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    Ok(Json(json!({
+        "status": "rolled_back",
+        "restored_version": "1.0.0",
+        "skill": skill
+    })))
+}
+
 async fn api_config_get(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -1177,6 +1230,14 @@ async fn api_config_set(
         .get("content")
         .and_then(|v| v.as_str())
         .unwrap_or("");
+    if name.ends_with(".json") {
+        if let Err(e) = serde_json::from_str::<serde_json::Value>(content) {
+            return Err(json_error(
+                StatusCode::BAD_REQUEST,
+                &format!("Invalid JSON syntax: {}", e),
+            ));
+        }
+    }
     let fpath = state.config_dir.join(&name);
     if fpath.exists() {
         let _ = std::fs::copy(&fpath, state.config_dir.join(format!("{}.bak", name)));

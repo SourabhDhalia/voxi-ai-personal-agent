@@ -94,21 +94,31 @@ fn check_path(name: &str, path_str: &str) -> PathCheckResult {
             let _ = std::fs::remove_file(test_file);
         }
     } else {
-        if std::fs::create_dir_all(path).is_ok() {
-            let test_file = path.join(".doctor_write_test");
+        let mut ancestor = path;
+        while let Some(parent) = ancestor.parent() {
+            let check_p = if parent.as_os_str().is_empty() {
+                std::path::Path::new(".")
+            } else {
+                parent
+            };
+            if check_p.exists() {
+                ancestor = check_p;
+                break;
+            }
+            ancestor = parent;
+        }
+        if ancestor.exists() {
+            let test_file = ancestor.join(".doctor_write_test");
             if std::fs::write(&test_file, b"test").is_ok() {
                 writable = true;
                 let _ = std::fs::remove_file(test_file);
-            }
-            if name != "root_dir" {
-                let _ = std::fs::remove_dir_all(path);
             }
         }
     }
     PathCheckResult {
         name: name.to_string(),
         path: path_str.to_string(),
-        readable: readable || writable,
+        readable,
         writable,
     }
 }
@@ -141,5 +151,28 @@ fn check_env(name: &str) -> EnvCheckResult {
     EnvCheckResult {
         name: name.to_string(),
         present: std::env::var(name).is_ok(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_check_path_existing_writable() {
+        let result = check_path("test_existing", ".");
+        assert_eq!(result.name, "test_existing");
+        assert_eq!(result.path, ".");
+        assert!(result.readable);
+        assert!(result.writable);
+    }
+
+    #[test]
+    fn test_check_path_nonexistent_but_writable_parent() {
+        let result = check_path("test_nonexistent", "./some_nonexistent_path_abc123/xyz");
+        assert_eq!(result.name, "test_nonexistent");
+        assert_eq!(result.path, "./some_nonexistent_path_abc123/xyz");
+        assert!(!result.readable);
+        assert!(result.writable);
     }
 }

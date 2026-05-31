@@ -1560,9 +1560,39 @@ impl McpClient {
         };
 
         let pid = child.id();
-        let stdout = child.stdout.take().unwrap();
-        let stdin = child.stdin.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let stdout = match child.stdout.take() {
+            Some(s) => s,
+            None => {
+                self.set_connection_state(
+                    McpConnectionState::Failed,
+                    Some("failed to capture stdout stream".to_string()),
+                );
+                log::error!("MCP Client: Failed to capture stdout stream");
+                return false;
+            }
+        };
+        let stdin = match child.stdin.take() {
+            Some(s) => s,
+            None => {
+                self.set_connection_state(
+                    McpConnectionState::Failed,
+                    Some("failed to capture stdin stream".to_string()),
+                );
+                log::error!("MCP Client: Failed to capture stdin stream");
+                return false;
+            }
+        };
+        let stderr = match child.stderr.take() {
+            Some(s) => s,
+            None => {
+                self.set_connection_state(
+                    McpConnectionState::Failed,
+                    Some("failed to capture stderr stream".to_string()),
+                );
+                log::error!("MCP Client: Failed to capture stderr stream");
+                return false;
+            }
+        };
 
         self.reader = Some(Mutex::new(BufReader::new(stdout)));
         self.writer = Some(Mutex::new(stdin));
