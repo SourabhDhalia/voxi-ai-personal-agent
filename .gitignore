@@ -5,6 +5,7 @@ build_local/
 
 # Rust / Cargo
 /target/
+/rust/target/
 *.o
 *.d
 *.rpm

@@ -1212,7 +1212,17 @@
 
         const el = document.createElement('div');
         el.className = 'chat-msg ' + role + (role === 'assistant' ? ' markdown-body' : '');
-        if (role === 'assistant' && typeof marked !== 'undefined' && typeof marked.parse === 'function') {
+        if (role === 'assistant' && text.startsWith('⚠️ **Safety Confirmation Required**')) {
+            el.classList.add('safety-card');
+            el.innerHTML = renderSafetyConfirmation(text);
+            el.querySelectorAll('[data-confirm-reply]').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    if (!chatInput) return;
+                    chatInput.value = btn.getAttribute('data-confirm-reply') || '';
+                    sendChat();
+                });
+            });
+        } else if (role === 'assistant' && typeof marked !== 'undefined' && typeof marked.parse === 'function') {
             el.innerHTML = marked.parse(text);
         } else {
             el.textContent = text;
@@ -1220,6 +1230,31 @@
         chatMessages.appendChild(el);
         chatMessages.scrollTop =
             chatMessages.scrollHeight;
+    }
+
+    function renderSafetyConfirmation(text) {
+        const toolMatch = text.match(/\*\*Tool\*\*:\s*`([^`]+)`/);
+        const argsMatch = text.match(/```json\n([\s\S]*?)\n```/);
+        const tool = toolMatch ? escHtml(toolMatch[1]) : 'Tool action';
+        const args = argsMatch ? escHtml(argsMatch[1].trim()) : '{}';
+        const isOrder = /create|checkout|order|pay|reserve|book/i.test(tool);
+        const title = isOrder ? 'Confirm order action' : 'Confirm tool action';
+        const description = isOrder
+            ? 'This can change your cart, checkout, payment, booking, or order state.'
+            : 'This action needs permission before Voxi continues.';
+
+        return '' +
+            '<div class="safety-card-header">' +
+            '<span class="safety-card-icon">!</span>' +
+            '<div><h3>' + title + '</h3><p>' + description + '</p></div>' +
+            '</div>' +
+            '<div class="safety-tool-name">' + tool + '</div>' +
+            '<details class="safety-args"><summary>Arguments</summary><pre><code>' +
+            args + '</code></pre></details>' +
+            '<div class="safety-actions">' +
+            '<button class="btn-primary" data-confirm-reply="Confirm">Confirm</button>' +
+            '<button class="btn-outline" data-confirm-reply="Cancel">Cancel</button>' +
+            '</div>';
     }
 
     function showThinkingIndicator(sessionId, requestId) {

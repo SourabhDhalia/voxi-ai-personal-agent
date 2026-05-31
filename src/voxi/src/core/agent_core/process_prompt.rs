@@ -1,4 +1,69 @@
 impl AgentCore {
+    fn parse_safety_confirmation_reply(prompt: &str) -> Option<bool> {
+        let input_lower = prompt.trim().to_lowercase();
+        if input_lower.is_empty() {
+            return None;
+        }
+
+        if matches!(input_lower.as_str(), "no" | "n" | "cancel" | "stop" | "abort") {
+            return Some(false);
+        }
+
+        let denies = ["no,", "no ", "cancel", "stop", "do not", "don't", "dont", "abort"];
+        if denies.iter().any(|word| input_lower.contains(word)) {
+            return Some(false);
+        }
+
+        if matches!(input_lower.as_str(), "yes" | "y" | "confirm" | "/confirm") {
+            return Some(true);
+        }
+
+        let confirms = [
+            "yes ", " confirm", "confirm ", "/confirm", "proceed", "go ahead",
+            "approve", "run it", "continue",
+        ];
+        if confirms.iter().any(|word| input_lower.contains(word)) {
+            return Some(true);
+        }
+
+        None
+    }
+
+    fn is_nonterminal_progress_response(text: &str) -> bool {
+        let lower = text.to_lowercase();
+        let promises_future_work = lower.contains("i am currently")
+            || lower.contains("i'm currently")
+            || lower.contains("i will ")
+            || lower.contains("i’ll ")
+            || lower.contains("shortly")
+            || lower.contains("in progress")
+            || lower.contains("working on");
+        let mentions_pending_action = lower.contains("search")
+            || lower.contains("present")
+            || lower.contains("show")
+            || lower.contains("fetch")
+            || lower.contains("get ");
+
+        promises_future_work && mentions_pending_action
+    }
+
+    fn summarize_confirmed_tool_result(tool_name: &str, result: &Value) -> String {
+        if let Some(error) = result.get("error").and_then(Value::as_str) {
+            return format!(
+                "I could not complete `{}` after confirmation: {}",
+                tool_name, error
+            );
+        }
+
+        let result_text = serde_json::to_string_pretty(result)
+            .unwrap_or_else(|_| result.to_string());
+        let clipped = Self::truncate_chars(&result_text, 2400);
+        format!(
+            "Confirmed and ran `{}`.\n\n```json\n{}\n```",
+            tool_name, clipped
+        )
+    }
+
     fn truncate_chars(s: &str, max: usize) -> String {
         if s.len() > max {
             let mut truncated = s.chars().take(max).collect::<String>();
@@ -470,15 +535,7 @@ impl AgentCore {
         };
 
         if let Some(pending_action) = pending {
-            let input_lower = prompt.trim().to_lowercase();
-            let is_confirmed = input_lower == "yes"
-                || input_lower == "y"
-                || input_lower == "confirm"
-                || input_lower == "/confirm"
-                || input_lower.contains("proceed")
-                || input_lower.contains("go ahead");
-
-            if is_confirmed {
+            if Self::parse_safety_confirmation_reply(prompt) == Some(true) {
                 log::info!(
                     "[SafetyConfirm] User confirmed action '{}' for session '{}'",
                     pending_action.tool_name,
@@ -552,6 +609,11 @@ impl AgentCore {
                             &pending_action.tool_call_id,
                             &tool_result,
                         );
+                        let summary =
+                            Self::summarize_confirmed_tool_result(&pending_action.tool_name, &tool_result);
+                        store.add_message(session_id, "assistant", &summary);
+                        store.add_structured_assistant_text_message(session_id, &summary);
+                        return summary;
                     }
                 }
             } else {
@@ -698,8 +760,7 @@ impl AgentCore {
             }
             if msg.role == "user" && skip_next_user {
                 skip_next_user = false;
-                let text_lower = msg.text.trim().to_lowercase();
-                if text_lower == "yes" || text_lower == "y" || text_lower == "confirm" || text_lower == "no" || text_lower == "cancel" || text_lower.contains("proceed") || text_lower.contains("go ahead") {
+                if Self::parse_safety_confirmation_reply(&msg.text).is_some() {
                     continue;
                 }
             }
@@ -3672,6 +3733,31 @@ impl AgentCore {
                     ));
                     loop_state.transition(AgentPhase::RePlanning);
                     continue;
+                }
+
+                if is_shopping && Self::is_nonterminal_progress_response(&response.text) {
+                    log::info!(
+                        "[GoalEvaluation] Assistant promised future shopping work without completing it. Rejecting termination."
+                    );
+                    if replans_without_tool >= 2 {
+                        log::warn!(
+                            "[GoalEvaluation] Too many progress-only replans. Letting final response through."
+                        );
+                    } else {
+                        replans_without_tool += 1;
+                        messages.push(LlmMessage {
+                            role: "assistant".into(),
+                            text: response.text.clone(),
+                            ..Default::default()
+                        });
+                        messages.push(LlmMessage::user(
+                            "System: Your last response promised future shopping work, so the task is not complete. \
+                             Continue under the hood now: call the necessary provider tools, finish the pending search/cart/payment-options step, \
+                             and only return after you have concrete results or a concrete blocker."
+                        ));
+                        loop_state.transition(AgentPhase::RePlanning);
+                        continue;
+                    }
                 }
 
                 loop_state.last_eval_verdict = EvalVerdict::GoalAchieved;

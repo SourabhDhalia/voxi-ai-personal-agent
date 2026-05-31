@@ -2371,11 +2371,17 @@ impl McpClientManager {
     pub fn requires_confirmation(&self, full_name: &str, keywords: &[String]) -> bool {
         let name_lower = full_name.to_ascii_lowercase();
 
+        if is_read_only_payment_tool_name(&name_lower) {
+            return false;
+        }
+
         // Check if this is a high-risk tool name explicitly
         let is_high_risk = name_lower.contains("checkout")
-            || name_lower.contains("pay")
-            || name_lower.contains("payment")
+            || name_lower.contains("create_order")
             || name_lower.contains("place_order")
+            || name_lower.contains("create_online_payment_order")
+            || name_lower.contains("create_wallet_order")
+            || name_lower.contains("reserve_pay")
             || name_lower.contains("book")
             || name_lower.contains("reserve");
 
@@ -2410,11 +2416,17 @@ impl McpClientManager {
             .map(|tool| tool.original_name.to_ascii_lowercase());
 
         if let Some(orig) = original_name {
+            if is_read_only_payment_tool_name(&orig) {
+                return false;
+            }
+
             // Also apply the low-risk bypass to the original name
             let is_orig_high_risk = orig.contains("checkout")
-                || orig.contains("pay")
-                || orig.contains("payment")
+                || orig.contains("create_order")
                 || orig.contains("place_order")
+                || orig.contains("create_online_payment_order")
+                || orig.contains("create_wallet_order")
+                || orig.contains("reserve_pay")
                 || orig.contains("book")
                 || orig.contains("reserve");
             let is_orig_low_risk = orig.contains("search")
@@ -2625,6 +2637,13 @@ impl McpClientManager {
     }
 }
 
+fn is_read_only_payment_tool_name(name: &str) -> bool {
+    name.contains("get_payment_methods")
+        || name.contains("list_payment_methods")
+        || name.contains("payment_methods")
+        || name.contains("check_payment_status")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2724,6 +2743,27 @@ mod tests {
 
         assert!(manager.requires_confirmation("checkout", &keywords));
         assert!(manager.requires_confirmation("mcp_zepto_checkout", &keywords));
+    }
+
+    #[test]
+    fn requires_confirmation_allows_read_only_payment_tools() {
+        let manager = McpClientManager {
+            clients: vec![test_client(
+                "zepto",
+                &["get_payment_methods", "check_payment_status", "create_order"],
+            )],
+            ..Default::default()
+        };
+        let keywords = vec![
+            "payment".to_string(),
+            "pay".to_string(),
+            "order".to_string(),
+            "reserve".to_string(),
+        ];
+
+        assert!(!manager.requires_confirmation("mcp_zepto_get_payment_methods", &keywords));
+        assert!(!manager.requires_confirmation("mcp_zepto_check_payment_status", &keywords));
+        assert!(manager.requires_confirmation("mcp_zepto_create_order", &keywords));
     }
 
     #[test]

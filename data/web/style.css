@@ -786,6 +786,75 @@ body {
     border-radius: var(--radius-xs) var(--radius) var(--radius) var(--radius);
 }
 
+.chat-msg.assistant.safety-card {
+    max-width: min(680px, 92%);
+    width: fit-content;
+    padding: 16px;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    box-shadow: var(--shadow-sm);
+    white-space: normal;
+}
+
+.safety-card-header {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    margin-bottom: 12px;
+}
+
+.safety-card-icon {
+    display: inline-flex;
+    width: 26px;
+    height: 26px;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #f59e0b;
+    color: #fff;
+    font-weight: 700;
+}
+
+.safety-card-header h3 {
+    margin: 0 0 3px;
+    font-size: 0.98rem;
+}
+
+.safety-card-header p {
+    margin: 0;
+    color: var(--text-secondary);
+}
+
+.safety-tool-name {
+    display: inline-flex;
+    max-width: 100%;
+    padding: 5px 8px;
+    border-radius: var(--radius-xs);
+    background: rgba(245, 158, 11, 0.12);
+    color: #92400e;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+}
+
+.safety-args {
+    margin-top: 12px;
+}
+
+.safety-args summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.safety-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+}
+
 .chat-thinking {
     align-self: flex-start;
     display: flex;

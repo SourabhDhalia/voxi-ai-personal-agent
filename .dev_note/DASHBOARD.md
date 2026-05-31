@@ -622,6 +622,16 @@
 | Comprehensive Shopping Agent Robustness Fixes | Supervisor Gate 5 | PASS | Code quality, format, and functional boundaries verified. |
 | Comprehensive Shopping Agent Robustness Fixes | 6. Commit | PASS | Changes staged and committed locally via `.tmp/commit_msg.txt`. |
 | Comprehensive Shopping Agent Robustness Fixes | Supervisor Gate 6 | PASS | Setup finalized. |
-
-
+| Shopping Under-Hood Continuation | 1. Planning | PASS | Scope covers progress-only replies, payment-method read safety, pending confirmation handling, and web confirmation UI. |
+| Shopping Under-Hood Continuation | Supervisor Gate 1 | PASS | Root rules reviewed; change is limited to AgentCore, MCP confirmation policy, web chat rendering, and ignore hygiene. |
+| Shopping Under-Hood Continuation | 2. Design | PASS | Designed progress-response rejection, read-only payment exemptions, single-turn confirmation result reporting, and compact UI actions. |
+| Shopping Under-Hood Continuation | Supervisor Gate 2 | PASS | Design avoids new dependencies and keeps irreversible order/payment creation gated. |
+| Shopping Under-Hood Continuation | 3. Development | PASS | Implemented nonterminal shopping progress detection, safer confirmation parsing, payment read exemption, confirmation result summary, UI card buttons, and `rust/target` ignore. |
+| Shopping Under-Hood Continuation | Supervisor Gate 3 | PASS | Changes are scoped and preserve provider-neutral MCP routing. |
+| Shopping Under-Hood Continuation | 4. Build/Deploy | PASS | `./deploy.sh --dry-run -b`, `node --check`, and `git diff --check` passed; no local cargo build/test/check was executed. |
+| Shopping Under-Hood Continuation | Supervisor Gate 4 | PASS | Dry-run validated the supported host build path without executing Cargo. |
+| Shopping Under-Hood Continuation | 5. Test/Review | PASS | Reviewed confirmation parser edge cases, read-only payment methods, progress-only response recovery, and safety card rendering. |
+| Shopping Under-Hood Continuation | Supervisor Gate 5 | PASS | `rustfmt --check` was not usable due existing edition/format drift; functional validation used dry-run and JS/whitespace checks. |
+| Shopping Under-Hood Continuation | 6. Commit | PASS | Prepared intended files for file-based commit and push; generated `rust/target` artifacts excluded from staging. |
+| Shopping Under-Hood Continuation | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt` and avoids inline `git commit -m`. |
 
