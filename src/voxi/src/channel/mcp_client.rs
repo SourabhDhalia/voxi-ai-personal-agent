@@ -2070,6 +2070,32 @@ impl Drop for McpClient {
     }
 }
 
+/// Helper to automatically translate flat parameters to a nested items array for cart mutation tools.
+pub fn translate_cart_args(requested_name: &str, args: &Value) -> Value {
+    let mut final_args = args.clone();
+    let lower_name = requested_name.to_ascii_lowercase();
+    if lower_name.contains("update_cart") || lower_name.contains("add_to_cart") || lower_name.contains("remove_from_cart") {
+        if let Some(obj) = final_args.as_object_mut() {
+            if !obj.contains_key("items") {
+                let mut item_obj = serde_json::Map::new();
+                let item_keys = [
+                    "productId", "product_id", "variantId", "variant_id",
+                    "skuId", "sku_id", "id", "quantity", "qty"
+                ];
+                for key in &item_keys {
+                    if let Some(val) = obj.remove(*key) {
+                        item_obj.insert(key.to_string(), val);
+                    }
+                }
+                if !item_obj.is_empty() {
+                    obj.insert("items".to_string(), Value::Array(vec![Value::Object(item_obj)]));
+                }
+            }
+        }
+    }
+    final_args
+}
+
 /// Manages multiple MCP client connections.
 pub struct McpClientManager {
     clients: Vec<McpClient>,
@@ -2448,7 +2474,7 @@ impl McpClientManager {
     ) -> Result<Value, McpToolResolveError> {
         let (client_index, tool_info) = self.resolve_tool_alias_with_client(requested_name)?;
         
-        let mut final_args = args.clone();
+        let mut final_args = translate_cart_args(requested_name, args);
         if tool_info.server_name == "zepto" {
             if let Some(obj) = final_args.as_object_mut() {
                 if !obj.contains_key("deviceId") && !obj.contains_key("device_id") {
@@ -2461,6 +2487,7 @@ impl McpClientManager {
         
         Ok(self.clients[client_index].call_tool(&tool_info.original_name, &final_args))
     }
+
 
     /// Route a tool call to the appropriate client.
     pub fn call_tool(&mut self, full_name: &str, args: &Value) -> Option<Value> {
@@ -2667,5 +2694,49 @@ mod tests {
         );
 
         std::env::remove_var("VOXI_DATA_DIR");
+    }
+
+    #[test]
+    fn test_translate_cart_args() {
+        // Flat product_id and quantity should be nested under items
+        let flat_args = json!({
+            "productId": "banana_123",
+            "quantity": 2,
+            "deviceId": "dev_xyz"
+        });
+        let translated = translate_cart_args("mcp_zepto_update_cart", &flat_args);
+        assert_eq!(
+            translated,
+            json!({
+                "deviceId": "dev_xyz",
+                "items": [
+                    {
+                        "productId": "banana_123",
+                        "quantity": 2
+                    }
+                ]
+            })
+        );
+
+        // Already nested args should be untouched
+        let nested_args = json!({
+            "items": [
+                {
+                    "productId": "apple_456",
+                    "quantity": 5
+                }
+            ],
+            "deviceId": "dev_xyz"
+        });
+        let result = translate_cart_args("mcp_swiggy_instamart_update_cart", &nested_args);
+        assert_eq!(result, nested_args);
+
+        // Non-cart mutation tools should be untouched
+        let non_cart_args = json!({
+            "query": "banana",
+            "deviceId": "dev_xyz"
+        });
+        let result = translate_cart_args("mcp_zepto_search_products", &non_cart_args);
+        assert_eq!(result, non_cart_args);
     }
 }
