@@ -995,9 +995,13 @@ struct LogQuery {
 }
 
 async fn api_logs(
+    headers: HeaderMap,
     State(state): State<AppState>,
     Query(q): Query<LogQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
     let date = q.date.unwrap_or_else(today_date_str);
     if !is_valid_date(&date) {
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid date format"));
@@ -1017,9 +1021,15 @@ async fn api_logs(
     Ok(Json(Value::Array(logs)))
 }
 
-async fn api_log_dates(State(state): State<AppState>) -> Json<Value> {
+async fn api_log_dates(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
     let dir = state.data_dir.join("logs");
-    Json(json!({"dates": collect_log_dates(&dir)}))
+    Ok(Json(json!({"dates": collect_log_dates(&dir)})))
 }
 
 async fn api_auth_login(

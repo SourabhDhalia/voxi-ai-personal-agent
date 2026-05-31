@@ -914,11 +914,16 @@
             return;
         }
 
-        logEl.textContent =
-            data.map(l =>
-                '### ' + (l.label || l.file || 'Log') +
-                '\n' + l.content)
-                .join('\n\n');
+        const markdown = data.map(l =>
+            '### ' + (l.label || l.file || 'Log') +
+            '\n' + l.content)
+            .join('\n\n');
+
+        if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
+            logEl.innerHTML = marked.parse(markdown);
+        } else {
+            logEl.textContent = markdown;
+        }
     }
 
     // --- Chat ---
