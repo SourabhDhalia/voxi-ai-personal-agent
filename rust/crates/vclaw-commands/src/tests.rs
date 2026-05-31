@@ -114,7 +114,7 @@ fn separates_plugin_commands_from_built_ins() {
     )
     .expect("registry");
 
-    assert_eq!(registry.built_in_commands().len(), 3);
+    assert_eq!(registry.built_in_commands().len(), 4);
     assert_eq!(registry.plugin_commands().len(), 1);
     assert_eq!(
         registry.plugin_commands()[0].source.plugin_name(),

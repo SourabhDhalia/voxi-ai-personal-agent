@@ -216,6 +216,173 @@ fn built_in_tool_registrations() -> Vec<ToolRegistration<GlobalToolContext>> {
     vec![
         ToolRegistration::new(
             manifest(
+                "fs.list_directory",
+                "List contents of a directory, returning details for each entry",
+                json!({
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {
+                        "path": {"type": "string"}
+                    }
+                }),
+                ToolPermissionSpec::new(PermissionScope::Read, PermissionLevel::Low)
+                    .with_reason("list directory contents"),
+            )
+            .with_tags(["file", "fs", "directory"]),
+            |call: &ToolCallRequest, _ctx: &mut GlobalToolContext| {
+                let path_str = required_string(call, "path")?;
+                let path = std::path::Path::new(&path_str);
+                if !path.exists() {
+                    return Err(ToolRuntimeError::Execution {
+                        tool_name: call.name.clone(),
+                        message: format!("directory `{}` does not exist", path_str),
+                    });
+                }
+                if !path.is_dir() {
+                    return Err(ToolRuntimeError::Execution {
+                        tool_name: call.name.clone(),
+                        message: format!("path `{}` is not a directory", path_str),
+                    });
+                }
+                
+                let mut entries = Vec::new();
+                if let Ok(dir_entries) = std::fs::read_dir(path) {
+                    for entry in dir_entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().into_owned();
+                        let metadata = entry.metadata();
+                        let is_directory = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                        entries.push(json!({
+                            "name": name,
+                            "is_directory": is_directory,
+                            "size": size
+                        }));
+                    }
+                }
+
+                Ok(ToolExecutionOutput {
+                    tool_call_id: call.id.clone(),
+                    output: json!({"path": path_str, "entries": entries}),
+                    summary: Some("listed directory contents".to_string()),
+                })
+            },
+        ),
+        ToolRegistration::new(
+            manifest(
+                "fs.glob",
+                "Find files matching a glob pattern (e.g., src/**/*.rs)",
+                json!({
+                    "type": "object",
+                    "required": ["pattern"],
+                    "properties": {
+                        "pattern": {"type": "string"}
+                    }
+                }),
+                ToolPermissionSpec::new(PermissionScope::Read, PermissionLevel::Low)
+                    .with_reason("find files matching a pattern"),
+            )
+            .with_tags(["file", "fs", "glob"]),
+            |call: &ToolCallRequest, _ctx: &mut GlobalToolContext| {
+                let pattern = required_string(call, "pattern")?;
+                let mut matches = Vec::new();
+                let start_dir = std::path::Path::new(".");
+                
+                fn glob_search(dir: &std::path::Path, pattern: &str, matches: &mut Vec<String>) {
+                    if let Ok(entries) = std::fs::read_dir(dir) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_dir() {
+                                glob_search(&path, pattern, matches);
+                            } else {
+                                if match_pattern(pattern, &path) {
+                                    let clean_path = path.to_string_lossy().replace('\\', "/");
+                                    let clean_path = if clean_path.starts_with("./") {
+                                        clean_path[2..].to_string()
+                                    } else {
+                                        clean_path
+                                    };
+                                    matches.push(clean_path);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                fn match_pattern(pattern: &str, path: &std::path::Path) -> bool {
+                    let path_str = path.to_string_lossy().replace('\\', "/");
+                    let clean_path = if path_str.starts_with("./") {
+                        &path_str[2..]
+                    } else {
+                        &path_str
+                    };
+                    let pattern_clean = pattern.replace('\\', "/");
+
+                    fn wildcard_match(pattern: &str, text: &str) -> bool {
+                        let pattern_chars: Vec<char> = pattern.chars().collect();
+                        let text_chars: Vec<char> = text.chars().collect();
+                        let mut p = 0;
+                        let mut t = 0;
+                        let mut star_idx = None;
+                        let mut match_idx = 0;
+
+                        while t < text_chars.len() {
+                            if p < pattern_chars.len() && (pattern_chars[p] == '?' || pattern_chars[p] == text_chars[t]) {
+                                p += 1;
+                                t += 1;
+                            } else if p < pattern_chars.len() && pattern_chars[p] == '*' {
+                                star_idx = Some(p);
+                                match_idx = t;
+                                p += 1;
+                            } else if let Some(s_idx) = star_idx {
+                                p = s_idx + 1;
+                                match_idx += 1;
+                                t = match_idx;
+                            } else {
+                                return false;
+                            }
+                        }
+
+                        while p < pattern_chars.len() && pattern_chars[p] == '*' {
+                            p += 1;
+                        }
+
+                        p == pattern_chars.len()
+                    }
+
+                    if pattern_clean.contains("/**/") {
+                        let parts: Vec<&str> = pattern_clean.split("/**/").collect();
+                        if parts.len() == 2 {
+                            let prefix = parts[0];
+                            let suffix = parts[1];
+                            
+                            if !prefix.is_empty() {
+                                if !clean_path.starts_with(prefix) {
+                                    return false;
+                                }
+                            }
+                            let path_after_prefix = if !prefix.is_empty() {
+                                &clean_path[prefix.len()..]
+                            } else {
+                                clean_path
+                            };
+                            return wildcard_match(suffix, path_after_prefix);
+                        }
+                    }
+
+                    wildcard_match(&pattern_clean, clean_path)
+                }
+
+                glob_search(start_dir, &pattern, &mut matches);
+                
+                Ok(ToolExecutionOutput {
+                    tool_call_id: call.id.clone(),
+                    output: json!({"pattern": pattern, "matches": matches}),
+                    summary: Some("found matching files".to_string()),
+                })
+            },
+        ),
+        ToolRegistration::new(
+            manifest(
                 "fs.read_text",
                 "Read UTF-8 text from a file-like backend",
                 json!({

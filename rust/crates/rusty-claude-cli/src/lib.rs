@@ -57,13 +57,69 @@ pub fn run_env() -> i32 {
     let mut stdout = stdout.lock();
     let mut stderr = stderr.lock();
 
-    match run_with_stdio(args, &mut stdin, stdin_is_terminal, &mut stdout) {
-        Ok(_) => 0,
-        Err(error) => {
-            let _ = writeln!(stderr, "rusty-claude-cli: {error}");
-            2
+    if args.len() <= 1 && stdin_is_terminal {
+        match run_interactive_repl(&mut stdout) {
+            Ok(_) => 0,
+            Err(error) => {
+                let _ = writeln!(stderr, "rusty-claude-cli REPL error: {error}");
+                2
+            }
+        }
+    } else {
+        match run_with_stdio(args, &mut stdin, stdin_is_terminal, &mut stdout) {
+            Ok(_) => 0,
+            Err(error) => {
+                let _ = writeln!(stderr, "rusty-claude-cli: {error}");
+                2
+            }
         }
     }
+}
+
+pub fn run_interactive_repl<W: Write>(stdout: &mut W) -> Result<(), CliRunError> {
+    writeln!(stdout, "VClaw Interactive Console (type 'exit' or 'quit' to exit)")?;
+    stdout.flush()?;
+
+    let mut line = String::new();
+    loop {
+        write!(stdout, "vclaw > ")?;
+        stdout.flush()?;
+
+        line.clear();
+        if std::io::stdin().read_line(&mut line)? == 0 {
+            break; // EOF
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "exit" || trimmed == "quit" || trimmed == "/exit" || trimmed == "/quit" {
+            break;
+        }
+
+        let args = if trimmed.starts_with('/') {
+            let mut parts = vec!["rusty-claude-cli".to_string()];
+            parts.extend(trimmed.split_whitespace().map(str::to_string));
+            parts
+        } else {
+            vec![
+                "rusty-claude-cli".to_string(),
+                trimmed.to_string(),
+            ]
+        };
+
+        let parsed = input::parse_args(&args)?;
+        let outcome = dispatch_cli(parsed, None)?;
+        let rendered = render_outcome(&outcome);
+        if !rendered.is_empty() {
+            stdout.write_all(rendered.as_bytes())?;
+            stdout.write_all(b"\n")?;
+        }
+        stdout.flush()?;
+    }
+
+    Ok(())
 }
 
 pub fn run_with_stdio<I, R, W>(

@@ -56,6 +56,34 @@ fn render_human(outcome: &CliOutcome) -> String {
         outcome.tools.built_in_count, outcome.tools.plugin_count
     ));
 
+    if let Some(doctor) = &outcome.doctor {
+        lines.push("\nDiagnostics Report:".to_string());
+        lines.push("  Paths permissions:".to_string());
+        for p in &doctor.paths {
+            let status = if p.readable && p.writable { "OK" } else if p.readable { "Read-Only" } else { "Failed" };
+            lines.push(format!("    - {}: {} ({})", p.name, p.path, status));
+        }
+        lines.push("  Tool dependencies:".to_string());
+        for t in &doctor.tools {
+            let status = if t.found { "Found" } else { "Missing" };
+            lines.push(format!("    - {}: {}", t.name, status));
+        }
+        lines.push("  Environment Variables:".to_string());
+        for e in &doctor.env {
+            let status = if e.present { "Present" } else { "Missing" };
+            lines.push(format!("    - {}: {}", e.name, status));
+        }
+        lines.push("  MCP Configured Servers:".to_string());
+        if doctor.mcp.is_empty() {
+            lines.push("    - No servers configured".to_string());
+        } else {
+            for m in &doctor.mcp {
+                let status = if m.reachable { "Executable Path OK" } else { "Executable Command Missing" };
+                lines.push(format!("    - {}: {}", m.name, status));
+            }
+        }
+    }
+
     lines.join("\n")
 }
 
@@ -135,6 +163,7 @@ mod tests {
             }),
             resume: None,
             slash_command: None,
+            doctor: None,
         }
     }
 

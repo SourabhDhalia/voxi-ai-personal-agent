@@ -33,5 +33,11 @@ pub fn built_in_command_manifests() -> Vec<CommandManifestEntry> {
             SlashCommandArgHint::optional("message", "Optional continuation note"),
         ])
         .with_resume_behavior(ResumeBehavior::ResumeOnly),
+        CommandManifestEntry::new(
+            "doctor",
+            CommandSource::BuiltIn,
+            "Diagnose and verify the environment",
+        )
+        .with_aliases(["diagnose"]),
     ]
 }

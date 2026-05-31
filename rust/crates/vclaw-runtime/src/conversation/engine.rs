@@ -151,6 +151,8 @@ where
         let mut tool_names = Vec::new();
         let mut request_count = 0usize;
         let mut compacted = false;
+        let mut consecutive_identical_count = 0;
+        let mut last_tool_calls: Option<Vec<ToolCallRequest>> = None;
         let final_assistant_text = loop {
             session.set_state(SessionState::Active);
             if request_count >= self.options.max_model_requests {
@@ -182,6 +184,38 @@ where
             let model_events = self.model.stream(&request)?;
             let (assistant_text, tool_calls) =
                 self.consume_model_events(&model_events, &mut usage, &mut events, &mut observer);
+
+            if !tool_calls.is_empty() {
+                if let Some(ref last) = last_tool_calls {
+                    if last == &tool_calls {
+                        consecutive_identical_count += 1;
+                    } else {
+                        consecutive_identical_count = 1;
+                        last_tool_calls = Some(tool_calls.clone());
+                    }
+                } else {
+                    consecutive_identical_count = 1;
+                    last_tool_calls = Some(tool_calls.clone());
+                }
+
+                if consecutive_identical_count == 3 {
+                    let mut warning_text = "System Warning: A potential loop has been detected. You have requested the exact same tool calls consecutively 3 times:\n".to_string();
+                    for call in &tool_calls {
+                        warning_text.push_str(&format!("  - Tool: {}, Input: {}\n", call.name, call.input));
+                    }
+                    warning_text.push_str("Please inspect why your changes or commands are not producing different results. You MUST modify your strategy, edit files differently, or explain the issue to the user instead of repeating this action.");
+                    
+                    let warning_message = crate::session::ConversationMessage::with_text(
+                        crate::session::SessionMessageRole::System,
+                        warning_text,
+                    );
+                    session.push_message(warning_message);
+                } else if consecutive_identical_count >= 4 {
+                    return Err(ConversationRuntimeError::Invariant {
+                        message: "Consecutive tool execution loop detected. Aborting run.".to_string(),
+                    });
+                }
+            }
 
             if !assistant_text.is_empty() || !tool_calls.is_empty() {
                 let assistant_message =

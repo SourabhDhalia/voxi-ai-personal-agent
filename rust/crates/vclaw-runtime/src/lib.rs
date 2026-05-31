@@ -7,6 +7,7 @@ pub mod compact;
 pub mod config;
 pub mod config_validate;
 pub mod conversation;
+pub mod doctor;
 pub mod file_ops;
 pub mod git_context;
 pub mod green_contract;
@@ -51,6 +52,10 @@ pub use config::{
     McpRuntimeConfig, RuntimeConfig, RuntimeConfigPatch, RuntimePaths, RuntimeProfile,
 };
 pub use config_validate::{ConfigValidationIssue, ConfigValidationReport};
+pub use doctor::{
+    run_diagnostics, DoctorSummary, EnvCheckResult, McpCheckResult, PathCheckResult,
+    ToolCheckResult,
+};
 pub use conversation::{
     ApiRequest, AssistantEvent, ConversationEngine, ConversationEngineOptions, ConversationEvent,
     ConversationLog, ConversationRuntimeError, ConversationTurn, ConversationTurnResult,

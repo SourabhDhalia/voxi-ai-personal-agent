@@ -507,3 +507,63 @@ fn preserves_explicit_event_order_for_cli_subscribers() {
         ]
     );
 }
+
+#[test]
+fn detects_and_aborts_on_tool_call_loop() {
+    let tool_call = ToolCallRequest {
+        id: "tool-1".to_string(),
+        name: "test_tool".to_string(),
+        input: json!({ "arg": "value" }),
+    };
+
+    let model = FakeModel::new(vec![
+        vec![ModelResponseEvent::ToolCall { call: tool_call.clone() }, ModelResponseEvent::Completed],
+        vec![ModelResponseEvent::ToolCall { call: tool_call.clone() }, ModelResponseEvent::Completed],
+        vec![ModelResponseEvent::ToolCall { call: tool_call.clone() }, ModelResponseEvent::Completed],
+        vec![ModelResponseEvent::ToolCall { call: tool_call.clone() }, ModelResponseEvent::Completed],
+    ]);
+
+    let tools = FakeTools {
+        definitions: vec![ToolDefinition {
+            name: "test_tool".to_string(),
+            description: "test".to_string(),
+            permission_scope: crate::permissions::PermissionScope::Read,
+            minimum_permission_level: crate::permissions::PermissionLevel::Low,
+        }],
+        results: BTreeMap::from([
+            ("test_tool".to_string(), Ok(ToolExecutionOutput {
+                tool_call_id: "tool-1".to_string(),
+                output: json!({ "status": "ok" }),
+                summary: None,
+            }))
+        ]),
+    };
+
+    let permissions = FakePermissions {
+        allowed: true,
+        ..FakePermissions::default()
+    };
+    let hooks = FakeHooks::default();
+    
+    let options = ConversationEngineOptions { max_model_requests: 6 };
+    let mut engine = ConversationEngine::new(host_config(), Vec::new(), model, tools, permissions, hooks)
+        .with_options(options);
+        
+    let mut session = session_with_user_message();
+    let result = engine.run_turn(&mut session, &prompt(), |_| {});
+
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("loop detected"), "error was: {}", err);
+
+    let warning_found = session.messages.iter().any(|msg| {
+        msg.role == crate::SessionMessageRole::System && msg.content.iter().any(|block| {
+            if let crate::SessionContentBlock::Text { text } = block {
+                text.contains("potential loop has been detected")
+            } else {
+                false
+            }
+        })
+    });
+    assert!(warning_found, "System warning message should have been injected into session messages");
+}

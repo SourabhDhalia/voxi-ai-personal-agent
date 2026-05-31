@@ -25,6 +25,7 @@ pub enum CliMode {
         session_id: String,
         note: Option<String>,
     },
+    Doctor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -105,6 +106,7 @@ pub fn parse_args(args: &[String]) -> Result<ParsedCli, CliInputError> {
                 parsed.permission_override = Some(parse_permission_mode(&value)?);
             }
             "--print-config" => parsed.mode = CliMode::PrintConfig,
+            "--doctor" => parsed.mode = CliMode::Doctor,
             "--list-commands" => parsed.mode = CliMode::ListCommands,
             "--list-plugins" => parsed.mode = CliMode::ListPlugins,
             "--list-tools" => parsed.mode = CliMode::ListTools,
@@ -137,6 +139,9 @@ pub fn parse_args(args: &[String]) -> Result<ParsedCli, CliInputError> {
             }
             "tools" if prompt_tokens.is_empty() && matches!(parsed.mode, CliMode::Auto) => {
                 parsed.mode = CliMode::ListTools;
+            }
+            "doctor" | "diagnose" | "/doctor" | "/diagnose" if prompt_tokens.is_empty() && matches!(parsed.mode, CliMode::Auto) => {
+                parsed.mode = CliMode::Doctor;
             }
             "resume" if prompt_tokens.is_empty() && matches!(parsed.mode, CliMode::Auto) => {
                 let session_id = required_value("resume", &mut items)?;

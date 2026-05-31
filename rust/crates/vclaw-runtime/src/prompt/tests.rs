@@ -34,7 +34,7 @@ fn write_file(path: &Path, content: &str) {
 
 #[test]
 fn project_context_discovers_root_and_default_files() {
-    let root = temp_dir("discover-root");
+    let root = temp_dir("discover-root").canonicalize().expect("canonicalize root");
     write_file(&root.join(".git").join("HEAD"), "ref: refs/heads/main\n");
     write_file(&root.join("CLAUDE.md"), "# Claude\n");
     write_file(&root.join("AGENTS.md"), "# Agents\n");
@@ -60,7 +60,7 @@ fn project_context_discovers_root_and_default_files() {
 
 #[test]
 fn collect_context_files_deduplicates_duplicate_and_nested_candidates() {
-    let root = temp_dir("dedupe");
+    let root = temp_dir("dedupe").canonicalize().expect("canonicalize root");
     write_file(&root.join(".git").join("HEAD"), "ref: refs/heads/main\n");
     write_file(&root.join("AGENTS.md"), "# Root Agents\n");
     write_file(&root.join("CLAUDE.md"), "# Claude\n");
@@ -89,7 +89,7 @@ fn collect_context_files_deduplicates_duplicate_and_nested_candidates() {
 
 #[test]
 fn prompt_builder_renders_deterministic_fragments() {
-    let root = temp_dir("render");
+    let root = temp_dir("render").canonicalize().expect("canonicalize root");
     write_file(&root.join(".git").join("HEAD"), "ref: refs/heads/main\n");
     write_file(&root.join("CLAUDE.md"), "# Claude\nProject guidance.\n");
     write_file(&root.join("AGENTS.md"), "# Agents\nRepository guidance.\n");

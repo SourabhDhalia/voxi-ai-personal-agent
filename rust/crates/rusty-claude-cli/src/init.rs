@@ -43,6 +43,8 @@ pub struct CliOutcome {
     pub resume: Option<SessionControlResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub slash_command: Option<ResolvedSlashCommand>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doctor: Option<vclaw_runtime::DoctorSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -160,6 +162,16 @@ pub fn dispatch_cli(
         },
     };
 
+    let doctor = match &parsed.mode {
+        CliMode::Doctor => Some(vclaw_runtime::run_diagnostics(&config)),
+        _ => match slash_command.as_ref() {
+            Some(command) if command.canonical_name == "doctor" => {
+                Some(vclaw_runtime::run_diagnostics(&config))
+            }
+            _ => None,
+        },
+    };
+
     let mode = match &parsed.mode {
         CliMode::Help { .. } => "help",
         CliMode::ListCommands => "commands",
@@ -167,10 +179,12 @@ pub fn dispatch_cli(
         CliMode::ListTools => "tools",
         CliMode::PrintConfig => "config",
         CliMode::Resume { .. } => "resume",
+        CliMode::Doctor => "doctor",
         CliMode::Auto => match slash_command.as_ref() {
             Some(command) if command.canonical_name == "help" => "help",
             Some(command) if command.canonical_name == "plugins" => "plugins",
             Some(command) if command.canonical_name == "resume" => "resume",
+            Some(command) if command.canonical_name == "doctor" => "doctor",
             Some(_) => "slash_command",
             None if merged_prompt.is_some() => "prompt",
             None => "help",
@@ -219,6 +233,7 @@ pub fn dispatch_cli(
         help,
         resume,
         slash_command,
+        doctor,
     })
 }
 

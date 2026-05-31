@@ -20,6 +20,7 @@ impl RuntimeModuleMap {
                 "config",
                 "config_validate",
                 "conversation",
+                "doctor",
                 "file_ops",
                 "git_context",
                 "green_contract",
