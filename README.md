@@ -16,6 +16,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
   <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/Platform-Voxi%20%2B%20Embedded%20Linux-brightgreen.svg" alt="Platform">
+  <img src="https://img.shields.io/badge/Host-macOS%20%7C%20Ubuntu%20%7C%20WSL-blue.svg" alt="Host">
   <img src="https://img.shields.io/badge/Runtime-Tokio-black.svg" alt="Tokio">
 </p>
 
@@ -23,7 +24,7 @@
   <a href="#why-voxi">Why Voxi</a> •
   <a href="#at-a-glance">At a Glance</a> •
   <a href="#telegram-coding-over-chat">Telegram Coding Over Chat</a> •
-  <a href="#install-on-ubuntu-or-wsl">Install on Ubuntu or WSL</a> •
+  <a href="#install-on-ubuntu-wsl-or-macos">Install on Ubuntu, WSL, or macOS</a> •
   <a href="#deploy-to-a-voxi-target">Deploy to a Voxi Target</a>
 </p>
 
@@ -55,7 +56,7 @@ demo chatbot, this is what Voxi is for.
 | --- | --- |
 | Runtime model | A persistent Tokio-based daemon with IPC, scheduling, storage, and background automation |
 | Platform focus | Voxi-first behavior with generic Linux fallbacks where device APIs are unavailable |
-| Access surfaces | CLI, web dashboard, Telegram, webhook, Slack, Discord, MCP, and other channel layers present in the workspace |
+| Access surfaces | CLI, web dashboard, Telegram, webhook, Slack, Discord, MCP, an optional local voice channel (STT/TTS), and other channel layers present in the workspace |
 | Coding workflow | Telegram can switch into coding mode and drive local `codex`, `gemini`, or `claude` CLIs on the host |
 | Extensibility | Dedicated tool executor, metadata plugins, C-facing library, and dynamic `.so` loading |
 | Deployment story | `deploy.sh` for emulator/device packaging and deployment, or generic Linux/macOS host builds/runs |
@@ -170,12 +171,16 @@ Telegram coding mode can also invoke:
 on the host and stream progress back into chat.
 ```
 
-## Install on Ubuntu or WSL
+## Install on Ubuntu, WSL, or macOS
 
-If you want to try Voxi on host Linux first, the repository now includes a
-GitHub-friendly bootstrap script that downloads a prebuilt host bundle from
-GitHub Releases, installs it under `~/.voxi`, and launches the setup
-wizard.
+If you want to try Voxi on your host machine first, the repository
+includes a GitHub-friendly bootstrap script that downloads a prebuilt
+host bundle from GitHub Releases, installs it under `~/.voxi`, and
+launches the setup wizard.
+
+> **macOS note**: `./deploy.sh` works natively on macOS (no WSL or
+> Docker required). The same commands listed below apply on both macOS
+> and Ubuntu/WSL.
 
 ### One-line bootstrap
 
@@ -241,28 +246,16 @@ away.
 
 ## Deploy to a Voxi Target
 
-For the emulator or device-oriented workflow, use the repository's Voxi deploy
-pipeline:
+For the emulator or device-oriented workflow, the Voxi DTV / armv7l
+deployment path uses the repository's GBS-based pipeline and `sdb`
+tooling. That workflow is separate from the host-mode `./deploy.sh`
+script and requires Voxi Studio with GBS build support and a reachable
+emulator or physical device.
 
-```bash
-./deploy.sh -a x86_64
-```
-
-Useful variants:
-
-```bash
-./deploy.sh -a x86_64 -n
-./deploy.sh -a x86_64 -d <device-serial>
-./deploy.sh -a x86_64 -s
-```
-
-This path is the canonical Voxi validation flow. It handles build, packaging,
-deployment, and service restart on the target.
-
-These examples assume an `sdb`-style target such as the emulator or a device
-that uses the repository's current `deploy.sh` flow. If you are deploying to a
-Voxi TV / DTV target over `ssh` and `scp`, see
-[`docs/DTV_USAGE.md`](docs/DTV_USAGE.md) for the manual SSH-based workflow.
+The host-mode `./deploy.sh` script does **not** have an `-a`/`--arch`
+flag — it always targets the local host. For GBS/emulator/device
+validation, consult the `.dev_note/docs/` planning artifacts or ask
+for the `building-deploying` skill.
 
 ## Workspace
 
@@ -274,6 +267,7 @@ Houses the persistent embedded daemon and background communication channels:
 - `src/voxi-cli`: Thin IPC client for remote prompt/stream execution.
 - `src/voxi-web-dashboard`: HTTP management portal and config editor.
 - `src/voxi-tool-executor`: Sandboxed subprocess sidecar for running tools.
+- `src/voxi-voice`: Standalone bidirectional voice pipeline (STT → correction → agent → TTS), disabled by default and offline-safe.
 - `src/libvoxi-core` & `src/libvoxi`: Shared framework logic and FFI boundaries.
 
 ### 2. VClaw CLI Agent Workspace (`rust/`)

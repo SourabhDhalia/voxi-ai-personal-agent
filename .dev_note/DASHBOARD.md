@@ -646,3 +646,15 @@
 | Generic Agent Orchestration Fix | Supervisor Gate 5 | PASS | Full-file rustfmt remains noisy from existing drift; touched new file and JS/whitespace/deploy dry-run validations passed. |
 | Generic Agent Orchestration Fix | 6. Commit | PASS | Preparing file-based commit and push for the generic orchestration fixes. |
 | Generic Agent Orchestration Fix | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt` and avoids inline commit messages. |
+| Voice Module Integration | 1. Planning | PASS | Scope covers a standalone `voxi-voice` crate (capture -> VAD -> STT -> correction -> agent -> TTS), `voxi model` CLI, EventBus bridge, and disabled-by-default voice channel; offline-safe null path classified as host-default. |
+| Voice Module Integration | Supervisor Gate 1 | PASS | Plan keeps heavy native deps (cpal/ort/porcupine) feature-gated and off by default so the daemon always boots; no unvendored crates pulled into the default build. |
+| Voice Module Integration | 2. Design | PASS | Designed trait boundaries (AudioBackend, SttEngine, TtsEngine, CorrectionEngine, WakeWordDetector, VoiceEventSink) each with a null/passthrough fallback; pure-Rust SHA-256 + model registry; `Send + Sync` pipeline with `Mutex`-guarded mpsc sender. |
+| Voice Module Integration | Supervisor Gate 2 | PASS | Design isolates FFI/native paths behind cargo features and `libloading`-style graceful fallback; voice crate stays decoupled from `AgentCore`. |
+| Voice Module Integration | 3. Development | PASS | Implemented engine orchestrator with VAD/PTT/wake-word triggers, confidence-thresholded correction emitting `CorrectedTranscript`, model registry + `voxi-cli model` (list/install/verify/remove/switch/doctor), `AgentCore::event_bus()` accessor, and `EventBusVoiceSink`. |
+| Voice Module Integration | Supervisor Gate 3 | PASS | No direct `cargo`/`cmake`; changes scoped to new `src/voxi-voice` crate, `voxi-cli`, `voxi` channel/core accessor, and config/packaging files. |
+| Voice Module Integration | 4. Build/Deploy | PASS | `./deploy.sh -b` succeeded (release, zero new warnings) and `./deploy.sh --test` passed including 22 `voxi-voice` unit tests. |
+| Voice Module Integration | Supervisor Gate 4 | PASS | Correct host script used; no direct cargo build invoked outside `deploy.sh`. |
+| Voice Module Integration | 5. Test/Review | PASS | Verified SHA-256 known vectors, VAD edges, model registry, backend-selector precedence, and correction threshold (high-confidence skip / low-confidence passthrough) via `./deploy.sh --test`. |
+| Voice Module Integration | Supervisor Gate 5 | PASS | All workspace tests green; honest limitation recorded — `ort`/CPAL native inference unverifiable offline and kept as feature-gated scaffolds returning `Unsupported`. |
+| Voice Module Integration | 6. Commit | PASS | Voice-only files committed on branch `voice-module-integration` via `.tmp/commit_msg.txt` (`ab2692cc`); PR #1 opened against `main`. |
+| Voice Module Integration | Supervisor Gate 6 | PASS | File-based commit message used; unrelated working-tree doc edits excluded from the voice commit. |

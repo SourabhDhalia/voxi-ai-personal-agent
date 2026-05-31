@@ -114,9 +114,9 @@ prohibited.** Development must follow a rigid, step-by-step process.
 > its execution behavior using `./deploy.sh` is an imperative baseline.
 > Code not proven by device testing must be rejected.
 
-- **Prerequisite**: You **must validate Ubuntu x86_64 for host testing**
-  and **armv7l for actual Voxi DTV usage** whenever the environment
-  provides the required GBS/sdb targets.
+- **Prerequisite**: You **must validate macOS/Ubuntu x86_64 for host
+  testing** and **armv7l for actual Voxi DTV usage** whenever the
+  environment provides the required GBS/sdb targets.
 - **Artifact**: Update stage status in `.dev_note/DASHBOARD.md`
 - **Skill Usage**:
   [`.agent/skills/building-deploying/SKILL.md`](.agent/skills/building-deploying/SKILL.md)
@@ -170,15 +170,18 @@ prohibited.** Development must follow a rigid, step-by-step process.
 ## Global Environment Management
 
 > [!IMPORTANT]
-> **Mandatory WSL Shell (Ubuntu) Usage**: Execute all terminal commands
-> through the WSL shell (e.g., `wsl -e bash -c "..."`) as direct
-> PowerShell executions are error-prone.
+> **Host Platform Context**: `./deploy.sh` is the default host build
+> and run script. It works on **macOS**, **Ubuntu**, and **WSL**
+> natively — no `wsl -e bash -c "..."` wrapper is needed on those
+> platforms. The WSL wrapper is only required when you are inside a
+> **Windows PowerShell** session (see
+> `.agent/rules/shell-detection.md`). Voxi DTV / armv7l targets use
+> the separate GBS/`sdb`-based deploy pipeline.
 
 > [!IMPORTANT]
 > **Shell Detection Rule**: Before executing ANY command, follow the
 > [`.agent/rules/shell-detection.md`](.agent/rules/shell-detection.md)
-> decision matrix to determine the correct shell (PowerShell vs WSL Bash).
-> This rule is authoritative for all shell decisions.
+> decision matrix to determine the correct shell context.
 
 Follow the background limits and sequential execution commands in the
 environment skill carefully to avoid Samba/WSL lockups.
