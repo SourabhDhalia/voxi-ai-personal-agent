@@ -19,6 +19,9 @@
     "tests/system/session_transcript_runtime_contract.json",
     "tests/system/json_only_transcript_runtime_contract.json",
     "tests/system/structured_writing_runtime_contract.json",
-    "tests/system/file_output_preview_runtime_contract.json"
+    "tests/system/file_output_preview_runtime_contract.json",
+    "tests/system/hooks_pre_tool_deny.json",
+    "tests/system/hooks_external_disabled_by_default.json",
+    "tests/system/skills_list_and_invoke.json"
   ]
 }

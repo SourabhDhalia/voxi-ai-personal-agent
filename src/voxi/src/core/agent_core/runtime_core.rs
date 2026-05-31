@@ -7,7 +7,7 @@
 /// - `session_store`: Mutex (SQLite is not Sync)
 /// - `tool_dispatcher`: RwLock (reads are frequent, writes are rare)
 pub struct AgentCore {
-    platform: Arc<voxi_core::framework::PlatformContext>,
+    pub platform: Arc<voxi_core::framework::PlatformContext>,
     /// Provider registry — owns all initialized backends in preference order.
     /// Replaces the former `backend` + `fallback_backends` + `backend_name`
     /// flat fields.  `ProviderSelector` picks the first available provider at
@@ -40,6 +40,8 @@ pub struct AgentCore {
     llm_response_cache: LlmResponseCache,
     active_requests: Arc<Mutex<HashMap<String, RequestState>>>,
     session_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
+    pub hooks_config: Mutex<crate::core::hooks::HooksConfig>,
+    pub pending_approvals: Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<bool>>>>,
 }
 
 #[derive(Clone, Debug)]

@@ -1,6 +1,7 @@
 impl AgentCore {
     pub fn new(platform: Arc<voxi_core::framework::PlatformContext>) -> Self {
-        let keys_dir = platform.paths.config_dir.join("keys");
+        let config_dir = platform.paths.config_dir.clone();
+        let keys_dir = config_dir.join("keys");
         AgentCore {
             platform,
             provider_registry: tokio::sync::RwLock::new(
@@ -32,6 +33,8 @@ impl AgentCore {
             llm_response_cache: Arc::new(RwLock::new(HashMap::new())),
             active_requests: Arc::new(Mutex::new(HashMap::new())),
             session_locks: Arc::new(Mutex::new(HashMap::new())),
+            hooks_config: Mutex::new(crate::core::hooks::HooksConfig::load(&config_dir)),
+            pending_approvals: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -832,7 +835,11 @@ impl AgentCore {
                 Err(_) => json!({"error": "Failed to lock action bridge"}),
             },
             _ => {
-                match self
+                if let Err(msg) = self.evaluate_pre_tool_hooks(tool_name, args, None).await {
+                    return json!({ "error": msg });
+                }
+
+                let result = match self
                     .tool_dispatcher
                     .read()
                     .await
@@ -841,7 +848,15 @@ impl AgentCore {
                 {
                     Ok(value) => value,
                     Err(error) => json!({ "error": error }),
+                };
+
+                if result.get("error").is_none() {
+                    if let Err(msg) = self.evaluate_post_tool_hooks(tool_name, args, &result, None).await {
+                        return json!({ "error": msg });
+                    }
                 }
+
+                result
             }
         }
     }
@@ -2035,5 +2050,142 @@ impl AgentCore {
         .any(|needle| p.contains(needle));
 
         asks_to_create && mentions_browser_ui
+    }
+
+    pub async fn evaluate_pre_tool_hooks(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
+    ) -> Result<(), String> {
+        let decision = {
+            let config = self.hooks_config.lock().unwrap();
+            config.evaluate_pre_tool(tool_name, args)
+        };
+
+        match decision {
+            crate::core::hooks::HookDecision::Allow => Ok(()),
+            crate::core::hooks::HookDecision::Deny(msg) => Err(msg),
+            crate::core::hooks::HookDecision::Ask => {
+                let approval_id = uuid::Uuid::new_v4().to_string();
+                self.publish_runtime_event(
+                    "hook_approval_request",
+                    serde_json::json!({
+                        "approval_id": approval_id,
+                        "tool": tool_name,
+                        "arguments": args
+                    }),
+                );
+                let req_json = serde_json::json!({
+                    "approval_id": approval_id,
+                    "tool": tool_name,
+                    "arguments": args
+                }).to_string();
+
+                if let Some(ref callback) = on_chunk {
+                    callback(&format!("<approval_request>{}</approval_request>", req_json));
+                } else {
+                    log::warn!("Hook requires ask approval, but no streaming chunk callback was provided. Defaulting to deny.");
+                    return Err("Approval required but client cannot handle prompt verification".into());
+                }
+
+                let timeout_ms = {
+                    let config = self.hooks_config.lock().unwrap();
+                    config.timeout_ms
+                };
+
+                let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+                self.pending_approvals.lock().unwrap().insert(approval_id.clone(), tx);
+
+                log::info!("Blocked waiting for user approval {} for tool {}", approval_id, tool_name);
+                let approved = match tokio::time::timeout(tokio::time::Duration::from_millis(timeout_ms), rx).await {
+                    Ok(Ok(res)) => res,
+                    _ => {
+                        log::warn!("Approval request {} timed out, defaulting to deny", approval_id);
+                        false
+                    }
+                };
+
+                self.pending_approvals.lock().unwrap().remove(&approval_id);
+
+                self.publish_runtime_event(
+                    "hook_approval_resolved",
+                    serde_json::json!({
+                        "approval_id": approval_id,
+                        "tool": tool_name,
+                        "approved": approved
+                    }),
+                );
+
+                if approved {
+                    log::info!("User approved tool execution: {}", tool_name);
+                    Ok(())
+                } else {
+                    log::warn!("User denied or timed out tool execution: {}", tool_name);
+                    Err("Blocked by user pre_tool approval denial".into())
+                }
+            }
+        }
+    }
+
+    pub async fn evaluate_post_tool_hooks(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        result: &Value,
+        on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
+    ) -> Result<(), String> {
+        let decision = {
+            let config = self.hooks_config.lock().unwrap();
+            config.evaluate_post_tool(tool_name, args, result)
+        };
+
+        match decision {
+            crate::core::hooks::HookDecision::Allow => Ok(()),
+            crate::core::hooks::HookDecision::Deny(msg) => Err(msg),
+            crate::core::hooks::HookDecision::Ask => {
+                let approval_id = uuid::Uuid::new_v4().to_string();
+                let req_json = serde_json::json!({
+                    "approval_id": approval_id,
+                    "tool": tool_name,
+                    "arguments": args,
+                    "result": result
+                }).to_string();
+
+                if let Some(ref callback) = on_chunk {
+                    callback(&format!("<approval_request>{}</approval_request>", req_json));
+                } else {
+                    log::warn!("Hook requires ask approval, but no streaming chunk callback was provided. Defaulting to deny.");
+                    return Err("Approval required but client cannot handle prompt verification".into());
+                }
+
+                let timeout_ms = {
+                    let config = self.hooks_config.lock().unwrap();
+                    config.timeout_ms
+                };
+
+                let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+                self.pending_approvals.lock().unwrap().insert(approval_id.clone(), tx);
+
+                log::info!("Blocked waiting for user post_tool approval {} for tool {}", approval_id, tool_name);
+                let approved = match tokio::time::timeout(tokio::time::Duration::from_millis(timeout_ms), rx).await {
+                    Ok(Ok(res)) => res,
+                    _ => {
+                        log::warn!("Approval request {} timed out, defaulting to deny", approval_id);
+                        false
+                    }
+                };
+
+                self.pending_approvals.lock().unwrap().remove(&approval_id);
+
+                if approved {
+                    log::info!("User approved post_tool result: {}", tool_name);
+                    Ok(())
+                } else {
+                    log::warn!("User denied or timed out post_tool result: {}", tool_name);
+                    Err("Blocked by user post_tool approval denial".into())
+                }
+            }
+        }
     }
 }

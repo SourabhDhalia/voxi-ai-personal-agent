@@ -219,9 +219,67 @@ surfaces, including:
 - tool policy configuration
 - agent role configuration
 - tunnel and web search configuration
+- tool hooks configuration (`hooks.json`)
+- skill toggle states configuration (`skills_state.json`)
 
 Operators should treat those files as part of the deployed runtime contract,
 especially when reproducing issues between emulator, host, and device setups.
+
+## Advanced Features: Hooks, Skills, and Event Streaming
+
+### Pre/Post-Tool Hooks & Approval Gates
+
+Voxi supports executing configurable pre-tool and post-tool hooks defined in `hooks.json` under the config directory (`~/.voxi/config/hooks.json`).
+
+#### Hook Configuration
+A hook matches on tool name prefix patterns and defines actions:
+- `allow`: Proceed with tool execution.
+- `deny`: Block the tool and return a descriptive error immediately.
+- `ask`: Pause execution and request user approval.
+
+Example `hooks.json`:
+```json
+{
+  "pre_hooks": [
+    {
+      "pattern": "fs.write_*",
+      "action": "ask",
+      "timeout_seconds": 30
+    },
+    {
+      "pattern": "sys.shutdown",
+      "action": "deny"
+    }
+  ],
+  "post_hooks": []
+}
+```
+
+#### Approval Gates (`ask` action)
+When a hook evaluates to `ask`:
+1. The execution blocks on a pending approval object.
+2. A `hook_approval_request` event containing the approval ID, tool name, arguments, and timeout countdown is published to the daemon event bus.
+3. The Web Dashboard displays an interactive modal with countdown rings, allowing operators to approve or deny the action.
+4. If approved, the tool proceeds; if denied or timed out, it returns an approval rejection error.
+
+### Dynamic Skills Catalog
+
+Developer skills (defined as directories containing `SKILL.md`) are scanned dynamically from repository-level and home-level paths.
+
+#### Toggle States
+Skill activation states (enabled/disabled toggles) are stored and persisted in `skills_state.json` inside the config directory. Toggling a skill in the Web Dashboard UI immediately writes to this configuration and updates active agent capability sets.
+
+#### Draft Skill Review & Approval
+When new skills are drafted (created with `SKILL.md.draft`), they are placed in the review stream. The Web Dashboard provides:
+- A side-by-side comparative diff display of draft vs original contents.
+- Automatic verification flags for required dependencies.
+- "Approve & Save" and "Discard Draft" action handlers.
+
+### Real-Time SSE Event Broadcasting
+
+The web dashboard mounts a token-authorized server-sent events stream endpoint at `/api/events`.
+- **Axum SSE Hop**: Axum establishes a Unix IPC socket connection to subscribe to daemon events via the JSON-RPC `subscribe_events` handler, forwarding them directly to frontend SSE clients.
+- **Timeline Visualizer**: Real-time event streams drive the Web Dashboard's timeline visualizer, showing live states (running, success, failure) of tool executions and pending hook approvals.
 
 ## Extension Model
 

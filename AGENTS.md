@@ -243,3 +243,19 @@ Review, or similar stage work MUST be created under `.dev_note/docs/`.
 Do not create new workflow or stage artifact documents under `docs/`.
 
 //turbo-all
+
+## UI/UX Skill Rule
+
+When the task involves UI, UX, frontend layout, visual polish, dashboard design, forms, landing pages, mobile responsiveness, accessibility, product flow, design system, colors, typography, spacing, or user interaction, use the `ui-ux-pro-max` skill.
+
+Use it as the primary UI/UX skill.
+
+Do not redesign the whole app unless explicitly requested.
+
+Prefer minimum necessary code changes.
+
+Preserve existing business logic, API flow, state management, and backend behavior.
+
+First improve usability, hierarchy, spacing, accessibility, responsiveness, loading states, empty states, error states, and action clarity.
+
+The final UI should look production-ready, premium, clean, modern, accessible, responsive, and non-generic.
