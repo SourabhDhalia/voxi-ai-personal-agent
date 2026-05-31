@@ -2209,7 +2209,19 @@
         'voice_config.json': 'Voice Configuration',
         'hooks.json': 'Tool Hooks',
         'skills_state.json': 'Skills Activation',
-        'system_prompt.txt': 'System Prompt'
+        'system_prompt.txt': 'System Prompt',
+        'channel_config.json': 'Channel Settings',
+        'channels.json': 'Active Channels',
+        'autonomous_trigger.json': 'Autonomous Triggers',
+        'device_profile.json': 'Device Profile',
+        'fleet_config.json': 'Fleet Config',
+        'llm_config_lmstudio.json': 'LM Studio Config',
+        'llm_config_mlx.json': 'MLX Config',
+        'memory_config.json': 'Memory Config',
+        'models.voice.json': 'Voice Models',
+        'offline_fallback.json': 'Offline Fallback',
+        'safety_bounds.json': 'Safety Bounds',
+        'user_profiles.json': 'User Profiles'
     };
     const CONFIG_DESCRIPTIONS = {
         'llm_config.json': 'Manage model backends, token limits, and sampling options.',
@@ -2225,7 +2237,19 @@
         'voice_config.json': 'Select the voice engine, language, and spoken-reply preferences.',
         'hooks.json': 'Pre/post-tool hooks with allow, deny, and ask approval gates.',
         'skills_state.json': 'Enable or disable skills and opt into project-level skill scanning.',
-        'system_prompt.txt': 'Edit the core system instructions and behavioral constraints of the agent.'
+        'system_prompt.txt': 'Edit the core system instructions and behavioral constraints of the agent.',
+        'channel_config.json': 'Configure system notification and control interfaces.',
+        'channels.json': 'Manage mapping of channels, config files, and verification criteria.',
+        'autonomous_trigger.json': 'Set rules and rates for running background tasks automatically.',
+        'device_profile.json': 'Adjust device-specific capabilities, features, and specs.',
+        'fleet_config.json': 'Configure fleet settings, endpoints, and secure credentials.',
+        'llm_config_lmstudio.json': 'Configure LM Studio endpoint options and model selections.',
+        'llm_config_mlx.json': 'Tune local Apple Silicon MLX model features and pathing.',
+        'memory_config.json': 'Manage memory storage limits, search parameters, and chunking.',
+        'models.voice.json': 'List and verify local or remote voice models and features.',
+        'offline_fallback.json': 'Define alternate models and behaviors when internet is offline.',
+        'safety_bounds.json': 'Limit AI execution depth, confirm irreversible actions, and restrict parameters.',
+        'user_profiles.json': 'Manage administrator credentials, API keys, and personalized parameters.'
     };
     let adminConfigsCache = [];
     let activeConfigName = null;
@@ -2378,12 +2402,15 @@
     const DEFAULT_PRIMARY_CONFIGS = [
         'llm_config.json', 'mcp_servers.json', 'agent_roles.json',
         'tool_policy.json', 'hooks.json', 'voice_config.json',
-        'skills_state.json'
+        'skills_state.json', 'channel_config.json'
     ];
     const DEFAULT_HIDDEN_CONFIGS = [
         'telegram_config.json', 'slack_config.json', 'discord_config.json',
         'webhook_config.json', 'tunnel_config.json', 'web_search_config.json',
-        'system_prompt.txt'
+        'system_prompt.txt', 'channels.json', 'autonomous_trigger.json',
+        'device_profile.json', 'fleet_config.json', 'llm_config_lmstudio.json',
+        'llm_config_mlx.json', 'memory_config.json', 'models.voice.json',
+        'offline_fallback.json', 'safety_bounds.json', 'user_profiles.json'
     ];
 
     function loadConfigLayout() {

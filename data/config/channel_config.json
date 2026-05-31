@@ -10,7 +10,17 @@
       }
     },
     {
+      "name": "tv",
+      "type": "tv",
+      "enabled": false,
+      "settings": {
+        "port": 9092,
+        "localhost_only": false
+      }
+    },
+    {
       "name": "voice",
+
       "type": "voice",
       "enabled": false,
       "settings": {

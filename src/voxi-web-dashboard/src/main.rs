@@ -107,6 +107,18 @@ const ALLOWED_CONFIGS: &[&str] = &[
     "system_prompt.txt",
     "hooks.json",
     "skills_state.json",
+    "channel_config.json",
+    "channels.json",
+    "autonomous_trigger.json",
+    "device_profile.json",
+    "fleet_config.json",
+    "llm_config_lmstudio.json",
+    "llm_config_mlx.json",
+    "memory_config.json",
+    "models.voice.json",
+    "offline_fallback.json",
+    "safety_bounds.json",
+    "user_profiles.json",
 ];
 const BRIDGE_RATE_LIMIT_PER_SECOND: usize = 10;
 
