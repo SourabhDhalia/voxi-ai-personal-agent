@@ -684,3 +684,14 @@
 | Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 5 | PASS | All workspace tests green; subscription accounting and event pump logic verified. |
 | Enable builtin-tools & SSE Event Pump Refactor | 6. Commit | PASS | Staged 5 files and committed at e0987af6; pushed to origin/voice-module-integration. |
 | Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 6 | PASS | Commit used .tmp/commit_msg.txt; no inline git commit -m; all lines ≤ 80 chars. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | 2. Design | PASS | Designed TtsRouter struct, fallback policies, client-side Kokoro-82M ONNX dynamic loading, and .agents/skills/ gating rules. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | Supervisor Gate 2 | PASS | Architectural FFI, async trait boundaries, and security scan boundaries preserved. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | 3. Development | PASS | Implemented tts_router.rs with intent-based routing and fallback, integrated client-side transformers pipeline in app.js, and gated .agents/skills/ in skill_capability_manager.rs. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | Supervisor Gate 3 | PASS | Rust code compiles; frontend JS falls back gracefully to default browser Web Speech API. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | 4. Build/Deploy | PASS | Rebuilt host binary via ./deploy.sh and verified that the daemon started successfully on port 9091. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | Supervisor Gate 4 | PASS | Compilation succeeds and binary installation tree matches requirements. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | 5. Test/Review | PASS | Verified all 569 test cases pass under ./deploy.sh --test, and validated that only user-level skills are scanned when enable_project_skills is false. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | Supervisor Gate 5 | PASS | All workspace tests are green; security isolation of untrusted paths is successfully enforced. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | 6. Commit | PASS | Staged and committed changes on branch voice-module-integration using .tmp/commit_msg.txt; pushed to remote. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | Supervisor Gate 6 | PASS | Commit message follows format constraints. |
+
