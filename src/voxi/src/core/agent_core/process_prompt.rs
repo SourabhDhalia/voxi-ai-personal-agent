@@ -1151,7 +1151,7 @@ impl AgentCore {
                 .into_iter()
                 .map(|s| {
                     let summary = format_skill_summary(&s);
-                    (s.absolute_path, summary)
+                    (s.file_name, summary)
                 })
                 .collect();
             builder = builder.add_available_skills(formatted_skills);

@@ -1041,7 +1041,11 @@ async fn api_logs(
     if !validate_token(&headers, &state).await {
         return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
     }
-    let date = q.date.unwrap_or_else(today_date_str);
+    let date = q.date.clone().unwrap_or_else(|| {
+        let dir = state.data_dir.join("logs");
+        let dates = collect_log_dates(&dir);
+        dates.last().cloned().unwrap_or_else(today_date_str)
+    });
     if !is_valid_date(&date) {
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid date format"));
     }

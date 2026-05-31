@@ -186,31 +186,7 @@ impl ToolDeclarationBuilder {
                     description: "Debug tool to inspect the current session context details and cumulative stats.".into(),
                     parameters: json!({"type": "object", "properties": {}, "required": []}),
                 });
-                tools.push(LlmToolDecl {
-                    name: "get_agent_status".into(),
-                    description: "Get current agent system status.".into(),
-                    parameters: json!({"type": "object", "properties": {}, "required": []}),
-                });
-                tools.push(LlmToolDecl {
-                    name: "list_agents".into(),
-                    description: "List all running agents with their status.".into(),
-                    parameters: json!({"type": "object", "properties": {}, "required": []}),
-                });
-                tools.push(LlmToolDecl {
-                    name: "lookup_web_api".into(),
-                    description:
-                        "Look up Voxi Web API reference documentation. Use 'list', 'read', or 'search'."
-                            .into(),
-                    parameters: json!({
-                        "type": "object",
-                        "properties": {
-                            "operation": {"type": "string", "enum": ["list", "read", "search"]},
-                            "path": {"type": "string", "description": "Doc path for 'read'"},
-                            "query": {"type": "string", "description": "Keyword for 'search'"}
-                        },
-                        "required": ["operation"]
-                    }),
-                });
+
                 tools.push(LlmToolDecl {
                     name: "run_generated_code".into(),
                     description: "Write generated Python, Node.js, or Bash code under the device-owned codes directory and execute it immediately. Use this for executable scripts only. Do not use it for HTML/CSS/JS browser apps or webview content; use generate_web_app for those.".into(),
@@ -677,7 +653,6 @@ impl ToolDeclarationBuilder {
             .collect()
     }
 }
-
 #[cfg(all(test, feature = "builtin-tools"))]
 mod tests {
     use super::*;
@@ -687,7 +662,6 @@ mod tests {
         let mut tools = vec![];
         ToolDeclarationBuilder::append_builtin_tools(&mut tools, "what is my agent status?", true);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert!(names.contains(&"get_agent_status"));
         assert!(names.contains(&"send_outbound_message"));
         assert!(names.contains(&"run_generated_code"));
         assert!(names.contains(&"manage_generated_code"));

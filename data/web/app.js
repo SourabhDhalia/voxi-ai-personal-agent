@@ -396,6 +396,15 @@
                 this.selMonth + '-' +
                 this.selDay;
         }
+
+        selectDate(dateStr) {
+            if (!dateStr || dateStr.length !== 10) return;
+            this.selYear = dateStr.substring(0, 4);
+            this.selMonth = dateStr.substring(5, 7);
+            this.selDay = dateStr.substring(8, 10);
+            this.level = 'day';
+            this.render();
+        }
     }
 
     // --- Dashboard ---
@@ -882,23 +891,55 @@
 
     // --- Logs ---
     let logDateNav = null;
+    let logDates = [];
+    let currentLogDate = null;
     // Per-file pagination state: { [label]: { offset: 0, totalLines: 0 } }
     let logPagination = {};
     const LOG_PAGE_SIZE = 500;
 
+    function formatDateHuman(dateStr) {
+        if (!dateStr || dateStr.length !== 10) return dateStr || '';
+        const y = dateStr.substring(0, 4);
+        const m = parseInt(dateStr.substring(5, 7), 10) - 1;
+        const d = parseInt(dateStr.substring(8, 10), 10);
+        return MONTHS[m] + ' ' + d + ', ' + y;
+    }
+
     async function loadLogs(dateStr) {
-        // Init date nav once
-        if (!logDateNav) {
-            logDateNav = new DateNav(
-                'log-date-nav',
-                function (date) {
-                    logPagination = {};
-                    loadLogContent(date);
-                });
-            const datesResp = await apiFetch('logs/dates');
-            if (datesResp && datesResp.dates) {
-                logDateNav.setDates(datesResp.dates);
+        const datesResp = await apiFetch('logs/dates');
+        if (datesResp && datesResp.dates) {
+            logDates = (datesResp.dates || []).slice().sort();
+            if (!logDateNav) {
+                logDateNav = new DateNav(
+                    'log-date-nav',
+                    function (date) {
+                        logPagination = {};
+                        loadLogContent(date);
+                    });
+
+                // Wire up older/newer buttons
+                const prevBtn = document.getElementById('log-prev-day-btn');
+                const nextBtn = document.getElementById('log-next-day-btn');
+                if (prevBtn) {
+                    prevBtn.addEventListener('click', () => {
+                        const idx = logDates.indexOf(currentLogDate);
+                        if (idx > 0) {
+                            logPagination = {};
+                            loadLogContent(logDates[idx - 1]);
+                        }
+                    });
+                }
+                if (nextBtn) {
+                    nextBtn.addEventListener('click', () => {
+                        const idx = logDates.indexOf(currentLogDate);
+                        if (idx >= 0 && idx < logDates.length - 1) {
+                            logPagination = {};
+                            loadLogContent(logDates[idx + 1]);
+                        }
+                    });
+                }
             }
+            logDateNav.setDates(datesResp.dates);
         }
         logPagination = {};
         loadLogContent(dateStr || null);
@@ -931,7 +972,43 @@
 
         if (!data || data.length === 0) {
             logEl.innerHTML = '<div class="log-empty">No logs available' + (dateStr ? ' for ' + escHtml(dateStr) : '') + '.</div>';
+            
+            const dateDisplayEl = document.getElementById('log-current-date-display');
+            if (dateDisplayEl) dateDisplayEl.textContent = dateStr || 'No Logs';
+            const prevBtn = document.getElementById('log-prev-day-btn');
+            const nextBtn = document.getElementById('log-next-day-btn');
+            if (prevBtn) prevBtn.disabled = true;
+            if (nextBtn) nextBtn.disabled = true;
             return;
+        }
+
+        // On fresh load, resolve the actual date loaded
+        if (!appendMode) {
+            const actualDate = data[0].date || dateStr;
+            currentLogDate = actualDate;
+
+            // Highlight in DateNav
+            if (logDateNav && actualDate) {
+                logDateNav.selectDate(actualDate);
+            }
+
+            // Update current date display
+            const dateDisplayEl = document.getElementById('log-current-date-display');
+            if (dateDisplayEl && actualDate) {
+                dateDisplayEl.textContent = formatDateHuman(actualDate);
+            }
+
+            // Update older/newer button states
+            const prevBtn = document.getElementById('log-prev-day-btn');
+            const nextBtn = document.getElementById('log-next-day-btn');
+            if (actualDate) {
+                const idx = logDates.indexOf(actualDate);
+                if (prevBtn) prevBtn.disabled = (idx <= 0);
+                if (nextBtn) nextBtn.disabled = (idx < 0 || idx >= logDates.length - 1);
+            } else {
+                if (prevBtn) prevBtn.disabled = true;
+                if (nextBtn) nextBtn.disabled = true;
+            }
         }
 
         data.forEach(function(l) {
