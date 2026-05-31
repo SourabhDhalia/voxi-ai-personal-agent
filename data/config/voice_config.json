@@ -1,0 +1,17 @@
+{
+  "engine": "browser",
+  "language": "en-US",
+  "speak_replies": true,
+  "browser_voice": "",
+  "available_engines": ["browser", "device"],
+  "device": {
+    "audio_backend": "auto",
+    "stt_model": "moonshine-tiny",
+    "tts_model": "kokoro-82m",
+    "correction_model": null,
+    "trigger_mode": "vad",
+    "wake_word": "hey voxi",
+    "sample_rate": 16000,
+    "confidence_threshold": 0.85
+  }
+}

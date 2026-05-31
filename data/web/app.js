@@ -1221,6 +1221,10 @@
             el.textContent = text;
         }
         if (role === 'assistant') {
+            if (window.__voiceSpeakNext) {
+                window.__voiceSpeakNext = false;
+                if (typeof speakText === 'function') speakText(text);
+            }
             const actions = inferChatActions(text);
             if (actions.length) {
                 const actionRow = document.createElement('div');
@@ -1503,6 +1507,410 @@
     }
 
     // ==========================
+    // Voice input (config-driven)
+    // ==========================
+    // Engine "browser": STT/TTS run in the browser via Web Speech API (works
+    // on the current build). Engine "device": routes to the Rust voxi-voice
+    // pipeline (requires the streaming endpoint; falls back with a notice).
+    // Selection lives in voice_config.json (editable in Admin > Config) and is
+    // overlaid per-browser by localStorage so each client can tweak its voice.
+    const chatMic = document.getElementById('chat-mic');
+    const voiceConfigBtn = document.getElementById('voice-config-btn');
+    const voiceSettings = document.getElementById('voice-settings');
+    const voiceEngineSel = document.getElementById('voice-engine');
+    const voiceVoiceSel = document.getElementById('voice-voice');
+    const voiceLangInput = document.getElementById('voice-lang');
+    const voiceSpeakChk = document.getElementById('voice-speak');
+    const voiceNote = document.getElementById('voice-settings-note');
+    const SpeechRec =
+        window.SpeechRecognition || window.webkitSpeechRecognition;
+    let voiceRecognition = null;
+    let voiceListening = false;
+    const VOICE_PREFS_KEY = 'voxi_voice_prefs';
+
+    const voiceConfig = {
+        engine: 'browser',
+        language: 'en-US',
+        speak_replies: true,
+        browser_voice: ''
+    };
+
+    function loadVoicePrefs() {
+        try {
+            const raw = localStorage.getItem(VOICE_PREFS_KEY);
+            if (raw) Object.assign(voiceConfig, JSON.parse(raw));
+        } catch (err) { /* ignore */ }
+    }
+
+    function saveVoicePrefs() {
+        try {
+            localStorage.setItem(VOICE_PREFS_KEY, JSON.stringify({
+                engine: voiceConfig.engine,
+                language: voiceConfig.language,
+                speak_replies: voiceConfig.speak_replies,
+                browser_voice: voiceConfig.browser_voice
+            }));
+        } catch (err) { /* ignore */ }
+    }
+
+    async function loadVoiceConfigFile() {
+        // Server config is the baseline; local prefs win for this browser.
+        try {
+            const res = await fetch(API + '/api/voice/config');
+            if (res.ok) {
+                const data = await res.json();
+                const cfg = (data && data.config) || data || {};
+                if (cfg.engine) voiceConfig.engine = cfg.engine;
+                if (cfg.language) voiceConfig.language = cfg.language;
+                if (typeof cfg.speak_replies === 'boolean') {
+                    voiceConfig.speak_replies = cfg.speak_replies;
+                }
+                if (cfg.browser_voice) voiceConfig.browser_voice = cfg.browser_voice;
+            }
+        } catch (err) { /* endpoint optional; defaults apply */ }
+        loadVoicePrefs();
+        syncVoiceUI();
+    }
+
+    function populateVoiceList() {
+        if (!voiceVoiceSel || !('speechSynthesis' in window)) return;
+        const voices = window.speechSynthesis.getVoices() || [];
+        voiceVoiceSel.innerHTML =
+            '<option value="">Default</option>' +
+            voices.map(v =>
+                '<option value="' + escHtml(v.name) + '">' +
+                escHtml(v.name + ' (' + v.lang + ')') + '</option>'
+            ).join('');
+        voiceVoiceSel.value = voiceConfig.browser_voice || '';
+    }
+
+    function syncVoiceUI() {
+        if (voiceEngineSel) voiceEngineSel.value = voiceConfig.engine;
+        if (voiceLangInput) voiceLangInput.value = voiceConfig.language;
+        if (voiceSpeakChk) voiceSpeakChk.checked = !!voiceConfig.speak_replies;
+        populateVoiceList();
+        if (voiceNote) {
+            voiceNote.textContent = voiceConfig.engine === 'device'
+                ? 'Device engine uses the Voxi pipeline (requires models + streaming endpoint).'
+                : 'Browser engine: STT/TTS run locally in your browser.';
+        }
+    }
+
+    function pickVoice() {
+        if (!('speechSynthesis' in window)) return null;
+        const voices = window.speechSynthesis.getVoices() || [];
+        if (voiceConfig.browser_voice) {
+            return voices.find(v => v.name === voiceConfig.browser_voice) || null;
+        }
+        return voices.find(v =>
+            v.lang === voiceConfig.language) ||
+            voices.find(v =>
+                v.lang.startsWith((voiceConfig.language || 'en').slice(0, 2))) ||
+            null;
+    }
+
+    function speakText(raw) {
+        if (!voiceConfig.speak_replies) return;
+        if (!('speechSynthesis' in window) || !raw) return;
+        const spoken = raw
+            .replace(/```[\s\S]*?```/g, ' code block ')
+            .replace(/[#*_`>~|]/g, '')
+            .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+            .replace(/\s+/g, ' ')
+            .trim();
+        if (!spoken) return;
+        try {
+            window.speechSynthesis.cancel();
+            const utter = new SpeechSynthesisUtterance(spoken);
+            utter.lang = voiceConfig.language || 'en-US';
+            const v = pickVoice();
+            if (v) utter.voice = v;
+            window.speechSynthesis.speak(utter);
+        } catch (err) {
+            console.error('TTS failed:', err);
+        }
+    }
+
+    function setMicState(listening) {
+        voiceListening = listening;
+        if (chatMic) chatMic.classList.toggle('listening', listening);
+    }
+
+    function startBrowserMic() {
+        if (!SpeechRec) return;
+        if (voiceListening && voiceRecognition) {
+            voiceRecognition.stop();
+            return;
+        }
+        voiceRecognition = new SpeechRec();
+        voiceRecognition.lang = voiceConfig.language || 'en-US';
+        voiceRecognition.interimResults = false;
+        voiceRecognition.maxAlternatives = 1;
+        voiceRecognition.onstart = () => setMicState(true);
+        voiceRecognition.onend = () => setMicState(false);
+        voiceRecognition.onerror = (e) => {
+            setMicState(false);
+            if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+                addChatMsg('assistant',
+                    'Microphone permission was denied. Allow mic access in your browser to use voice input.');
+            } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
+                console.error('Speech recognition error:', e.error);
+            }
+        };
+        voiceRecognition.onresult = (e) => {
+            const transcript = (e.results && e.results[0] &&
+                e.results[0][0] && e.results[0][0].transcript || '').trim();
+            if (!transcript || !chatInput) return;
+            chatInput.value = transcript;
+            window.__voiceSpeakNext = true;
+            sendChat();
+        };
+        try {
+            voiceRecognition.start();
+        } catch (err) {
+            setMicState(false);
+            console.error('Could not start mic:', err);
+        }
+    }
+
+    if (chatMic) {
+        if (!SpeechRec) {
+            chatMic.disabled = true;
+            chatMic.title =
+                'Voice input not supported in this browser (try Chrome/Edge/Safari)';
+        } else {
+            chatMic.addEventListener('click', () => {
+                if (voiceConfig.engine === 'device') {
+                    addChatMsg('assistant',
+                        'Device voice engine is selected but its streaming endpoint is not available on this build. Switch to the Browser engine in voice settings, or install voice models for the device pipeline.');
+                    return;
+                }
+                startBrowserMic();
+            });
+        }
+    }
+
+    if (voiceConfigBtn && voiceSettings) {
+        voiceConfigBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            voiceSettings.classList.toggle('hidden');
+            if (!voiceSettings.classList.contains('hidden')) populateVoiceList();
+        });
+        document.addEventListener('click', (e) => {
+            if (!voiceSettings.contains(e.target) && e.target !== voiceConfigBtn) {
+                voiceSettings.classList.add('hidden');
+            }
+        });
+    }
+    if (voiceEngineSel) {
+        voiceEngineSel.addEventListener('change', () => {
+            voiceConfig.engine = voiceEngineSel.value;
+            saveVoicePrefs();
+            syncVoiceUI();
+        });
+    }
+    if (voiceVoiceSel) {
+        voiceVoiceSel.addEventListener('change', () => {
+            voiceConfig.browser_voice = voiceVoiceSel.value;
+            saveVoicePrefs();
+        });
+    }
+    if (voiceLangInput) {
+        voiceLangInput.addEventListener('change', () => {
+            voiceConfig.language = voiceLangInput.value.trim() || 'en-US';
+            saveVoicePrefs();
+        });
+    }
+    if (voiceSpeakChk) {
+        voiceSpeakChk.addEventListener('change', () => {
+            voiceConfig.speak_replies = voiceSpeakChk.checked;
+            saveVoicePrefs();
+        });
+    }
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.onvoiceschanged = populateVoiceList;
+    }
+    loadVoiceConfigFile();
+
+    // ==========================
+    // Slash-command palette
+    // ==========================
+    // Typing "/" at the start of the chat input shows client commands plus
+    // the agent's live tools/workflows/roles (from /api/capabilities).
+    const slashPalette = document.getElementById('slash-palette');
+    let slashItems = [];
+    let slashActiveIdx = 0;
+    let capabilitiesCache = null;
+
+    const CLIENT_COMMANDS = [
+        { cmd: '/help', label: 'Show available commands & tools', kind: 'command' },
+        { cmd: '/new', label: 'Start a new chat session', kind: 'command' },
+        { cmd: '/clear', label: 'Clear messages on screen', kind: 'command' },
+        { cmd: '/voice', label: 'Toggle speaking replies aloud', kind: 'command' },
+        { cmd: '/stop', label: 'Stop speaking / listening', kind: 'command' }
+    ];
+
+    async function loadCapabilities() {
+        if (capabilitiesCache) return capabilitiesCache;
+        try {
+            const res = await fetch(API + '/api/capabilities');
+            if (res.ok) {
+                capabilitiesCache = await res.json();
+            } else {
+                capabilitiesCache = { tools: [], workflows: [], roles: [] };
+            }
+        } catch (err) {
+            capabilitiesCache = { tools: [], workflows: [], roles: [] };
+        }
+        return capabilitiesCache;
+    }
+
+    function buildSlashItems(caps) {
+        const items = CLIENT_COMMANDS.map(c => ({
+            type: 'command', key: c.cmd, label: c.label, group: 'Commands'
+        }));
+        (caps.tools || []).forEach(t => {
+            const name = t.name || t;
+            items.push({
+                type: 'tool', key: name,
+                label: t.description || 'Tool',
+                group: 'Tools'
+            });
+        });
+        (caps.workflows || []).forEach(w => {
+            const name = w.name || w;
+            items.push({
+                type: 'workflow', key: name,
+                label: w.description || 'Workflow', group: 'Workflows'
+            });
+        });
+        return items;
+    }
+
+    function renderSlash(filter) {
+        if (!slashPalette) return;
+        const f = (filter || '').toLowerCase();
+        const matches = slashItems.filter(it =>
+            it.key.toLowerCase().includes(f) ||
+            (it.label || '').toLowerCase().includes(f));
+        if (!matches.length) {
+            slashPalette.classList.add('hidden');
+            return;
+        }
+        slashActiveIdx = Math.min(slashActiveIdx, matches.length - 1);
+        let html = '';
+        let lastGroup = null;
+        matches.forEach((it, i) => {
+            if (it.group !== lastGroup) {
+                html += '<div class="slash-group">' + escHtml(it.group) + '</div>';
+                lastGroup = it.group;
+            }
+            html += '<div class="slash-item' +
+                (i === slashActiveIdx ? ' active' : '') +
+                '" data-idx="' + i + '">' +
+                '<span class="slash-key">' + escHtml(it.key) + '</span>' +
+                '<span class="slash-label">' + escHtml(it.label) + '</span></div>';
+        });
+        slashPalette.innerHTML = html;
+        slashPalette.classList.remove('hidden');
+        slashPalette._matches = matches;
+        slashPalette.querySelectorAll('.slash-item').forEach(el => {
+            el.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                chooseSlash(matches[parseInt(el.dataset.idx, 10)]);
+            });
+        });
+    }
+
+    function closeSlash() {
+        if (slashPalette) slashPalette.classList.add('hidden');
+        slashActiveIdx = 0;
+    }
+
+    function chooseSlash(item) {
+        if (!item || !chatInput) return;
+        closeSlash();
+        if (item.type === 'command') {
+            runClientCommand(item.key);
+            chatInput.value = '';
+            return;
+        }
+        // Tool/workflow: insert a starter prompt for the user to complete.
+        chatInput.value = 'Use ' + item.key + ' to ';
+        chatInput.focus();
+    }
+
+    function runClientCommand(cmd) {
+        switch (cmd) {
+            case '/new':
+                currentChatSessionId = null;
+                resetChatMessages();
+                selectChatSession(null);
+                break;
+            case '/clear':
+                resetChatMessages();
+                break;
+            case '/voice':
+                voiceConfig.speak_replies = !voiceConfig.speak_replies;
+                saveVoicePrefs();
+                syncVoiceUI();
+                addChatMsg('assistant', 'Speaking replies is now ' +
+                    (voiceConfig.speak_replies ? 'ON' : 'OFF') + '.');
+                break;
+            case '/stop':
+                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+                if (voiceListening && voiceRecognition) voiceRecognition.stop();
+                break;
+            case '/help':
+            default:
+                loadCapabilities().then(caps => {
+                    const tools = (caps.tools || []).map(t => '- `' +
+                        (t.name || t) + '`').join('\n') || '_none_';
+                    addChatMsg('assistant',
+                        '**Commands**\n' +
+                        CLIENT_COMMANDS.map(c => '- `' + c.cmd + '` — ' +
+                            c.label).join('\n') +
+                        '\n\n**Tools**\n' + tools);
+                });
+                break;
+        }
+    }
+
+    if (chatInput && slashPalette) {
+        chatInput.addEventListener('input', async () => {
+            const val = chatInput.value;
+            if (val.startsWith('/') && !val.includes('\n')) {
+                if (!slashItems.length) {
+                    slashItems = buildSlashItems(await loadCapabilities());
+                }
+                renderSlash(val.slice(1));
+            } else {
+                closeSlash();
+            }
+        });
+        // Capture phase so palette navigation wins over the send-on-Enter handler.
+        chatInput.addEventListener('keydown', (e) => {
+            if (slashPalette.classList.contains('hidden')) return;
+            const matches = slashPalette._matches || [];
+            if (e.key === 'ArrowDown') {
+                e.preventDefault(); e.stopPropagation();
+                slashActiveIdx = (slashActiveIdx + 1) % matches.length;
+                renderSlash(chatInput.value.slice(1));
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault(); e.stopPropagation();
+                slashActiveIdx = (slashActiveIdx - 1 + matches.length) % matches.length;
+                renderSlash(chatInput.value.slice(1));
+            } else if (e.key === 'Enter') {
+                e.preventDefault(); e.stopPropagation();
+                chooseSlash(matches[slashActiveIdx]);
+            } else if (e.key === 'Escape') {
+                e.stopPropagation();
+                closeSlash();
+            }
+        }, true);
+    }
+
+    // ==========================
     // Admin Page
     // ==========================
 
@@ -1517,6 +1925,7 @@
         'agent_roles.json': 'Agent Roles',
         'tunnel_config.json': 'Tunnel Configuration',
         'web_search_config.json': 'Web Search',
+        'voice_config.json': 'Voice Configuration',
         'system_prompt.txt': 'System Prompt'
     };
     const CONFIG_DESCRIPTIONS = {
@@ -1530,6 +1939,7 @@
         'agent_roles.json': 'Define agent roles and prompt routing behavior.',
         'tunnel_config.json': 'Manage tunnel endpoints and authentication tokens.',
         'web_search_config.json': 'Configure search providers and search options.',
+        'voice_config.json': 'Select the voice engine, language, and spoken-reply preferences.',
         'system_prompt.txt': 'Edit the core system instructions and behavioral constraints of the agent.'
     };
     let adminConfigsCache = [];
