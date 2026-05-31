@@ -855,6 +855,31 @@ body {
     flex-wrap: wrap;
 }
 
+.chat-action-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+
+.chat-action-btn {
+    border: 1px solid var(--border);
+    background: #ffffff;
+    color: var(--text-primary);
+    border-radius: var(--radius-xs);
+    padding: 7px 10px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.chat-action-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+    transform: translateY(-1px);
+}
+
 .chat-thinking {
     align-self: flex-start;
     display: flex;

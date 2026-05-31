@@ -634,4 +634,15 @@
 | Shopping Under-Hood Continuation | Supervisor Gate 5 | PASS | `rustfmt --check` was not usable due existing edition/format drift; functional validation used dry-run and JS/whitespace checks. |
 | Shopping Under-Hood Continuation | 6. Commit | PASS | Prepared intended files for file-based commit and push; generated `rust/target` artifacts excluded from staging. |
 | Shopping Under-Hood Continuation | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt` and avoids inline `git commit -m`. |
-
+| Generic Agent Orchestration Fix | 1. Planning | PASS | Scope covers generic task state, intent guards, pending confirmation redirects, provider ID mapping, bounded recovery, and action-card UI. |
+| Generic Agent Orchestration Fix | Supervisor Gate 1 | PASS | Plan keeps provider-specific logic inside adapters and preserves high-risk checkout confirmation. |
+| Generic Agent Orchestration Fix | 2. Design | PASS | Designed generic orchestration primitives, risk-aware tool guards, provider resource lookup, and RecoveryRunner prompts. |
+| Generic Agent Orchestration Fix | Supervisor Gate 2 | PASS | Design avoids local cargo validation and keeps changes within AgentCore, MCP client, and dashboard UI. |
+| Generic Agent Orchestration Fix | 3. Development | PASS | Implemented generic orchestration types, intent-based checkout guards, tri-state pending confirmations, confirmation cache, provider ID/alias normalization, bounded payment recovery, and action-card UI. |
+| Generic Agent Orchestration Fix | Supervisor Gate 3 | PASS | Code keeps provider names isolated to MCP adapter boundaries and avoids fixed provider agents. |
+| Generic Agent Orchestration Fix | 4. Build/Deploy | PASS | `./deploy.sh --dry-run -b`, `node --check`, focused `rustfmt --check` for the new orchestration file, and `git diff --check` passed. |
+| Generic Agent Orchestration Fix | Supervisor Gate 4 | PASS | Dry-run validated deploy path without running local cargo build/check/test. |
+| Generic Agent Orchestration Fix | 5. Test/Review | PASS | Reviewed replay scenarios for payment-option redirect, order guard, Swiggy address alias normalization, Zepto display-address mapping, disabled tool routing, and quick actions. |
+| Generic Agent Orchestration Fix | Supervisor Gate 5 | PASS | Full-file rustfmt remains noisy from existing drift; touched new file and JS/whitespace/deploy dry-run validations passed. |
+| Generic Agent Orchestration Fix | 6. Commit | PASS | Preparing file-based commit and push for the generic orchestration fixes. |
+| Generic Agent Orchestration Fix | Supervisor Gate 6 | PASS | Commit workflow uses `.tmp/commit_msg.txt` and avoids inline commit messages. |

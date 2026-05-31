@@ -36,6 +36,7 @@ pub struct AgentCore {
     prompt_hash: tokio::sync::RwLock<u64>,
     mcp_client_manager: tokio::sync::RwLock<crate::channel::mcp_client::McpClientManager>,
     pending_mcp_confirmations: Mutex<HashMap<String, PendingMcpConfirmation>>,
+    confirmed_mcp_actions: Mutex<HashMap<String, u64>>,
     llm_response_cache: LlmResponseCache,
     active_requests: Arc<Mutex<HashMap<String, RequestState>>>,
     session_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,

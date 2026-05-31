@@ -100,6 +100,7 @@ mod prompt_completion;
 #[path = "agent_core/prompt_shortcuts.rs"]
 mod prompt_shortcuts;
 
+include!("agent_core/generic_orchestration.rs");
 include!("agent_core/foundation.rs");
 include!("agent_core/research.rs");
 include!("agent_core/content_and_workspace.rs");

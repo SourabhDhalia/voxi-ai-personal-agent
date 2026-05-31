@@ -7,7 +7,7 @@
 //! - Calls remote tools via `tools/call`
 
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -2123,12 +2123,157 @@ fn find_first_id_by_key(val: &Value, target_keys: &[&str]) -> Option<String> {
     None
 }
 
+fn normalize_provider_argument_aliases(
+    requested_name: &str,
+    args: &mut Value,
+    resource_ids: &std::sync::Arc<std::sync::Mutex<HashMap<String, HashMap<String, String>>>>,
+) {
+    let lower_name = requested_name.to_ascii_lowercase();
+    let provider = if lower_name.contains("swiggy") || lower_name.contains("instamart") {
+        Some("swiggy-instamart")
+    } else if lower_name.contains("zepto") {
+        Some("zepto")
+    } else {
+        None
+    };
+
+    let Some(obj) = args.as_object_mut() else {
+        return;
+    };
+
+    if let Some(provider_key) = provider {
+        if let Some(addr_id) = obj
+            .get("addressId")
+            .or_else(|| obj.get("address_id"))
+            .and_then(Value::as_str)
+            .map(|value| resolve_provider_resource_id(resource_ids, provider_key, value))
+        {
+            obj.insert("addressId".to_string(), Value::String(addr_id.clone()));
+            obj.insert("address_id".to_string(), Value::String(addr_id));
+        }
+
+        if lower_name.contains("zepto") {
+            if let Some(store_id) = obj
+                .get("storeId")
+                .or_else(|| obj.get("store_id"))
+                .and_then(Value::as_str)
+                .map(|value| resolve_provider_resource_id(resource_ids, provider_key, value))
+            {
+                obj.insert("storeId".to_string(), Value::String(store_id.clone()));
+                obj.insert("store_id".to_string(), Value::String(store_id));
+            }
+        }
+    }
+}
+
+fn resolve_provider_resource_id(
+    resource_ids: &std::sync::Arc<std::sync::Mutex<HashMap<String, HashMap<String, String>>>>,
+    provider: &str,
+    value: &str,
+) -> String {
+    let key = normalize_resource_lookup_key(value);
+    resource_ids
+        .lock()
+        .ok()
+        .and_then(|maps| {
+            maps.get(provider).and_then(|map| {
+                map.get(&key).cloned().or_else(|| {
+                    map.iter().find_map(|(candidate, id)| {
+                        if candidate.len() >= 8
+                            && (key.contains(candidate) || candidate.contains(&key))
+                        {
+                            Some(id.clone())
+                        } else {
+                            None
+                        }
+                    })
+                })
+            })
+        })
+        .unwrap_or_else(|| value.to_string())
+}
+
+fn remember_provider_resource_ids(
+    resource_ids: &std::sync::Arc<std::sync::Mutex<HashMap<String, HashMap<String, String>>>>,
+    provider: &str,
+    value: &Value,
+    id_keys: &[&str],
+    label_keys: &[&str],
+) {
+    let mut candidates = Vec::new();
+    collect_resource_candidates(value, id_keys, label_keys, &mut candidates);
+    if candidates.is_empty() {
+        return;
+    }
+
+    if let Ok(mut maps) = resource_ids.lock() {
+        let provider_map = maps.entry(provider.to_string()).or_default();
+        for (idx, (id, labels)) in candidates.into_iter().enumerate() {
+            provider_map.insert(normalize_resource_lookup_key(&id), id.clone());
+            provider_map.insert(normalize_resource_lookup_key(&(idx + 1).to_string()), id.clone());
+            for label in labels {
+                let normalized = normalize_resource_lookup_key(&label);
+                if !normalized.is_empty() {
+                    provider_map.insert(normalized, id.clone());
+                }
+            }
+        }
+    }
+}
+
+fn collect_resource_candidates(
+    value: &Value,
+    id_keys: &[&str],
+    label_keys: &[&str],
+    out: &mut Vec<(String, Vec<String>)>,
+) {
+    match value {
+        Value::Object(map) => {
+            let id = id_keys
+                .iter()
+                .find_map(|key| map.get(*key).and_then(Value::as_str))
+                .map(str::to_string);
+            if let Some(id) = id {
+                let mut labels = Vec::new();
+                for key in label_keys {
+                    if let Some(text) = map.get(*key).and_then(Value::as_str) {
+                        labels.push(text.to_string());
+                    }
+                }
+                if labels.len() >= 2 {
+                    labels.push(labels.join(": "));
+                    labels.push(labels.join(", "));
+                }
+                out.push((id, labels));
+            }
+            for child in map.values() {
+                collect_resource_candidates(child, id_keys, label_keys, out);
+            }
+        }
+        Value::Array(items) => {
+            for child in items {
+                collect_resource_candidates(child, id_keys, label_keys, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn normalize_resource_lookup_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(|ch| ch.to_lowercase())
+        .collect()
+}
+
 /// Manages multiple MCP client connections.
 pub struct McpClientManager {
     clients: Vec<McpClient>,
     pub last_swiggy_address_id: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     pub last_zepto_address_id: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     pub last_zepto_store_id: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    provider_resource_ids: std::sync::Arc<std::sync::Mutex<HashMap<String, HashMap<String, String>>>>,
 }
 
 impl Default for McpClientManager {
@@ -2144,6 +2289,7 @@ impl McpClientManager {
             last_swiggy_address_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
             last_zepto_address_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
             last_zepto_store_id: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            provider_resource_ids: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
         }
     }
 
@@ -2520,6 +2666,11 @@ impl McpClientManager {
         let (client_index, tool_info) = self.resolve_tool_alias_with_client(requested_name)?;
         
         let mut final_args = translate_cart_args(requested_name, args);
+        normalize_provider_argument_aliases(
+            requested_name,
+            &mut final_args,
+            &self.provider_resource_ids,
+        );
         if tool_info.server_name == "zepto" {
             if let Some(obj) = final_args.as_object_mut() {
                 if !obj.contains_key("deviceId") && !obj.contains_key("device_id") {
@@ -2591,6 +2742,24 @@ impl McpClientManager {
         if !res.get("error").is_some() {
             let lower_name = requested_name.to_ascii_lowercase();
             if lower_name.contains("get_addresses") || lower_name.contains("list_saved_addresses") {
+                remember_provider_resource_ids(
+                    &self.provider_resource_ids,
+                    &tool_info.server_name,
+                    &res,
+                    &["id", "addressId", "address_id"],
+                    &[
+                        "name",
+                        "title",
+                        "label",
+                        "tag",
+                        "address",
+                        "formattedAddress",
+                        "addressLine",
+                        "address_line",
+                        "line1",
+                        "city",
+                    ],
+                );
                 if let Some(found_id) = find_first_id_by_key(&res, &["id", "addressId", "address_id"]) {
                     if lower_name.contains("swiggy") {
                         if let Ok(mut guard) = self.last_swiggy_address_id.lock() {
@@ -2764,6 +2933,42 @@ mod tests {
         assert!(!manager.requires_confirmation("mcp_zepto_get_payment_methods", &keywords));
         assert!(!manager.requires_confirmation("mcp_zepto_check_payment_status", &keywords));
         assert!(manager.requires_confirmation("mcp_zepto_create_order", &keywords));
+    }
+
+    #[test]
+    fn normalizes_provider_address_aliases_and_display_ids() {
+        let resource_ids = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
+        {
+            let mut maps = resource_ids.lock().unwrap();
+            maps.insert(
+                "swiggy-instamart".to_string(),
+                HashMap::from([("1".to_string(), "swiggy-address-1".to_string())]),
+            );
+            maps.insert(
+                "zepto".to_string(),
+                HashMap::from([(
+                    "c74sector50noida".to_string(),
+                    "zepto-address-1".to_string(),
+                )]),
+            );
+        }
+
+        let mut swiggy_args = json!({"address_id": "1", "query": "chocolate"});
+        normalize_provider_argument_aliases(
+            "mcp_swiggy_instamart_search_products",
+            &mut swiggy_args,
+            &resource_ids,
+        );
+        assert_eq!(swiggy_args["addressId"], "swiggy-address-1");
+        assert_eq!(swiggy_args["address_id"], "swiggy-address-1");
+
+        let mut zepto_args = json!({"addressId": "Test2: C74, Sector 50, Noida"});
+        normalize_provider_argument_aliases(
+            "mcp_zepto_select_saved_address",
+            &mut zepto_args,
+            &resource_ids,
+        );
+        assert_eq!(zepto_args["addressId"], "zepto-address-1");
     }
 
     #[test]

@@ -527,106 +527,135 @@ impl AgentCore {
 
         // Safety confirmation check
         let pending = {
-            if let Ok(mut registry) = self.pending_mcp_confirmations.lock() {
-                registry.remove(session_id)
+            if let Ok(registry) = self.pending_mcp_confirmations.lock() {
+                registry.get(session_id).cloned()
             } else {
                 None
             }
         };
 
         if let Some(pending_action) = pending {
-            if Self::parse_safety_confirmation_reply(prompt) == Some(true) {
-                log::info!(
-                    "[SafetyConfirm] User confirmed action '{}' for session '{}'",
-                    pending_action.tool_name,
-                    session_id
-                );
-                
-                // Execute the pending action
-                let mut tool_result = if pending_action.tool_name.starts_with("mcp_") {
-                    let mut mcp = self.mcp_client_manager.write().await;
-                    match mcp.call_tool_resolved(&pending_action.tool_name, &pending_action.args) {
-                        Ok(val) => val,
-                        Err(e) => {
-                            log::error!("Failed to execute MCP tool '{}': {:?}", pending_action.tool_name, e);
-                            json!({"error": format!("Failed to execute MCP tool: {:?}", e)})
-                        }
+            match Self::parse_safety_confirmation_reply(prompt) {
+                Some(true) => {
+                    if let Ok(mut registry) = self.pending_mcp_confirmations.lock() {
+                        registry.remove(session_id);
                     }
-                } else if pending_action.tool_name.starts_with("action_") {
-                    if let Some(action_id) = pending_action.tool_name.strip_prefix("action_") {
-                        if let Ok(bridge) = self.action_bridge.lock() {
-                            bridge.execute_action(action_id, &pending_action.args)
+                    log::info!(
+                        "[SafetyConfirm] User confirmed action '{}' for session '{}'",
+                        pending_action.tool_name,
+                        session_id
+                    );
+
+                    // Execute the pending action
+                    let mut tool_result = if pending_action.tool_name.starts_with("mcp_") {
+                        let mut mcp = self.mcp_client_manager.write().await;
+                        match mcp.call_tool_resolved(&pending_action.tool_name, &pending_action.args) {
+                            Ok(val) => val,
+                            Err(e) => {
+                                log::error!("Failed to execute MCP tool '{}': {:?}", pending_action.tool_name, e);
+                                json!({"error": format!("Failed to execute MCP tool: {:?}", e)})
+                            }
+                        }
+                    } else if pending_action.tool_name.starts_with("action_") {
+                        if let Some(action_id) = pending_action.tool_name.strip_prefix("action_") {
+                            if let Ok(bridge) = self.action_bridge.lock() {
+                                bridge.execute_action(action_id, &pending_action.args)
+                            } else {
+                                json!({"error": "Failed to lock action bridge"})
+                            }
                         } else {
-                            json!({"error": "Failed to lock action bridge"})
+                            json!({"error": "Invalid action format"})
                         }
                     } else {
-                        json!({"error": "Invalid action format"})
-                    }
-                } else {
-                    let td = self.tool_dispatcher.read().await;
-                    match td.execute_in_dir(&pending_action.tool_name, &pending_action.args, None, Some(&session_workdir)).await {
-                        Ok(val) => val,
-                        Err(e) => json!({"error": e}),
-                    }
-                };
+                        let td = self.tool_dispatcher.read().await;
+                        match td.execute_in_dir(&pending_action.tool_name, &pending_action.args, None, Some(&session_workdir)).await {
+                            Ok(val) => val,
+                            Err(e) => json!({"error": e}),
+                        }
+                    };
 
-                if pending_action.tool_name.starts_with("mcp_") {
-                    if !crate::channel::mcp_client::McpToolOutcome::normalize(&tool_result).is_failure()
-                        && pending_action.tool_name.contains("search")
-                    {
-                        store_shopping_options_from_search_result(
-                            &session_workdir,
-                            session_id,
-                            &pending_action.tool_name,
-                            &tool_result,
-                        );
-                    }
-                    tool_result =
-                        normalize_mcp_tool_result(&pending_action.tool_name, tool_result);
-                }
-
-                // If this is a search tool, compact it
-                if pending_action.tool_name.contains("search") && tool_result.get("error").is_none() {
-                    let search_query = pending_action.args.get("query").and_then(|v| v.as_str()).unwrap_or("");
-                    let mut critical_keys = std::collections::HashSet::new();
                     if pending_action.tool_name.starts_with("mcp_") {
-                        let mcp = self.mcp_client_manager.read().await;
-                        if let Ok(tool_info) = mcp.resolve_tool_alias(&pending_action.tool_name) {
-                            critical_keys = mcp.get_server_parameter_keys(&tool_info.server_name);
+                        if !crate::channel::mcp_client::McpToolOutcome::normalize(&tool_result).is_failure()
+                            && pending_action.tool_name.contains("search")
+                        {
+                            store_shopping_options_from_search_result(
+                                &session_workdir,
+                                session_id,
+                                &pending_action.tool_name,
+                                &tool_result,
+                            );
+                        }
+                        tool_result =
+                            normalize_mcp_tool_result(&pending_action.tool_name, tool_result);
+                    }
+
+                    // If this is a search tool, compact it
+                    if pending_action.tool_name.contains("search") && tool_result.get("error").is_none() {
+                        let search_query = pending_action.args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+                        let mut critical_keys = std::collections::HashSet::new();
+                        if pending_action.tool_name.starts_with("mcp_") {
+                            let mcp = self.mcp_client_manager.read().await;
+                            if let Ok(tool_info) = mcp.resolve_tool_alias(&pending_action.tool_name) {
+                                critical_keys = mcp.get_server_parameter_keys(&tool_info.server_name);
+                            }
+                        }
+                        tool_result = compact_shopping_search_result(&tool_result, search_query, &critical_keys);
+                    }
+
+                    // Store user message, assistant tool calls message and the tool result message
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            store.add_message(session_id, "user", prompt);
+                            store.add_structured_user_message(session_id, prompt);
+                            store.add_structured_tool_result_message(
+                                session_id,
+                                &pending_action.tool_name,
+                                &pending_action.tool_call_id,
+                                &tool_result,
+                            );
+                            let summary =
+                                Self::summarize_confirmed_tool_result(&pending_action.tool_name, &tool_result);
+                            store.add_message(session_id, "assistant", &summary);
+                            store.add_structured_assistant_text_message(session_id, &summary);
+                            if let Ok(mut cache) = self.confirmed_mcp_actions.lock() {
+                                cache.insert(
+                                    action_signature(
+                                        session_id,
+                                        &pending_action.tool_name,
+                                        &pending_action.args,
+                                    ),
+                                    current_timestamp_millis(),
+                                );
+                            }
+                            return summary;
                         }
                     }
-                    tool_result = compact_shopping_search_result(&tool_result, search_query, &critical_keys);
                 }
-
-                // Store user message, assistant tool calls message and the tool result message
-                if let Ok(ss) = self.session_store.lock() {
-                    if let Some(store) = ss.as_ref() {
-                        store.add_message(session_id, "user", prompt);
-                        store.add_structured_user_message(session_id, prompt);
-                        store.add_structured_tool_result_message(
-                            session_id,
-                            &pending_action.tool_name,
-                            &pending_action.tool_call_id,
-                            &tool_result,
-                        );
-                        let summary =
-                            Self::summarize_confirmed_tool_result(&pending_action.tool_name, &tool_result);
-                        store.add_message(session_id, "assistant", &summary);
-                        store.add_structured_assistant_text_message(session_id, &summary);
-                        return summary;
+                Some(false) => {
+                    if let Ok(mut registry) = self.pending_mcp_confirmations.lock() {
+                        registry.remove(session_id);
                     }
-                }
-            } else {
-                log::info!("User did not confirm pending action. Input: '{}'", prompt);
-                if let Ok(ss) = self.session_store.lock() {
-                    if let Some(store) = ss.as_ref() {
-                        store.add_message(session_id, "user", prompt);
-                        store.add_structured_user_message(session_id, prompt);
-                        store.add_message(session_id, "assistant", "Action cancelled by user.");
-                        store.add_structured_assistant_text_message(session_id, "Action cancelled by user.");
+                    log::info!("User did not confirm pending action. Input: '{}'", prompt);
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            store.add_message(session_id, "user", prompt);
+                            store.add_structured_user_message(session_id, prompt);
+                            store.add_message(session_id, "assistant", "Action cancelled by user.");
+                            store.add_structured_assistant_text_message(session_id, "Action cancelled by user.");
+                        }
                     }
+                    return "Action cancelled by user.".to_string();
                 }
-                return "Action cancelled by user.".to_string();
+                None => {
+                    if let Ok(mut registry) = self.pending_mcp_confirmations.lock() {
+                        registry.remove(session_id);
+                    }
+                    log::info!(
+                        "[SafetyConfirm] User redirected pending action '{}' with new input '{}'",
+                        pending_action.tool_name,
+                        prompt
+                    );
+                }
             }
         }
 
@@ -924,17 +953,17 @@ impl AgentCore {
                     let is_zepto_tool = name.contains("zepto");
                     let is_swiggy_tool = name.contains("swiggy") || name.contains("instamart");
 
-                    if has_zepto && is_swiggy_tool {
+                    if has_zepto && !has_swiggy && is_swiggy_tool {
                         return false;
                     }
-                    if has_swiggy && is_zepto_tool {
+                    if has_swiggy && !has_zepto && is_zepto_tool {
                         return false;
                     }
 
                     if is_zepto_tool || is_swiggy_tool {
                         let is_checkout_tool = name.contains("checkout") || name.contains("place_order") || name.contains("payment") || name.contains("pay") || name.contains("order");
                         let is_cart_mutation_tool = name.contains("add_to_cart") || name.contains("update_cart") || name.contains("remove_from_cart") || name.contains("clear_cart");
-                        let is_core_tool = name.contains("search") || name.contains("address") || name.contains("store") || name.contains("location") || name.contains("get_cart") || name.contains("view_cart");
+                        let is_core_tool = name.contains("search") || name.contains("address") || name.contains("store") || name.contains("location") || name.contains("get_cart") || name.contains("view_cart") || name.contains("payment") || name.contains("pay");
 
                         if is_checkout_tool || is_cart_mutation_tool || is_core_tool {
                             true
@@ -967,6 +996,8 @@ impl AgentCore {
                                     || tool.name.contains("store")
                                     || tool.name.contains("location")
                                     || tool.name.contains("cart")
+                                    || tool.name.contains("payment")
+                                    || tool.name.contains("pay")
                                     || tool.name.contains("checkout")
                                     || tool.name.contains("order")
                                 );
@@ -1999,6 +2030,7 @@ impl AgentCore {
                 let search_config_dir = self.platform.paths.config_dir.clone();
                 let grounded_paths_snapshot = collect_grounded_paths(&messages);
                 let grounded_csv_headers_snapshot = collect_grounded_csv_headers(&messages);
+                let agent_task_intent = effective_agent_task_intent(prompt, &messages);
 
                 for tc in detected_tool_calls.iter() {
                     let tc_args_str = serde_json::to_string(&tc.args).unwrap_or_default();
@@ -2030,6 +2062,7 @@ impl AgentCore {
                     let search_config_dir = search_config_dir.clone();
                     let grounded_paths_snapshot = grounded_paths_snapshot.clone();
                     let grounded_csv_headers_snapshot = grounded_csv_headers_snapshot.clone();
+                    let agent_task_intent = agent_task_intent;
 
                     // ── Phase 11: SafetyCheck per tool ───────────────────
                     let canonical_name = if let Ok(tp) = self.tool_policy.lock() {
@@ -2087,6 +2120,8 @@ impl AgentCore {
 
                     // Safety Confirmation Gate Check
                     let mut requires_confirm = false;
+                    let tool_guard_reason =
+                        guarded_tool_reason(agent_task_intent, &tc_name);
                     if tc_name.starts_with("mcp_") || tc_name.contains("checkout") || tc_name.contains("place_order") || tc_name.contains("pay") || tc_name.contains("order") {
                         let mcp_mgr = self.mcp_client_manager.read().await;
                         let keywords = vec![
@@ -2102,12 +2137,36 @@ impl AgentCore {
                             requires_confirm = true;
                         }
                     }
+                    if requires_confirm {
+                        let sig = action_signature(session_id, &tc_name, &tc_args);
+                        let confirmed_recently = self.confirmed_mcp_actions.lock().ok()
+                            .and_then(|cache| cache.get(&sig).copied())
+                            .map(|ts| current_timestamp_millis().saturating_sub(ts) <= 120_000)
+                            .unwrap_or(false);
+                        if confirmed_recently {
+                            requires_confirm = false;
+                        }
+                    }
 
                     let tc_id_clone = tc_id.clone();
                     let tc_name_clone = tc_name.clone();
                     let tc_args_clone = tc_args.clone();
 
                     futures_list.push(async move {
+                        if let Some(reason) = tool_guard_reason {
+                            log::warn!(
+                                "[WorkflowGuard] Tool '{}' blocked for intent {:?}: {}",
+                                tc_name_clone,
+                                agent_task_intent,
+                                reason
+                            );
+                            return LlmMessage::tool_result(
+                                &tc_id_clone,
+                                &tc_name_clone,
+                                serde_json::json!({"error": reason})
+                            );
+                        }
+
                         if let Some(reason) = block_reason {
                             log::warn!(
                                 "[SafetyCheck] Tool '{}' blocked: {}",
@@ -2172,7 +2231,8 @@ impl AgentCore {
                         } else {
                             let is_essential = tc_name == "request_user_clarification"
                                 || tc_name == "send_outbound_message"
-                                || tc_name == "reload_mcp_servers";
+                                || tc_name == "reload_mcp_servers"
+                                || tc_name == "search_tools";
                             let enable_builtins = if let Ok(policy) = self.tool_policy.lock() {
                                 policy.enable_builtin_tools()
                             } else {
@@ -3673,6 +3733,52 @@ impl AgentCore {
                         }
                     }
 
+                    if effective_agent_task_intent(prompt, &messages) == AgentTaskIntent::ShowPaymentOptions {
+                        if let Some((tool_name, args, err_msg)) = last_payment_options_failed(&messages) {
+                            let path = shopping_state_path(&session_workdir, session_id);
+                            let mut state: Value = if let Ok(state_text) = std::fs::read_to_string(&path) {
+                                serde_json::from_str(&state_text).unwrap_or(json!({}))
+                            } else {
+                                json!({})
+                            };
+                            let current_retries = state
+                                .get("payment_options_retry_count")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0);
+                            if current_retries < 2 {
+                                state["payment_options_retry_count"] = json!(current_retries + 1);
+                                state["failed_payment_options_task"] = json!({
+                                    "tool_name": tool_name.clone(),
+                                    "args": args.clone(),
+                                    "error": err_msg.clone(),
+                                    "runner": "RecoveryRunner",
+                                    "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()
+                                });
+                                if let Ok(text) = serde_json::to_string_pretty(&state) {
+                                    let _ = std::fs::write(&path, text);
+                                }
+                                messages.push(LlmMessage {
+                                    role: "assistant".into(),
+                                    text: response.text.clone(),
+                                    ..Default::default()
+                                });
+                                messages.push(LlmMessage::user(&format!(
+                                    "System: RecoveryRunner detected payment-options failure in `{}`: {}.\n\
+                                     Arguments used: {:?}.\n\
+                                     The active user intent is SHOW_PAYMENT_OPTIONS. Do not call checkout, create_order, payment order, wallet order, or reserve-pay tools. \
+                                     Refresh prerequisite read-only state if useful (cart/session/address), normalize argument names, then retry payment-method retrieval. \
+                                     If recovery still fails after this bounded retry, report the concrete blocker and safe next action. Retry attempt {}/2.",
+                                    tool_name,
+                                    err_msg,
+                                    args,
+                                    current_retries + 1
+                                )));
+                                loop_state.transition(AgentPhase::RePlanning);
+                                continue;
+                            }
+                        }
+                    }
+
                     if let Some((tool_name, args, err_msg)) = last_cart_mutation_failed(&messages) {
                         let path = shopping_state_path(&session_workdir, session_id);
                         let mut state: Value = if let Ok(state_text) = std::fs::read_to_string(&path) {
@@ -4006,6 +4112,66 @@ fn last_cart_mutation_failed(messages: &[LlmMessage]) -> Option<(String, Value, 
         }
     }
     None
+}
+
+fn last_payment_options_failed(messages: &[LlmMessage]) -> Option<(String, Value, String)> {
+    for msg in messages.iter().rev() {
+        if msg.role == "tool" {
+            let name = msg.tool_name.to_ascii_lowercase();
+            if is_payment_read_tool_name(&name) {
+                if let Some(err) = msg.tool_result.get("error") {
+                    let mut args = Value::Null;
+                    for prev_msg in messages.iter().rev() {
+                        if prev_msg.role == "assistant" {
+                            if let Some(tc) = prev_msg.tool_calls.iter().find(|tc| tc.id == msg.tool_call_id) {
+                                args = tc.args.clone();
+                                break;
+                            }
+                        }
+                    }
+                    return Some((
+                        msg.tool_name.clone(),
+                        args,
+                        err.as_str().unwrap_or("unknown error").to_string(),
+                    ));
+                }
+                return None;
+            }
+        }
+    }
+    None
+}
+
+fn effective_agent_task_intent(prompt: &str, messages: &[LlmMessage]) -> AgentTaskIntent {
+    let direct = classify_agent_task_intent(prompt);
+    if direct != AgentTaskIntent::Unknown {
+        return direct;
+    }
+
+    if is_ambiguous_retry_prompt(prompt) && recent_context_mentions_payment_options(messages) {
+        return AgentTaskIntent::ShowPaymentOptions;
+    }
+
+    direct
+}
+
+fn is_ambiguous_retry_prompt(prompt: &str) -> bool {
+    let lower = prompt.trim().to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "yes" | "ok" | "okay" | "again" | "try again" | "check again" | "proceed"
+    ) || lower.contains("one more")
+}
+
+fn recent_context_mentions_payment_options(messages: &[LlmMessage]) -> bool {
+    messages.iter().rev().take(8).any(|msg| {
+        let text = msg.text.to_ascii_lowercase();
+        text.contains("payment option")
+            || text.contains("payment method")
+            || text.contains("payment api")
+            || text.contains("retrieve the payment")
+            || text.contains("fetching the payment")
+    })
 }
 
 fn shopping_state_path(session_workdir: &Path, session_id: &str) -> PathBuf {

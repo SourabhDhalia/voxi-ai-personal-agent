@@ -28,6 +28,7 @@ impl AgentCore {
             prompt_hash: tokio::sync::RwLock::new(0),
             mcp_client_manager: tokio::sync::RwLock::new(crate::channel::mcp_client::McpClientManager::new()),
             pending_mcp_confirmations: Mutex::new(HashMap::new()),
+            confirmed_mcp_actions: Mutex::new(HashMap::new()),
             llm_response_cache: Arc::new(RwLock::new(HashMap::new())),
             active_requests: Arc::new(Mutex::new(HashMap::new())),
             session_locks: Arc::new(Mutex::new(HashMap::new())),

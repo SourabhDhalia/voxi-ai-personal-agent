@@ -1215,17 +1215,24 @@
         if (role === 'assistant' && text.startsWith('⚠️ **Safety Confirmation Required**')) {
             el.classList.add('safety-card');
             el.innerHTML = renderSafetyConfirmation(text);
-            el.querySelectorAll('[data-confirm-reply]').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    if (!chatInput) return;
-                    chatInput.value = btn.getAttribute('data-confirm-reply') || '';
-                    sendChat();
-                });
-            });
         } else if (role === 'assistant' && typeof marked !== 'undefined' && typeof marked.parse === 'function') {
             el.innerHTML = marked.parse(text);
         } else {
             el.textContent = text;
+        }
+        if (role === 'assistant') {
+            const actions = inferChatActions(text);
+            if (actions.length) {
+                const actionRow = document.createElement('div');
+                actionRow.className = 'chat-action-row';
+                actionRow.innerHTML = actions.map(action =>
+                    '<button class="chat-action-btn" data-chat-action="' +
+                    escHtml(action.prompt) + '">' + escHtml(action.label) +
+                    '</button>'
+                ).join('');
+                el.appendChild(actionRow);
+            }
+            bindChatActionButtons(el);
         }
         chatMessages.appendChild(el);
         chatMessages.scrollTop =
@@ -1234,27 +1241,64 @@
 
     function renderSafetyConfirmation(text) {
         const toolMatch = text.match(/\*\*Tool\*\*:\s*`([^`]+)`/);
-        const argsMatch = text.match(/```json\n([\s\S]*?)\n```/);
-        const tool = toolMatch ? escHtml(toolMatch[1]) : 'Tool action';
-        const args = argsMatch ? escHtml(argsMatch[1].trim()) : '{}';
+        const tool = toolMatch ? toolMatch[1] : 'tool action';
         const isOrder = /create|checkout|order|pay|reserve|book/i.test(tool);
-        const title = isOrder ? 'Confirm order action' : 'Confirm tool action';
+        const title = isOrder ? 'Confirm order action' : 'Confirm action';
         const description = isOrder
-            ? 'This can change your cart, checkout, payment, booking, or order state.'
-            : 'This action needs permission before Voxi continues.';
+            ? 'This can place or prepare an order. Voxi needs your final permission before continuing.'
+            : 'This step needs your permission before Voxi continues.';
 
         return '' +
             '<div class="safety-card-header">' +
             '<span class="safety-card-icon">!</span>' +
             '<div><h3>' + title + '</h3><p>' + description + '</p></div>' +
             '</div>' +
-            '<div class="safety-tool-name">' + tool + '</div>' +
-            '<details class="safety-args"><summary>Arguments</summary><pre><code>' +
-            args + '</code></pre></details>' +
             '<div class="safety-actions">' +
             '<button class="btn-primary" data-confirm-reply="Confirm">Confirm</button>' +
             '<button class="btn-outline" data-confirm-reply="Cancel">Cancel</button>' +
             '</div>';
+    }
+
+    function inferChatActions(text) {
+        const lower = (text || '').toLowerCase();
+        const actions = [];
+        const add = (label, prompt) => {
+            if (!actions.some(action => action.prompt === prompt)) {
+                actions.push({ label, prompt });
+            }
+        };
+
+        if (lower.includes('zepto') && lower.includes('swiggy')) {
+            add('Use both', 'both');
+        }
+        if (lower.includes('cheapest') || lower.includes('options below')) {
+            add('Add cheapest', 'choose the cheapest');
+        }
+        if (lower.includes('qty') || lower.includes('quantity') || lower.includes('added')) {
+            add('Set Qty 1', 'set quantity to 1');
+        }
+        if (lower.includes('cart') || lower.includes('added') || lower.includes('checkout')) {
+            add('View cart', 'show cart');
+        }
+        if (lower.includes('payment') || lower.includes('checkout') || lower.includes('order')) {
+            add('Show payment options', 'show payment options');
+        }
+        if (lower.includes('order') || lower.includes('checkout') || lower.includes('session')) {
+            add('Cancel order', 'cancel order');
+        }
+
+        return actions.slice(0, 5);
+    }
+
+    function bindChatActionButtons(root) {
+        root.querySelectorAll('[data-confirm-reply], [data-chat-action]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (!chatInput) return;
+                chatInput.value = btn.getAttribute('data-confirm-reply') ||
+                    btn.getAttribute('data-chat-action') || '';
+                sendChat();
+            });
+        });
     }
 
     function showThinkingIndicator(sessionId, requestId) {
