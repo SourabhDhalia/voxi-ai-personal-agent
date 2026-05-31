@@ -1034,14 +1034,7 @@ fn cmd_chat(client: &Voxi, start_session: Option<String>, stream: bool) {
                     })
                 } else {
                     let text_result = client.process_prompt(&session_id, prompt);
-                    if let Some(mut s) = spinner.take() {
-                        s.stop();
-                        print!("\r\x1b[2K");
-                        print!("{} ", bold(&cyan("🤖 voxi›")));
-                        io::stdout().flush().ok();
-                    }
                     text_result.map(|text| {
-                        print!("{}", text);
                         voxi::api::PromptResponse {
                             session_id: session_id.clone(),
                             text,
@@ -1050,7 +1043,7 @@ fn cmd_chat(client: &Voxi, start_session: Option<String>, stream: bool) {
                     })
                 };
 
-                // Clean up spinner if call finished without streaming any chunk
+                // Stop spinner if still running (e.g. no chunks streamed or stream = false)
                 if let Some(mut s) = spinner.take() {
                     s.stop();
                     print!("\r\x1b[2K");
@@ -1060,7 +1053,13 @@ fn cmd_chat(client: &Voxi, start_session: Option<String>, stream: bool) {
 
                 match result {
                     Ok(resp) => {
-                        println!("\n");
+                        if !resp.stream_received {
+                            println!("{}", resp.text);
+                        } else {
+                            println!();
+                        }
+                        println!();
+
                         // Keep session_id in sync (agent may have assigned one)
                         if !resp.session_id.is_empty() {
                             session_id = resp.session_id;
