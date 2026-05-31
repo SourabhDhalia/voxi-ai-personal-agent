@@ -37,17 +37,28 @@ see [DTV_USAGE.md](DTV_USAGE.md) for the manual SSH-based deployment flow.
 
 ## Core Command: `deploy.sh`
 
-The root `deploy.sh` script is the operational entry point for the project.
-According to the script header and option parser, common commands include:
+The root `deploy.sh` script is the operational entry point for the
+project. It works natively on **macOS**, **Ubuntu**, and **WSL**.
+
+Common host-mode commands:
 
 ```bash
-./deploy.sh -a x86_64
-./deploy.sh -a x86_64 -n
-./deploy.sh -a x86_64 -i -n
-./deploy.sh -a x86_64 -d <device-serial>
-./deploy.sh -a x86_64 -s
-./deploy.sh --dry-run
+./deploy.sh                  # Release build + install + run
+./deploy.sh -d               # Debug build + install + run
+./deploy.sh -b               # Build only, do not install or run
+./deploy.sh --test           # Run workspace tests (offline)
+./deploy.sh --status         # Check daemon status
+./deploy.sh --log            # Follow daemon logs
+./deploy.sh -s               # Stop the running daemon
+./deploy.sh --remove         # Stop and remove ~/.voxi install
+./deploy.sh --restart-only   # Restart using already-installed binaries
+./deploy.sh --dry-run        # Print commands without executing
 ```
+
+> **Voxi DTV / armv7l note**: The GBS build and `sdb`-based device
+> deployment workflow is a separate pipeline that requires Voxi Studio
+> tooling. The host-mode `./deploy.sh` does not have `-a`/`--arch`
+> flags and always targets the local host machine.
 
 ### What the script handles
 
@@ -59,42 +70,42 @@ According to the script header and option parser, common commands include:
 
 ### Common flags
 
-- `-a, --arch <arch>`: choose the build architecture
-- `-n, --noinit`: reuse the build environment for faster iteration
-- `-i, --incremental`: request the faster iterative build path
-- `-s, --skip-build`: deploy existing artifacts without rebuilding
-- `-S, --skip-deploy`: build without deploying
-- `-d, --device <serial>`: target a specific emulator or device
-- `--dry-run`: print the planned commands without executing them
+| Flag | Description |
+|---|---|
+| `-d, --debug` | Build in debug mode (default: release) |
+| `-b, --build-only` | Build only, do not install or run |
+| `--test` | Build + run workspace tests (offline) |
+| `--restart-only` | Restart using installed binaries |
+| `-s, --stop` | Stop the running daemon |
+| `--remove` | Stop all processes and remove `~/.voxi` |
+| `--status` | Show current daemon status |
+| `--log` | Follow daemon log output |
+| `--dry-run` | Print commands without executing |
+| `--build-root <dir>` | Override host Cargo target directory |
+| `--llm-config <path>` | Use a specific `llm_config.json` file |
 
 ## Standard Development Deployment Flow
 
-For the common emulator-oriented path:
+For the normal host build-and-run:
 
 ```bash
-./deploy.sh -a x86_64
+./deploy.sh
 ```
 
-For a faster rebuild after making changes:
+For a debug build:
 
 ```bash
-./deploy.sh -a x86_64 -n
+./deploy.sh -d
 ```
 
-If you already have a build and only need to push it again:
+For a build-only pass without launching the daemon:
 
 ```bash
-./deploy.sh -a x86_64 -s
+./deploy.sh -b
 ```
 
-If you need to pin deployment to a specific target:
-
-```bash
-./deploy.sh -a x86_64 -d emulator-26101
-```
-
-For SSH-based Voxi TV / DTV deployments, use
-[DTV_USAGE.md](DTV_USAGE.md) instead of the `sdb`-driven `deploy.sh` flow.
+For Voxi DTV / emulator validation, use the separate GBS pipeline
+(requires Voxi Studio tooling and a reachable target).
 
 ## Service Lifecycle
 
@@ -140,14 +151,33 @@ voxi-cli dashboard stop
 voxi-cli dashboard status
 ```
 
+### Manage voice models
+
+The voice channel is disabled by default and degrades to null STT/TTS when no
+models are installed, so the daemon always boots. Use the `model` subcommand to
+populate `data/config/models.voice.json`-listed models on demand:
+
+```bash
+voxi-cli model list                       # known models + install state
+voxi-cli model install moonshine-tiny     # download via curl, then verify
+voxi-cli model verify moonshine-tiny      # files present + checksum (if pinned)
+voxi-cli model switch stt moonshine-tiny  # persist a per-task selection
+voxi-cli model remove moonshine-tiny      # delete the installed model dir
+voxi-cli model doctor                     # summarize installed models + issues
+```
+
+Override locations with `VOXI_VOICE_MODEL_DIR` (default
+`~/.voxi/models/voice/`) and `VOXI_VOICE_REGISTRY` (path to
+`models.voice.json`). Real on-device STT/TTS additionally requires building
+`voxi-voice` with the `onnx` feature and a target-arch `libonnxruntime`.
+
 ## Using the Web Dashboard
 
 The standalone dashboard binary serves both the UI and HTTP API.
 
 Based on the current code:
 
-- Voxi runtime default port: `9090`
-- non-Voxi host default port: `8080`
+- Host default port: **`9091`**
 
 The dashboard binary accepts runtime options such as:
 
@@ -213,12 +243,14 @@ new behaviors to be described or loaded through narrower extension points.
 
 If the daemon does not behave as expected, start with these checks:
 
-1. Confirm the target is reachable through `sdb`.
-2. Re-run `./deploy.sh -a x86_64` or `./deploy.sh -a x86_64 -n`.
+1. Confirm the daemon is running: `./deploy.sh --status`
+2. Re-run `./deploy.sh` for a fresh build and restart.
 3. Verify the main service restarted successfully.
-4. Check the dashboard port and whether the dashboard process is alive.
+4. Check the dashboard port (default **9091**) and whether the
+   dashboard process is alive.
 5. Use `voxi-cli dashboard status` to confirm dashboard state.
-6. Inspect device logs for daemon boot failures or configuration issues.
+6. Inspect `~/.voxi/logs/voxi.log` for daemon boot failures or
+   configuration issues.
 
 ## Recommended Reading Order
 

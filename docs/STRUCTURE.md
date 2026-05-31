@@ -52,6 +52,8 @@ IPC socket. It is the most direct way to:
 - receive streamed responses
 - request usage data
 - start, stop, or inspect the web dashboard channel
+- manage voice models via `voxi-cli model`
+  (list/install/verify/remove/switch/doctor)
 
 It behaves like a thin operational client rather than a second agent runtime.
 
@@ -72,6 +74,27 @@ owns dashboard-specific concerns such as:
 This sidecar binary handles tool execution separately from the main daemon.
 That separation keeps the daemon focused on orchestration while the executor
 owns the lower-level responsibility of running approved tools safely.
+
+### `src/voxi-voice`
+
+This crate implements the standalone bidirectional voice pipeline
+(`capture -> VAD -> STT -> correction -> agent -> TTS`). It is intentionally
+decoupled from the daemon: it does not depend on `voxi` or `AgentCore`. The
+host wires it in through the voice channel, which consumes final transcripts
+and speaks replies back. Key properties:
+
+- Trait-based engines (audio backend, STT, TTS, correction, wake word, event
+  sink), each with a null/passthrough fallback so a missing model never blocks
+  daemon boot.
+- The default build is offline-safe and pure Rust (null audio + energy VAD +
+  null STT/TTS, plus an in-crate SHA-256). Real CPAL audio and ONNX inference
+  live behind off-by-default cargo features (`cpal-audio`, `onnx`,
+  `porcupine`).
+- A model registry over `data/config/models.voice.json` powers the
+  `voxi-cli model` subcommand (list/install/verify/remove/switch/doctor).
+
+The voice channel is registered **disabled by default**; pipeline lifecycle
+events are republished onto the daemon EventBus for the dashboard to observe.
 
 ### `src/libvoxi-core`
 

@@ -31,12 +31,14 @@ explicitly requested. The repository is currently split across:
 
 ### Build & Test
 - **NEVER** run `cargo build`, `cargo check`, `cargo test`, or
-  `cargo clippy` directly. Default development builds/tests must go
-  through `./deploy.sh`.
+  `cargo clippy` directly. All host builds and runs go through
+  `./deploy.sh`.
 - **NEVER** run `cmake .` or any local CMake build.
-- Use `./deploy.sh` only when the user explicitly asks for Voxi,
-  emulator, or device validation.
-- Architecture focus: **x86_64 only**.
+- `./deploy.sh` is the default host build and run script for macOS,
+  Ubuntu, and WSL. Use it for all host-side development.
+- Architecture focus: **x86_64 / arm64** (macOS) and **x86_64**
+  (Ubuntu/WSL). Voxi DTV armv7l targets are handled by the separate
+  GBS/`sdb` pipeline.
 - **ALWAYS write cross-platform multi-OS compatible code**: When implementing metrics, process status, CPU/memory, thread counts, or uptime features, do not assume Linux-only files/structures (like `/proc`). Utilize standard cross-platform libraries (e.g. `std::time::Instant`), POSIX calls (e.g. `libc::getloadavg`), or compile-time/runtime conditional flags (`#[cfg(target_os = "macos")]`) to maintain compatibility on both macOS and Linux.
 
 ### Commits
@@ -76,7 +78,7 @@ All tasks must follow these stages **sequentially**. Skipping is forbidden.
 ```
 
 Each stage has a corresponding skill in `.agent/skills/`. After each stage,
-update `.dev/DASHBOARD.md` with the stage status.
+update `.dev_note/DASHBOARD.md` with the stage status.
 
 | Stage | Skill(s) | Key Output |
 |-------|----------|------------|
@@ -111,7 +113,7 @@ update `.dev/DASHBOARD.md` with the stage status.
 
 All development-process documents (plans, designs, review artifacts)
 created during Planning, Design, Review, or similar stage work **MUST**
-be created under `.dev/docs/`.
+be created under `.dev_note/docs/`.
 Do **not** create new workflow or stage artifact documents under `docs/`.
 
 ---
@@ -225,7 +227,7 @@ the next stage. See `.agent/skills/supervising-workflow/SKILL.md`.
 ### Rollback Protocol
 
 When a violation is detected:
-1. Supervisor writes a Violation Record in `.dev/DASHBOARD.md`
+1. Supervisor writes a Violation Record in `.dev_note/DASHBOARD.md`
 2. Control returns to the violating stage with corrective guidance
 3. Stage re-reads SKILL.md, applies fix, re-executes
 4. Supervisor re-validates
