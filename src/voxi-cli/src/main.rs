@@ -847,15 +847,38 @@ fn print_chat_banner(client: &Voxi, session_id: &str) {
     let cols = 80;
     let line = "─".repeat(cols - 2);
     
-    let backend = client.get_llm_config(Some("active_backend"))
+    let daemon_active = client.get_llm_config(Some("active_backend")).is_ok();
+    
+    let mut backend = client.get_llm_config(Some("active_backend"))
         .ok()
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "gemini".to_string());
+        .and_then(|v| v.get("value").and_then(Value::as_str).map(|s| s.to_string()));
         
-    let model = client.get_llm_config(Some(&format!("backends.{}.model", backend)))
-        .ok()
-        .and_then(|v| v.as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "unknown".to_string());
+    let mut model = None;
+    if let Some(ref b) = backend {
+        model = client.get_llm_config(Some(&format!("backends.{}.model", b)))
+            .ok()
+            .and_then(|v| v.get("value").and_then(Value::as_str).map(|s| s.to_string()));
+    }
+
+    // Fallback: Read directly from ~/.voxi/config/llm_config.json
+    if backend.is_none() {
+        let config_path = setup_config_dir().join("llm_config.json");
+        if let Ok(content) = std::fs::read_to_string(&config_path) {
+            if let Ok(doc) = serde_json::from_str::<Value>(&content) {
+                backend = doc.get("active_backend").and_then(Value::as_str).map(|s| s.to_string());
+                if let Some(ref b) = backend {
+                    model = doc.get("backends")
+                        .and_then(|backends| backends.get(b))
+                        .and_then(|b_cfg| b_cfg.get("model"))
+                        .and_then(Value::as_str)
+                        .map(|s| s.to_string());
+                }
+            }
+        }
+    }
+
+    let active_backend = backend.unwrap_or_else(|| "gemini".to_string());
+    let active_model = model.unwrap_or_else(|| "unknown".to_string());
 
     let workdir = std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
@@ -870,15 +893,21 @@ fn print_chat_banner(client: &Voxi, session_id: &str) {
         workdir
     };
 
+    let status_str = if daemon_active {
+        format!("{} {}", bold(&green("● VOXI ACTIVE")), bold(&cyan(&format!("v{}", env!("CARGO_PKG_VERSION")))))
+    } else {
+        format!("{} {}", bold(&ansi("31", "○ VOXI OFFLINE")), bold(&cyan(&format!("v{}", env!("CARGO_PKG_VERSION")))))
+    };
+
     println!("╭{}╮", line);
     print_boxed_line(
-        &format!("{} {}", bold(&green("● VOXI ACTIVE")), bold(&cyan(&format!("v{}", env!("CARGO_PKG_VERSION"))))),
+        &status_str,
         &format!("pid: {}", bold(&std::process::id().to_string())),
         cols
     );
     print_boxed_line(
-        &format!("Backend: {}", bold(&backend)),
-        &format!("Model: {}", bold(&model)),
+        &format!("Backend: {}", bold(&active_backend)),
+        &format!("Model: {}", bold(&active_model)),
         cols
     );
     print_boxed_line(
