@@ -2,6 +2,10 @@
 (function () {
     'use strict';
 
+    // --- Theme State ---
+    const savedTheme = localStorage.getItem('voxi_theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+
     const API = '';  // Same origin
 
     // --- Auth State ---
@@ -3572,6 +3576,17 @@
     startOutboundPolling();
     initEventStream();
     loadDashboard();
+
+    // Theme toggle button handler
+    const themeBtn = document.getElementById('theme-toggle-btn');
+    if (themeBtn) {
+        themeBtn.addEventListener('click', () => {
+            const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('voxi_theme', newTheme);
+        });
+    }
 
     // Wire up event delegation for log tail buttons once
     const logContentEl = document.getElementById('log-content');

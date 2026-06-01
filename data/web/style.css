@@ -37,6 +37,22 @@
     --c-slate:   #94a3b8;
 }
 
+:root[data-theme="light"] {
+    --bg-primary:    #f8fafc;
+    --bg-secondary:  #ffffff;
+    --bg-card:       #ffffff;
+    --bg-glass:      rgba(99, 102, 241, 0.06);
+    --bg-hover:      rgba(15, 23, 42, 0.04);
+    --border:        rgba(15, 23, 42, 0.08);
+    --border-active: rgba(99, 102, 241, 0.5);
+    --text-primary:  #0f172a;
+    --text-secondary:#475569;
+    --text-muted:    #64748b;
+    --shadow-card:   0 4px 20px rgba(0, 0, 0, 0.05);
+    --shadow-pop:    0 8px 32px rgba(99, 102, 241, 0.08);
+}
+
+
 *, *::before, *::after {
     margin: 0;
     padding: 0;
@@ -167,7 +183,43 @@ body {
 .sidebar-footer {
     padding: 10px 12px 14px;
     border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
 }
+
+.theme-toggle-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px;
+    border-radius: var(--radius-sm);
+    transition: background 0.2s, color 0.2s, border-color 0.2s;
+    border: 1px solid transparent;
+}
+
+.theme-toggle-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border);
+}
+
+.theme-toggle-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+:root[data-theme="light"] .theme-toggle-btn .sun-icon {
+    display: none;
+}
+:root:not([data-theme="light"]) .theme-toggle-btn .moon-icon {
+    display: none;
+}
+
 
 .agent-status {
     display: flex;
