@@ -44,6 +44,7 @@ WEB_SRC="${PROJECT_DIR}/data/web"
 BUNDLED_CONFIG_DIR="${PROJECT_DIR}/data/config"
 BUNDLED_WORKFLOWS_DIR="${PROJECT_DIR}/data/workflows"
 WORKFLOWS_DIR="${DATA_DIR}/workflows"
+BUNDLED_SKILLS_DIR="${PROJECT_DIR}/data/skills"
 BASHRC_PATH="${HOME}/.bashrc"
 PATH_EXPORT='export PATH="$HOME/.voxi/bin:$PATH"'
 
@@ -545,6 +546,23 @@ EOF
       fi
     done < <(find "${BUNDLED_WORKFLOWS_DIR}" -maxdepth 1 -type f | sort)
     ok "Default workflow seeding complete"
+  fi
+
+  # Seed default agentic skills into the trusted user-level skills dir so they
+  # are available without enabling untrusted project skills. Per-skill: copy a
+  # skill directory only if it does not already exist (never clobber edits).
+  if [ -d "${BUNDLED_SKILLS_DIR}" ]; then
+    log "Seeding default skills into ${WORKSPACE_DIR}/skills when missing"
+    run mkdir -p "${WORKSPACE_DIR}/skills"
+    while IFS= read -r skill_dir; do
+      local skill_name
+      skill_name="$(basename "${skill_dir}")"
+      local target_skill="${WORKSPACE_DIR}/skills/${skill_name}"
+      if [ ! -e "${target_skill}" ]; then
+        run cp -R "${skill_dir}" "${target_skill}"
+      fi
+    done < <(find "${BUNDLED_SKILLS_DIR}" -mindepth 1 -maxdepth 1 -type d | sort)
+    ok "Default skill seeding complete"
   fi
 
   normalize_host_dashboard_config

@@ -1,0 +1,7 @@
+{
+  "external_enabled": false,
+  "enable_project_hooks": false,
+  "hooks_dir": ".voxi/hooks",
+  "timeout_ms": 30000,
+  "rules": []
+}

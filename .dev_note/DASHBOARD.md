@@ -684,3 +684,67 @@
 | Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 5 | PASS | All workspace tests green; subscription accounting and event pump logic verified. |
 | Enable builtin-tools & SSE Event Pump Refactor | 6. Commit | PASS | Staged 5 files and committed at e0987af6; pushed to origin/voice-module-integration. |
 | Enable builtin-tools & SSE Event Pump Refactor | Supervisor Gate 6 | PASS | Commit used .tmp/commit_msg.txt; no inline git commit -m; all lines ≤ 80 chars. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | 2. Design | PASS | Designed TtsRouter struct, fallback policies, client-side Kokoro-82M ONNX dynamic loading, and .agents/skills/ gating rules. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | Supervisor Gate 2 | PASS | Architectural FFI, async trait boundaries, and security scan boundaries preserved. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | 3. Development | PASS | Implemented tts_router.rs with intent-based routing and fallback, integrated client-side transformers pipeline in app.js, and gated .agents/skills/ in skill_capability_manager.rs. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | Supervisor Gate 3 | PASS | Rust code compiles; frontend JS falls back gracefully to default browser Web Speech API. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | 4. Build/Deploy | PASS | Rebuilt host binary via ./deploy.sh and verified that the daemon started successfully on port 9091. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | Supervisor Gate 4 | PASS | Compilation succeeds and binary installation tree matches requirements. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | 5. Test/Review | PASS | Verified all 569 test cases pass under ./deploy.sh --test, and validated that only user-level skills are scanned when enable_project_skills is false. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | Supervisor Gate 5 | PASS | All workspace tests are green; security isolation of untrusted paths is successfully enforced. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | 6. Commit | PASS | Staged and committed changes on branch voice-module-integration using .tmp/commit_msg.txt; pushed to remote. |
+| Hybrid Skill Invocation, TTS Router, Admin Prioritization & Security Isolation | Supervisor Gate 6 | PASS | Commit message follows format constraints. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | 1. Planning | PASS | Outlined implementation plan for fixing absolute path skill naming, removing unused tools, and adding Audit Logs day-by-day pagination with fallback date and dark-theme UI polish. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | Supervisor Gate 1 | PASS | Plan reviewed and approved by user. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | 2. Design | PASS | Designed s.file_name mapping in process_prompt.rs, clean tool declarations, Axum backend fallback for empty dates, and DateNav selection sync. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | Supervisor Gate 2 | PASS | Architectural limits and clean tool declarations mapped. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | 3. Development | PASS | Implemented short skill name mapping, removed unused tool declarations, updated test assertions, added Axum logs date fallback, pagination markup, JS sync, and dark theme CSS styles. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | Supervisor Gate 3 | PASS | Development stayed within core, web-dashboard, and UI/UX boundaries. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | 4. Build/Deploy | PASS | Rebuilt host binaries via `./deploy.sh -b` successfully. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | Supervisor Gate 4 | PASS | Compilation succeeds and binary installation tree matches requirements. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | 5. Test/Review | PASS | Checked that all unit/integration tests passed successfully using `./deploy.sh --test`. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | Supervisor Gate 5 | PASS | All 569 workspace tests are green. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | 6. Commit | PASS | Staged changes and wrote commit message to `.tmp/commit_msg.txt`. |
+| Prompt Skill Fix, Unused Tool Removal, and Audit Logs UX/Pagination | Supervisor Gate 6 | PASS | Commit message conforms to formatting constraints. |
+| Stop Button & Log Pagination Audit | 1. Planning | PASS | Plan created to fix Stop button session ID check and log pagination range display. |
+| Stop Button & Log Pagination Audit | Supervisor Gate 1 | PASS | Design plan reviewed and submitted. |
+| Stop Button & Log Pagination Audit | 2. Design | PASS | Designed cancellation session ID tolerance and log pagination range mapping. |
+| Stop Button & Log Pagination Audit | Supervisor Gate 2 | PASS | Architectural boundaries and UI/UX design validated. |
+| Stop Button & Log Pagination Audit | 3. Development | PASS | Implemented stop request session ID matching and logs scroll/meta updates. |
+| Stop Button & Log Pagination Audit | Supervisor Gate 3 | PASS | Integration boundaries respected; Rust compile checks pass. |
+| Stop Button & Log Pagination Audit | 4. Build/Deploy | PASS | Rebuilt host binaries via `./deploy.sh` successfully. |
+| Stop Button & Log Pagination Audit | Supervisor Gate 4 | PASS | Compilation succeeds and binary installation tree matches requirements. |
+| Stop Button & Log Pagination Audit | 5. Test/Review | PASS | Checked all unit/integration tests passed successfully using `./deploy.sh --test`. |
+| Stop Button & Log Pagination Audit | Supervisor Gate 5 | PASS | All 569 workspace tests are green. |
+| Stop Button & Log Pagination Audit | 6. Commit | PASS | Staged and committed changes locally using the formatted commit message file. |
+| Stop Button & Log Pagination Audit | Supervisor Gate 6 | PASS | Commit message formatting and stage validations checked; setup finalized. |
+| DateNav Breadcrumb Style Fix | 1. Planning | PASS | Plan created to style selected active Year/Month in DateNav as static text. |
+| DateNav Breadcrumb Style Fix | Supervisor Gate 1 | PASS | Design plan reviewed and submitted. |
+| DateNav Breadcrumb Style Fix | 2. Design | PASS | Designed the breadcrumb-current CSS structure and HTML class wiring. |
+| DateNav Breadcrumb Style Fix | Supervisor Gate 2 | PASS | Architectural boundaries and UI/UX design validated. |
+| DateNav Breadcrumb Style Fix | 3. Development | PASS | Implemented the breadcrumb-current CSS styling and DateNav render changes. |
+| DateNav Breadcrumb Style Fix | Supervisor Gate 3 | PASS | Core front-end files updated and verified. |
+| DateNav Breadcrumb Style Fix | 4. Build/Deploy | PASS | Copied the updated web assets into the ~/.voxi/web target via ./deploy.sh. |
+| DateNav Breadcrumb Style Fix | Supervisor Gate 4 | PASS | Installation directories and script files verify correctly. |
+| DateNav Breadcrumb Style Fix | 5. Test/Review | PASS | Verified tests pass and confirmed breadcrumbs are correctly displayed as static text. |
+| DateNav Breadcrumb Style Fix | Supervisor Gate 5 | PASS | All 569 workspace tests are green. |
+| DateNav Breadcrumb Style Fix | 6. Commit | PASS | Staged and committed changes locally using the formatted commit message file. |
+| DateNav Breadcrumb Style Fix | Supervisor Gate 6 | PASS | Commit message formatting and stage validations checked; setup finalized. |
+| Disable TV Channel on Port 9092 | 1. Planning | PASS | Plan created to disable TV channel (port 9092) and expose all config files on the Admin panel. |
+| Disable TV Channel on Port 9092 | Supervisor Gate 1 | PASS | Design plan reviewed and submitted for user feedback. |
+| Disable TV Channel on Port 9092 | 2. Design | PASS | Designed explicit disabled TV channel settings and expanded ALLOWED_CONFIGS + CONFIG_LABELS/CONFIG_DESCRIPTIONS layout in dashboard app. |
+| Disable TV Channel on Port 9092 | Supervisor Gate 2 | PASS | Design adheres to standard dashboard configuration structures. |
+| Disable TV Channel on Port 9092 | 3. Development | PASS | Implemented TV channel disable in config templates, active configs, and added all remaining config files to whitelist, labels, descriptions, and layouts. |
+| Disable TV Channel on Port 9092 | Supervisor Gate 3 | PASS | Configuration and dashboard files updated cleanly. |
+| Disable TV Channel on Port 9092 | 4. Build/Deploy | PASS | Rebuilt host binaries and deployed web dashboard assets successfully using ./deploy.sh. |
+| Disable TV Channel on Port 9092 | Supervisor Gate 4 | PASS | Compilation succeeds and binary installation tree matches requirements. |
+| Disable TV Channel on Port 9092 | 5. Test/Review | PASS | Verified all 569 test cases pass under `./deploy.sh --test`. Verified config whitelisting and layout via static code audit. |
+| Disable TV Channel on Port 9092 | Supervisor Gate 5 | PASS | UI and port termination verified successfully. |
+| Disable TV Channel on Port 9092 | 6. Commit | PASS | Staged and committed changes locally using the formatted commit message file. |
+| Disable TV Channel on Port 9092 | Supervisor Gate 6 | PASS | Commit message formatting and stage validations checked; changes pushed to remote branch. |
+
+
+
+
+
+

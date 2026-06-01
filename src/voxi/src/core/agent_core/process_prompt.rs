@@ -296,7 +296,7 @@ impl AgentCore {
     pub fn cancel_request(&self, session_id: &str, request_id: &str) -> Result<(), String> {
         let active = self.active_requests.lock().map_err(|e| e.to_string())?;
         if let Some(req) = active.get(request_id) {
-            if req.session_id == session_id {
+            if req.session_id == session_id || session_id == "new" {
                 req.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
                 log::info!("Cancelled request {} for session {}", request_id, session_id);
                 return Ok(());
@@ -1151,7 +1151,7 @@ impl AgentCore {
                 .into_iter()
                 .map(|s| {
                     let summary = format_skill_summary(&s);
-                    (s.absolute_path, summary)
+                    (s.file_name, summary)
                 })
                 .collect();
             builder = builder.add_available_skills(formatted_skills);

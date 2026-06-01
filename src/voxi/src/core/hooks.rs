@@ -16,6 +16,16 @@ pub struct HooksConfig {
     pub hooks_dir: String,
     pub timeout_ms: u64,
     pub rules: Vec<HookRule>,
+    /// When false (default), a relative/project-level `hooks_dir` (e.g.
+    /// ".voxi/hooks") is treated as untrusted and ignored: scripts are resolved
+    /// only from the installed trusted directory (`~/.voxi/hooks/`). Set true to
+    /// opt into executing hooks from the project-local directory.
+    #[serde(default)]
+    pub enable_project_hooks: bool,
+    /// Absolute path to the trusted installed hooks directory (`<data>/hooks`).
+    /// Populated at load() time; never serialized.
+    #[serde(skip)]
+    installed_hooks_dir: PathBuf,
 }
 
 impl Default for HooksConfig {
@@ -25,6 +35,8 @@ impl Default for HooksConfig {
             hooks_dir: ".voxi/hooks".to_string(),
             timeout_ms: 30000, // 30 seconds default
             rules: Vec::new(),
+            enable_project_hooks: false,
+            installed_hooks_dir: PathBuf::new(),
         }
     }
 }
@@ -37,23 +49,47 @@ pub enum HookDecision {
 
 impl HooksConfig {
     pub fn load(config_dir: &Path) -> Self {
-        let path = config_dir.join("hooks.json");
-        if !path.exists() {
-            return Self::default();
-        }
+        // The trusted installed hooks directory is a sibling of the config dir:
+        // <data>/config → <data>/hooks (i.e. ~/.voxi/hooks).
+        let installed_hooks_dir = config_dir
+            .parent()
+            .map(|data_dir| data_dir.join("hooks"))
+            .unwrap_or_else(|| PathBuf::from("hooks"));
 
-        match std::fs::read_to_string(&path) {
-            Ok(content) => match serde_json::from_str(&content) {
-                Ok(config) => config,
+        let path = config_dir.join("hooks.json");
+        let mut config = if !path.exists() {
+            Self::default()
+        } else {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => match serde_json::from_str(&content) {
+                    Ok(config) => config,
+                    Err(e) => {
+                        log::error!("Failed to parse hooks.json: {}", e);
+                        Self::default()
+                    }
+                },
                 Err(e) => {
-                    log::error!("Failed to parse hooks.json: {}", e);
+                    log::error!("Failed to read hooks.json: {}", e);
                     Self::default()
                 }
-            },
-            Err(e) => {
-                log::error!("Failed to read hooks.json: {}", e);
-                Self::default()
             }
+        };
+        config.installed_hooks_dir = installed_hooks_dir;
+        config
+    }
+
+    /// Resolve the directory external hook scripts are loaded from, applying the
+    /// trusted-location policy. Absolute `hooks_dir` paths are honored as-is.
+    /// Relative/project paths are only used when `enable_project_hooks` is true;
+    /// otherwise the installed trusted directory is used.
+    fn resolve_hooks_dir(&self) -> PathBuf {
+        let configured = Path::new(&self.hooks_dir);
+        if configured.is_absolute() {
+            configured.to_path_buf()
+        } else if self.enable_project_hooks {
+            configured.to_path_buf()
+        } else {
+            self.installed_hooks_dir.clone()
         }
     }
 
@@ -85,10 +121,13 @@ impl HooksConfig {
                         return HookDecision::Deny("External hooks are disabled".into());
                     }
 
-                    // Resolve hooks directory path (relative to the voxi run context, usually current dir or data dir)
-                    let base_dir = Path::new(&self.hooks_dir);
+                    // Resolve hooks directory under the trusted-location policy.
+                    let base_dir = self.resolve_hooks_dir();
                     if !base_dir.exists() {
-                        return HookDecision::Deny(format!("Hooks directory does not exist: {}", self.hooks_dir));
+                        return HookDecision::Deny(format!(
+                            "Hooks directory does not exist: {}",
+                            base_dir.display()
+                        ));
                     }
 
                     let payload = serde_json::json!({
@@ -97,7 +136,7 @@ impl HooksConfig {
                         "arguments": args
                     });
 
-                    match execute_external_hook(base_dir, script_filename, &payload) {
+                    match execute_external_hook(&base_dir, script_filename, &payload) {
                         Ok(true) => return HookDecision::Allow,
                         Ok(false) => return HookDecision::Deny("Denied by external pre_tool hook".into()),
                         Err(e) => return HookDecision::Deny(format!("External hook execution error: {}", e)),
@@ -128,9 +167,12 @@ impl HooksConfig {
                         return HookDecision::Deny("External hooks are disabled".into());
                     }
 
-                    let base_dir = Path::new(&self.hooks_dir);
+                    let base_dir = self.resolve_hooks_dir();
                     if !base_dir.exists() {
-                        return HookDecision::Deny(format!("Hooks directory does not exist: {}", self.hooks_dir));
+                        return HookDecision::Deny(format!(
+                            "Hooks directory does not exist: {}",
+                            base_dir.display()
+                        ));
                     }
 
                     let payload = serde_json::json!({
@@ -140,7 +182,7 @@ impl HooksConfig {
                         "result": result
                     });
 
-                    match execute_external_hook(base_dir, script_filename, &payload) {
+                    match execute_external_hook(&base_dir, script_filename, &payload) {
                         Ok(true) => return HookDecision::Allow,
                         Ok(false) => return HookDecision::Deny("Denied by external post_tool hook".into()),
                         Err(e) => return HookDecision::Deny(format!("External hook execution error: {}", e)),

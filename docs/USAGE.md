@@ -281,7 +281,14 @@ The web dashboard mounts a token-authorized server-sent events stream endpoint a
 - **Axum SSE Hop**: Axum establishes a Unix IPC socket connection to subscribe to daemon events via the JSON-RPC `subscribe_events` handler, forwarding them directly to frontend SSE clients.
 - **Timeline Visualizer**: Real-time event streams drive the Web Dashboard's timeline visualizer, showing live states (running, success, failure) of tool executions and pending hook approvals.
 
+### Over-the-Air (OTA) Updates
+
+Voxi supports updating individual textual and capability skills dynamically over-the-air from remote manifests, allowing operators to deploy skill patches or perform version rollbacks without restarting the main daemon service.
+
+For a comprehensive walkthrough of the update lifecycle, API endpoints, and dashboard interaction, see the [OTA Updates Guide](OTA_GUIDE.md).
+
 ## Extension Model
+
 
 Voxi supports extension through a mix of runtime modules and metadata
 plugins.

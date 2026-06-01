@@ -253,7 +253,7 @@
                     '<span class="date-nav-sep"' +
                     '>›</span>' +
                     '<span class="date-nav-chip' +
-                    ' active">' +
+                    ' breadcrumb-current">' +
                     this.selYear + '</span>' +
                     '<span class="date-nav-sep"' +
                     '>›</span>';
@@ -284,7 +284,7 @@
                     '<span class="date-nav-sep"' +
                     '>›</span>' +
                     '<span class="date-nav-chip' +
-                    ' active">' +
+                    ' breadcrumb-current">' +
                     MONTHS[
                         parseInt(this.selMonth,
                             10) - 1] +
@@ -395,6 +395,15 @@
             return this.selYear + '-' +
                 this.selMonth + '-' +
                 this.selDay;
+        }
+
+        selectDate(dateStr) {
+            if (!dateStr || dateStr.length !== 10) return;
+            this.selYear = dateStr.substring(0, 4);
+            this.selMonth = dateStr.substring(5, 7);
+            this.selDay = dateStr.substring(8, 10);
+            this.level = 'day';
+            this.render();
         }
     }
 
@@ -882,23 +891,55 @@
 
     // --- Logs ---
     let logDateNav = null;
+    let logDates = [];
+    let currentLogDate = null;
     // Per-file pagination state: { [label]: { offset: 0, totalLines: 0 } }
     let logPagination = {};
     const LOG_PAGE_SIZE = 500;
 
+    function formatDateHuman(dateStr) {
+        if (!dateStr || dateStr.length !== 10) return dateStr || '';
+        const y = dateStr.substring(0, 4);
+        const m = parseInt(dateStr.substring(5, 7), 10) - 1;
+        const d = parseInt(dateStr.substring(8, 10), 10);
+        return MONTHS[m] + ' ' + d + ', ' + y;
+    }
+
     async function loadLogs(dateStr) {
-        // Init date nav once
-        if (!logDateNav) {
-            logDateNav = new DateNav(
-                'log-date-nav',
-                function (date) {
-                    logPagination = {};
-                    loadLogContent(date);
-                });
-            const datesResp = await apiFetch('logs/dates');
-            if (datesResp && datesResp.dates) {
-                logDateNav.setDates(datesResp.dates);
+        const datesResp = await apiFetch('logs/dates');
+        if (datesResp && datesResp.dates) {
+            logDates = (datesResp.dates || []).slice().sort();
+            if (!logDateNav) {
+                logDateNav = new DateNav(
+                    'log-date-nav',
+                    function (date) {
+                        logPagination = {};
+                        loadLogContent(date);
+                    });
+
+                // Wire up older/newer buttons
+                const prevBtn = document.getElementById('log-prev-day-btn');
+                const nextBtn = document.getElementById('log-next-day-btn');
+                if (prevBtn) {
+                    prevBtn.addEventListener('click', () => {
+                        const idx = logDates.indexOf(currentLogDate);
+                        if (idx > 0) {
+                            logPagination = {};
+                            loadLogContent(logDates[idx - 1]);
+                        }
+                    });
+                }
+                if (nextBtn) {
+                    nextBtn.addEventListener('click', () => {
+                        const idx = logDates.indexOf(currentLogDate);
+                        if (idx >= 0 && idx < logDates.length - 1) {
+                            logPagination = {};
+                            loadLogContent(logDates[idx + 1]);
+                        }
+                    });
+                }
             }
+            logDateNav.setDates(datesResp.dates);
         }
         logPagination = {};
         loadLogContent(dateStr || null);
@@ -929,9 +970,46 @@
             if (old) old.remove();
         }
 
+        const actualDate = (data && data.length > 0) ? (data[0].date || dateStr) : dateStr;
+
         if (!data || data.length === 0) {
             logEl.innerHTML = '<div class="log-empty">No logs available' + (dateStr ? ' for ' + escHtml(dateStr) : '') + '.</div>';
+            
+            const dateDisplayEl = document.getElementById('log-current-date-display');
+            if (dateDisplayEl) dateDisplayEl.textContent = dateStr || 'No Logs';
+            const prevBtn = document.getElementById('log-prev-day-btn');
+            const nextBtn = document.getElementById('log-next-day-btn');
+            if (prevBtn) prevBtn.disabled = true;
+            if (nextBtn) nextBtn.disabled = true;
             return;
+        }
+
+        // On fresh load, resolve the actual date loaded
+        if (!appendMode) {
+            currentLogDate = actualDate;
+
+            // Highlight in DateNav
+            if (logDateNav && actualDate) {
+                logDateNav.selectDate(actualDate);
+            }
+
+            // Update current date display
+            const dateDisplayEl = document.getElementById('log-current-date-display');
+            if (dateDisplayEl && actualDate) {
+                dateDisplayEl.textContent = formatDateHuman(actualDate);
+            }
+
+            // Update older/newer button states
+            const prevBtn = document.getElementById('log-prev-day-btn');
+            const nextBtn = document.getElementById('log-next-day-btn');
+            if (actualDate) {
+                const idx = logDates.indexOf(actualDate);
+                if (prevBtn) prevBtn.disabled = (idx <= 0);
+                if (nextBtn) nextBtn.disabled = (idx < 0 || idx >= logDates.length - 1);
+            } else {
+                if (prevBtn) prevBtn.disabled = true;
+                if (nextBtn) nextBtn.disabled = true;
+            }
         }
 
         data.forEach(function(l) {
@@ -941,7 +1019,7 @@
 
             // Track pagination state per file
             if (!appendMode || !logPagination[label]) {
-                logPagination[label] = { offset: 0, totalLines: totalLines, date: dateStr };
+                logPagination[label] = { offset: 0, totalLines: totalLines, date: actualDate };
             }
 
             // Build file block
@@ -967,13 +1045,13 @@
                 const earlier = document.createElement('button');
                 earlier.className = 'log-load-earlier';
                 earlier.dataset.label = label;
-                earlier.dataset.date = dateStr || '';
+                earlier.dataset.date = actualDate || '';
                 earlier.textContent = '\u2191 Load earlier lines (' + (totalLines - shownLines - logPagination[label].offset) + ' more)';
                 earlier.addEventListener('click', function() {
                     const newOffset = logPagination[label].offset + shownLines;
                     logPagination[label].offset = newOffset;
                     // Load older page and prepend
-                    loadLogEarlier(label, dateStr, newOffset, block);
+                    loadLogEarlier(label, actualDate, newOffset, block);
                 });
                 block.appendChild(earlier);
             }
@@ -1001,20 +1079,14 @@
             }
         });
 
-        // Wire up tail buttons
-        logEl.querySelectorAll('.log-tail-btn').forEach(function(btn) {
-            btn.addEventListener('click', function() {
-                const lbl = btn.dataset.label;
-                const pre = logEl.querySelector('.log-pre[data-label="' + lbl + '"]');
-                if (pre) pre.scrollIntoView({ behavior: 'smooth', block: 'end' });
-            });
-        });
     }
 
     async function loadLogEarlier(label, dateStr, offset, existingBlock) {
-        const endpoint = (dateStr
-            ? 'logs?date=' + encodeURIComponent(dateStr)
-            : 'logs') + '&lines=' + LOG_PAGE_SIZE + '&offset=' + offset;
+        const actualDate = dateStr || (logPagination[label] ? logPagination[label].date : null);
+        let endpoint = 'logs?lines=' + LOG_PAGE_SIZE + '&offset=' + offset;
+        if (actualDate) {
+            endpoint += '&date=' + encodeURIComponent(actualDate);
+        }
 
         const data = await apiFetch(endpoint);
         if (!data || !data.length) return;
@@ -1042,7 +1114,7 @@
         const headerMeta = existingBlock.querySelector('.log-file-meta');
         if (headerMeta) {
             const shownFrom = hasMore ? (totalLines - offset - shownLines + 1) : 1;
-            const shownTo = totalLines - logPagination[label].offset + shownLines;
+            const shownTo = totalLines;
             headerMeta.textContent = 'Lines ' + shownFrom + '\u2013' + shownTo + ' of ' + totalLines;
         }
 
@@ -1051,13 +1123,13 @@
             const earlier = document.createElement('button');
             earlier.className = 'log-load-earlier';
             earlier.dataset.label = label;
-            earlier.dataset.date = dateStr || '';
+            earlier.dataset.date = actualDate || '';
             const remaining = totalLines - offset - shownLines;
             earlier.textContent = '\u2191 Load earlier lines (' + remaining + ' more)';
             earlier.addEventListener('click', function() {
                 const newOffset = offset + shownLines;
                 logPagination[label].offset = newOffset;
-                loadLogEarlier(label, dateStr, newOffset, existingBlock);
+                loadLogEarlier(label, actualDate, newOffset, existingBlock);
             });
             // Insert before the pre element
             if (existingPre) {
@@ -1753,9 +1825,20 @@
             null;
     }
 
-    function speakText(raw) {
+    let kokoroModel = null;
+    async function loadKokoroLibrary() {
+        if (kokoroModel) return kokoroModel;
+        const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0-alpha.5');
+        kokoroModel = await pipeline('text-to-speech', 'onnx-community/Kokoro-82M-v1.0-ONNX', {
+            dtype: 'fp32',
+            device: 'webgpu'
+        });
+        return kokoroModel;
+    }
+
+    async function speakText(raw) {
         if (!voiceConfig.speak_replies) return;
-        if (!('speechSynthesis' in window) || !raw) return;
+        if (!raw) return;
         const spoken = raw
             .replace(/```[\s\S]*?```/g, ' code block ')
             .replace(/[#*_`>~|]/g, '')
@@ -1763,6 +1846,26 @@
             .replace(/\s+/g, ' ')
             .trim();
         if (!spoken) return;
+
+        if (voiceConfig.engine === 'kokoro_browser') {
+            try {
+                const model = await loadKokoroLibrary();
+                const output = await model(spoken, {
+                    speaker: voiceConfig.browser_voice || 'af_bella'
+                });
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const audioBuffer = audioContext.createBuffer(1, output.audio.length, output.sampling_rate);
+                audioBuffer.getChannelData(0).set(output.audio);
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioContext.destination);
+                source.start(0);
+                return;
+            } catch (err) {
+                console.warn('Client-side neural speech (kokoro_browser) failed, falling back to Web Speech API:', err);
+            }
+        }
+
         try {
             window.speechSynthesis.cancel();
             const utter = new SpeechSynthesisUtterance(spoken);
@@ -1774,6 +1877,7 @@
             console.error('TTS failed:', err);
         }
     }
+
 
     function setMicState(listening) {
         voiceListening = listening;
@@ -1885,6 +1989,8 @@
     let slashItems = [];
     let slashActiveIdx = 0;
     let capabilitiesCache = null;
+    let skillsCache = null;
+    let paletteFilter = '';
 
     const CLIENT_COMMANDS = [
         { cmd: '/help', label: 'Show available commands & tools', kind: 'command' },
@@ -1929,6 +2035,25 @@
             });
         });
         return items;
+    }
+
+    async function loadSkillsList() {
+        if (skillsCache) return skillsCache;
+        try {
+            const res = await fetch(API + '/api/skills');
+            const j = res.ok ? await res.json() : {};
+            skillsCache = (j.skills || []).map(s => ({
+                name: s.name, desc: s.description || ''
+            }));
+        } catch (e) { skillsCache = []; }
+        return skillsCache;
+    }
+
+    function buildMentionItems(skills) {
+        return (skills || []).map(s => ({
+            type: 'skill', key: s.name,
+            label: s.desc || 'Skill', group: 'Skills (@mention)'
+        }));
     }
 
     function renderSlash(filter) {
@@ -1979,6 +2104,13 @@
             chatInput.value = '';
             return;
         }
+        if (item.type === 'skill') {
+            // Replace the trailing @token with the chosen skill mention so the
+            // agent force-prefetches that skill for this prompt.
+            chatInput.value = chatInput.value.replace(/@[\w-]*$/, '@' + item.key + ' ');
+            chatInput.focus();
+            return;
+        }
         // Tool/workflow: insert a starter prompt for the user to complete.
         chatInput.value = 'Use ' + item.key + ' to ';
         chatInput.focus();
@@ -2023,11 +2155,16 @@
     if (chatInput && slashPalette) {
         chatInput.addEventListener('input', async () => {
             const val = chatInput.value;
+            // `@word` as the most recent token → skill mention picker.
+            const mention = val.match(/(^|\s)@([\w-]*)$/);
             if (val.startsWith('/') && !val.includes('\n')) {
-                if (!slashItems.length) {
-                    slashItems = buildSlashItems(await loadCapabilities());
-                }
-                renderSlash(val.slice(1));
+                slashItems = buildSlashItems(await loadCapabilities());
+                paletteFilter = val.slice(1);
+                renderSlash(paletteFilter);
+            } else if (mention) {
+                slashItems = buildMentionItems(await loadSkillsList());
+                paletteFilter = mention[2];
+                renderSlash(paletteFilter);
             } else {
                 closeSlash();
             }
@@ -2039,11 +2176,11 @@
             if (e.key === 'ArrowDown') {
                 e.preventDefault(); e.stopPropagation();
                 slashActiveIdx = (slashActiveIdx + 1) % matches.length;
-                renderSlash(chatInput.value.slice(1));
+                renderSlash(paletteFilter);
             } else if (e.key === 'ArrowUp') {
                 e.preventDefault(); e.stopPropagation();
                 slashActiveIdx = (slashActiveIdx - 1 + matches.length) % matches.length;
-                renderSlash(chatInput.value.slice(1));
+                renderSlash(paletteFilter);
             } else if (e.key === 'Enter') {
                 e.preventDefault(); e.stopPropagation();
                 chooseSlash(matches[slashActiveIdx]);
@@ -2070,7 +2207,21 @@
         'tunnel_config.json': 'Tunnel Configuration',
         'web_search_config.json': 'Web Search',
         'voice_config.json': 'Voice Configuration',
-        'system_prompt.txt': 'System Prompt'
+        'hooks.json': 'Tool Hooks',
+        'skills_state.json': 'Skills Activation',
+        'system_prompt.txt': 'System Prompt',
+        'channel_config.json': 'Channel Settings',
+        'channels.json': 'Active Channels',
+        'autonomous_trigger.json': 'Autonomous Triggers',
+        'device_profile.json': 'Device Profile',
+        'fleet_config.json': 'Fleet Config',
+        'llm_config_lmstudio.json': 'LM Studio Config',
+        'llm_config_mlx.json': 'MLX Config',
+        'memory_config.json': 'Memory Config',
+        'models.voice.json': 'Voice Models',
+        'offline_fallback.json': 'Offline Fallback',
+        'safety_bounds.json': 'Safety Bounds',
+        'user_profiles.json': 'User Profiles'
     };
     const CONFIG_DESCRIPTIONS = {
         'llm_config.json': 'Manage model backends, token limits, and sampling options.',
@@ -2084,7 +2235,21 @@
         'tunnel_config.json': 'Manage tunnel endpoints and authentication tokens.',
         'web_search_config.json': 'Configure search providers and search options.',
         'voice_config.json': 'Select the voice engine, language, and spoken-reply preferences.',
-        'system_prompt.txt': 'Edit the core system instructions and behavioral constraints of the agent.'
+        'hooks.json': 'Pre/post-tool hooks with allow, deny, and ask approval gates.',
+        'skills_state.json': 'Enable or disable skills and opt into project-level skill scanning.',
+        'system_prompt.txt': 'Edit the core system instructions and behavioral constraints of the agent.',
+        'channel_config.json': 'Configure system notification and control interfaces.',
+        'channels.json': 'Manage mapping of channels, config files, and verification criteria.',
+        'autonomous_trigger.json': 'Set rules and rates for running background tasks automatically.',
+        'device_profile.json': 'Adjust device-specific capabilities, features, and specs.',
+        'fleet_config.json': 'Configure fleet settings, endpoints, and secure credentials.',
+        'llm_config_lmstudio.json': 'Configure LM Studio endpoint options and model selections.',
+        'llm_config_mlx.json': 'Tune local Apple Silicon MLX model features and pathing.',
+        'memory_config.json': 'Manage memory storage limits, search parameters, and chunking.',
+        'models.voice.json': 'List and verify local or remote voice models and features.',
+        'offline_fallback.json': 'Define alternate models and behaviors when internet is offline.',
+        'safety_bounds.json': 'Limit AI execution depth, confirm irreversible actions, and restrict parameters.',
+        'user_profiles.json': 'Manage administrator credentials, API keys, and personalized parameters.'
     };
     let adminConfigsCache = [];
     let activeConfigName = null;
@@ -2232,52 +2397,202 @@
         });
 
     // --- Config Management ---
+    // ── Config layout (prioritized primary grid + "Less Used" accordion) ──
+    const CONFIG_LAYOUT_KEY = 'voxi_config_layout';
+    const DEFAULT_PRIMARY_CONFIGS = [
+        'llm_config.json', 'mcp_servers.json', 'agent_roles.json',
+        'tool_policy.json', 'hooks.json', 'voice_config.json',
+        'skills_state.json', 'channel_config.json'
+    ];
+    const DEFAULT_HIDDEN_CONFIGS = [
+        'telegram_config.json', 'slack_config.json', 'discord_config.json',
+        'webhook_config.json', 'tunnel_config.json', 'web_search_config.json',
+        'system_prompt.txt', 'channels.json', 'autonomous_trigger.json',
+        'device_profile.json', 'fleet_config.json', 'llm_config_lmstudio.json',
+        'llm_config_mlx.json', 'memory_config.json', 'models.voice.json',
+        'offline_fallback.json', 'safety_bounds.json', 'user_profiles.json'
+    ];
+
+    function loadConfigLayout() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(CONFIG_LAYOUT_KEY));
+            if (saved && Array.isArray(saved.primary) &&
+                Array.isArray(saved.hidden)) {
+                return { primary: saved.primary, hidden: saved.hidden };
+            }
+        } catch (e) { /* fall through to defaults */ }
+        return {
+            primary: DEFAULT_PRIMARY_CONFIGS.slice(),
+            hidden: DEFAULT_HIDDEN_CONFIGS.slice()
+        };
+    }
+
+    function saveConfigLayout(layout) {
+        try {
+            localStorage.setItem(CONFIG_LAYOUT_KEY, JSON.stringify(layout));
+        } catch (e) { /* storage unavailable; non-fatal */ }
+    }
+
+    // Keep the saved layout in sync with what the server actually exposes:
+    // drop unknown names, append any newly-available configs to primary.
+    function reconcileConfigLayout(layout, available) {
+        const avail = new Set(available);
+        const seen = new Set();
+        const primary = layout.primary.filter(
+            n => avail.has(n) && !seen.has(n) && seen.add(n));
+        const hidden = layout.hidden.filter(
+            n => avail.has(n) && !seen.has(n) && seen.add(n));
+        available.forEach(n => { if (!seen.has(n)) { primary.push(n); seen.add(n); } });
+        return { primary, hidden };
+    }
+
+    let configLayout = loadConfigLayout();
+
+    function configCardHtml(c, hidden) {
+        const label = CONFIG_LABELS[c.name] || c.name;
+        const statusClass = c.exists ? 'exists' : 'missing';
+        const statusText = c.exists ? '● Active' : '○ Sample';
+        const handle = hidden ? '' :
+            '<span class="config-drag-handle" title="Drag to reorder" ' +
+            'aria-hidden="true">⠿</span>';
+        const toggleLabel = hidden ? 'Show' : 'Hide';
+        const toggleIcon = hidden ? '👁' : '🚫';
+        return '<div class="config-card" draggable="' +
+            (hidden ? 'false' : 'true') + '" data-config="' +
+            escHtml(c.name) + '">' +
+            handle +
+            '<div class="config-card-header">' +
+            '<div class="config-card-copy">' +
+            '<span class="config-card-title">' + escHtml(label) + '</span>' +
+            '<p class="config-card-desc">' +
+            escHtml(CONFIG_DESCRIPTIONS[c.name] || 'Configuration editor') +
+            '</p></div>' +
+            '<div class="config-card-side">' +
+            '<span class="config-card-status ' + statusClass + '">' +
+            statusText + '</span>' +
+            '<button type="button" class="config-card-toggle" ' +
+            'data-toggle="' + escHtml(c.name) + '" ' +
+            'title="' + toggleLabel + ' this setting">' + toggleIcon +
+            '</button>' +
+            '<span class="config-card-open">Open</span>' +
+            '</div></div></div>';
+    }
+
     async function loadConfigs() {
-        const list = document.getElementById(
-            'config-list');
+        const list = document.getElementById('config-list');
         const data = await apiFetch('config/list');
 
         if (!data || !data.configs) {
             list.innerHTML =
-                '<p class="empty-state">' +
-                'Failed to load configs</p>';
+                '<p class="empty-state">Failed to load configs</p>';
             return;
         }
 
         adminConfigsCache = data.configs.slice();
-        list.innerHTML = data.configs.map(c => {
-            const label =
-                CONFIG_LABELS[c.name] || c.name;
-            const statusClass =
-                c.exists ? 'exists' : 'missing';
-            const statusText =
-                c.exists ? '● Active' : '○ Sample';
+        const byName = {};
+        data.configs.forEach(c => { byName[c.name] = c; });
+        configLayout = reconcileConfigLayout(
+            configLayout, data.configs.map(c => c.name));
+        saveConfigLayout(configLayout);
 
-            return '<button type="button" class="config-card"' +
-                ' data-config="' + escHtml(c.name) + '">' +
-                '<div class="config-card-header">' +
-                '<div class="config-card-copy">' +
-                '<span class="config-card-title">' +
-                escHtml(label) + '</span>' +
-                '<p class="config-card-desc">' +
-                escHtml(CONFIG_DESCRIPTIONS[c.name] ||
-                    'Configuration editor') + '</p>' +
-                '</div>' +
-                '<div class="config-card-side">' +
-                '<span class="config-card-status ' +
-                statusClass + '">' +
-                statusText + '</span>' +
-                '<span class="config-card-open">Open</span>' +
-                '</div></div></button>';
-        }).join('');
+        const primaryCards = configLayout.primary
+            .map(n => configCardHtml(byName[n], false)).join('');
+        const hiddenCards = configLayout.hidden
+            .map(n => configCardHtml(byName[n], true)).join('') ||
+            '<p class="empty-state">No hidden settings.</p>';
 
-        list.querySelectorAll('.config-card')
-            .forEach(card => {
-                card.addEventListener('click', () => {
-                    openConfigModal(
-                        card.dataset.config);
-                });
+        list.innerHTML =
+            '<div id="config-primary-list" class="config-primary-list">' +
+            primaryCards + '</div>' +
+            '<div id="config-less-used-section" class="config-less-used-section">' +
+            '<button type="button" id="config-less-used-header" ' +
+            'class="config-less-used-header">' +
+            '<span class="config-less-used-chevron">▶</span>' +
+            '<span>Less Used Settings</span>' +
+            '<span class="config-less-used-count">' +
+            configLayout.hidden.length + '</span></button>' +
+            '<div id="config-less-used-list" class="config-less-used-list">' +
+            hiddenCards + '</div></div>';
+
+        wireConfigCardEvents(list);
+    }
+
+    function wireConfigCardEvents(list) {
+        // Open the editor when the card body (not a control) is clicked.
+        list.querySelectorAll('.config-card').forEach(card => {
+            card.addEventListener('click', (ev) => {
+                if (ev.target.closest('.config-card-toggle')) return;
+                openConfigModal(card.dataset.config);
             });
+        });
+
+        // Hide/Show: move a config between primary and hidden lists.
+        list.querySelectorAll('.config-card-toggle').forEach(btn => {
+            btn.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                const name = btn.dataset.toggle;
+                const pi = configLayout.primary.indexOf(name);
+                if (pi >= 0) {
+                    configLayout.primary.splice(pi, 1);
+                    configLayout.hidden.push(name);
+                } else {
+                    const hi = configLayout.hidden.indexOf(name);
+                    if (hi >= 0) configLayout.hidden.splice(hi, 1);
+                    configLayout.primary.push(name);
+                }
+                saveConfigLayout(configLayout);
+                loadConfigs();
+            });
+        });
+
+        // Collapsible accordion toggle.
+        const header = list.querySelector('#config-less-used-header');
+        const section = list.querySelector('#config-less-used-section');
+        if (header && section) {
+            header.addEventListener('click', () => {
+                section.classList.toggle('open');
+            });
+        }
+
+        // HTML5 drag-and-drop reordering within the primary grid.
+        const primaryList = list.querySelector('#config-primary-list');
+        if (!primaryList) return;
+        let dragName = null;
+        primaryList.querySelectorAll('.config-card').forEach(card => {
+            card.addEventListener('dragstart', (ev) => {
+                dragName = card.dataset.config;
+                card.classList.add('dragging');
+                ev.dataTransfer.effectAllowed = 'move';
+            });
+            card.addEventListener('dragend', () => {
+                card.classList.remove('dragging');
+                primaryList.querySelectorAll('.config-card-dropzone')
+                    .forEach(c => c.classList.remove('config-card-dropzone'));
+            });
+            card.addEventListener('dragover', (ev) => {
+                ev.preventDefault();
+                if (card.dataset.config !== dragName) {
+                    card.classList.add('config-card-dropzone');
+                }
+            });
+            card.addEventListener('dragleave', () => {
+                card.classList.remove('config-card-dropzone');
+            });
+            card.addEventListener('drop', (ev) => {
+                ev.preventDefault();
+                card.classList.remove('config-card-dropzone');
+                const target = card.dataset.config;
+                if (!dragName || dragName === target) return;
+                const arr = configLayout.primary;
+                const from = arr.indexOf(dragName);
+                const to = arr.indexOf(target);
+                if (from < 0 || to < 0) return;
+                arr.splice(from, 1);
+                arr.splice(to, 0, dragName);
+                saveConfigLayout(configLayout);
+                loadConfigs();
+            });
+        });
     }
 
     async function fetchConfigContent(name) {
@@ -3257,4 +3572,19 @@
     startOutboundPolling();
     initEventStream();
     loadDashboard();
+
+    // Wire up event delegation for log tail buttons once
+    const logContentEl = document.getElementById('log-content');
+    if (logContentEl) {
+        logContentEl.addEventListener('click', function(ev) {
+            const btn = ev.target.closest('.log-tail-btn');
+            if (btn) {
+                const lbl = btn.dataset.label;
+                const pre = logContentEl.querySelector('.log-pre[data-label="' + lbl + '"]');
+                if (pre) {
+                    pre.scrollTop = pre.scrollHeight;
+                }
+            }
+        });
+    }
 })();

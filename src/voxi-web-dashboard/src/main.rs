@@ -107,6 +107,18 @@ const ALLOWED_CONFIGS: &[&str] = &[
     "system_prompt.txt",
     "hooks.json",
     "skills_state.json",
+    "channel_config.json",
+    "channels.json",
+    "autonomous_trigger.json",
+    "device_profile.json",
+    "fleet_config.json",
+    "llm_config_lmstudio.json",
+    "llm_config_mlx.json",
+    "memory_config.json",
+    "models.voice.json",
+    "offline_fallback.json",
+    "safety_bounds.json",
+    "user_profiles.json",
 ];
 const BRIDGE_RATE_LIMIT_PER_SECOND: usize = 10;
 
@@ -1041,7 +1053,11 @@ async fn api_logs(
     if !validate_token(&headers, &state).await {
         return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
     }
-    let date = q.date.unwrap_or_else(today_date_str);
+    let date = q.date.clone().unwrap_or_else(|| {
+        let dir = state.data_dir.join("logs");
+        let dates = collect_log_dates(&dir);
+        dates.last().cloned().unwrap_or_else(today_date_str)
+    });
     if !is_valid_date(&date) {
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid date format"));
     }

@@ -15,6 +15,11 @@ const SKILL_CAPABILITIES_CONFIG: &str = "skills_state.json";
 pub struct SkillCapabilityConfig {
     #[serde(default)]
     pub disabled_skills: Vec<String>,
+    /// When true, additionally scan the untrusted project-level `.claude/skills/`
+    /// root. The repo-convention `.agents/skills/` root is always trusted; only
+    /// `.claude/skills/` is gated behind this opt-in flag. Defaults to false.
+    #[serde(default)]
+    pub enable_project_skills: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -225,7 +230,8 @@ fn hash_str_u64(s: &str) -> u64 {
 
 impl SkillSnapshotFingerprint {
     fn compute(paths: &PlatformPaths, registrations: &RegisteredPaths) -> Self {
-        let roots = collect_skill_roots(paths, registrations);
+        let config = load_config(&paths.config_dir.join(SKILL_CAPABILITIES_CONFIG));
+        let roots = collect_skill_roots(paths, registrations, config.enable_project_skills);
         let root_signatures = roots
             .iter()
             .map(|root| SkillRootSignature::from_path(&root.path))
@@ -298,7 +304,7 @@ pub fn build_skill_snapshot(
     let config_path = paths.config_dir.join(SKILL_CAPABILITIES_CONFIG);
     let config = load_config(&config_path);
     let disabled = normalized_disabled_skills(&config.disabled_skills);
-    let roots = collect_skill_roots(paths, registrations);
+    let roots = collect_skill_roots(paths, registrations, config.enable_project_skills);
     let root_paths = roots
         .iter()
         .map(|root| root.path.as_str())
@@ -439,22 +445,40 @@ fn normalized_disabled_skills(raw: &[String]) -> Vec<String> {
     normalized.into_iter().collect()
 }
 
-fn collect_skill_roots(paths: &PlatformPaths, registrations: &RegisteredPaths) -> Vec<SkillRoot> {
+fn collect_skill_roots(
+    paths: &PlatformPaths,
+    registrations: &RegisteredPaths,
+    enable_project_skills: bool,
+) -> Vec<SkillRoot> {
     let mut roots = Vec::new();
+    // Trusted user-level root is always scanned first so its entries take
+    // precedence over any same-named repo skills (prevents name spoofing).
     roots.push(SkillRoot {
         path: paths.skills_dir.to_string_lossy().to_string(),
         kind: "user".to_string(),
         external: false,
     });
 
-    if let Ok(cwd) = std::env::current_dir() {
-        let repo_skills = cwd.join(".agents").join("skills");
-        if repo_skills.exists() && repo_skills.is_dir() {
-            roots.push(SkillRoot {
-                path: repo_skills.to_string_lossy().to_string(),
-                kind: "repo".to_string(),
-                external: false,
-            });
+    // Repository/workspace skill roots (`.agents/skills/` and `.claude/skills/`)
+    // are untrusted: they are scanned only when the operator explicitly opts in
+    // via enable_project_skills. The trusted user-level root above is always
+    // scanned and is pushed first so it takes precedence over any same-named
+    // repo skill (prevents name spoofing). Default agentic skills ship into the
+    // trusted root, so they remain available without enabling project skills.
+    if enable_project_skills {
+        if let Ok(cwd) = std::env::current_dir() {
+            for repo_root in [
+                cwd.join(".agents").join("skills"),
+                cwd.join(".claude").join("skills"),
+            ] {
+                if repo_root.exists() && repo_root.is_dir() {
+                    roots.push(SkillRoot {
+                        path: repo_root.to_string_lossy().to_string(),
+                        kind: "repo".to_string(),
+                        external: false,
+                    });
+                }
+            }
         }
     }
     roots.push(SkillRoot {
@@ -657,6 +681,7 @@ mod tests {
 
         let config = SkillCapabilityConfig {
             disabled_skills: vec!["external skill".to_string()],
+            ..Default::default()
         };
         fs::write(
             paths.config_dir.join(SKILL_CAPABILITIES_CONFIG),
