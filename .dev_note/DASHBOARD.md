@@ -742,6 +742,18 @@
 | Disable TV Channel on Port 9092 | Supervisor Gate 5 | PASS | UI and port termination verified successfully. |
 | Disable TV Channel on Port 9092 | 6. Commit | PASS | Staged and committed changes locally using the formatted commit message file. |
 | Disable TV Channel on Port 9092 | Supervisor Gate 6 | PASS | Commit message formatting and stage validations checked; changes pushed to remote branch. |
+| Light & Dark Theme Switch | 1. Planning | PASS | Plan created to add light and dark themes with a toggling switch in the sidebar. |
+| Light & Dark Theme Switch | Supervisor Gate 1 | PASS | Design plan reviewed and choice confirmed via user interview. |
+| Light & Dark Theme Switch | 2. Design | PASS | Designed CSS variables overlay, layout classes, toggle icon controls, and localStorage persistence. |
+| Light & Dark Theme Switch | Supervisor Gate 2 | PASS | Layout definitions adhere to existing UI styles. |
+| Light & Dark Theme Switch | 3. Development | PASS | Implemented Light theme variable overlays, UI elements, button toggler styling, and toggling logic inside index.html, style.css, and app.js. |
+| Light & Dark Theme Switch | Supervisor Gate 3 | PASS | Frontend styles, HTML structure, and JS logic updated cleanly. |
+| Light & Dark Theme Switch | 4. Build/Deploy | PASS | Rebuilt host binaries and deployed web dashboard assets successfully using ./deploy.sh. |
+| Light & Dark Theme Switch | Supervisor Gate 4 | PASS | Compilation succeeds and binary installation tree matches requirements. |
+| Light & Dark Theme Switch | 5. Test/Review | PASS | Verified all 569 test cases pass under `./deploy.sh --test`. Checked variables translation conceptually. |
+| Light & Dark Theme Switch | Supervisor Gate 5 | PASS | UI colors and theme persistence behavior validated. |
+
+
 
 
 
