@@ -357,6 +357,19 @@ impl AgentCore {
             return self.handle_cancellation(session_id, &request_id);
         }
 
+        // Surface a structured warning when the incoming prompt looks like a
+        // prompt-injection attempt. Detection-only (does not block legitimate
+        // prompts): the tool-call SafetyGuard remains the enforcement boundary.
+        if let Ok(guard) = self.safety_guard.lock() {
+            if guard.check_prompt_injection(prompt) {
+                log::warn!(
+                    "[Safety] Possible prompt-injection phrasing in session '{}' request '{}'",
+                    session_id,
+                    request_id
+                );
+            }
+        }
+
         let result = self
             .process_prompt_internal(session_id, prompt, &request_id, &req_state, on_chunk)
             .await;
