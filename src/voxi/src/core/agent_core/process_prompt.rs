@@ -76,7 +76,16 @@ impl AgentCore {
 
     fn parse_numbered_options(text: &str) -> Vec<(usize, String)> {
         static OPTION_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-            regex::Regex::new(r"(?m)^\s*(\d+)[\.\)]\s*(.*)$").unwrap()
+            match regex::Regex::new(r"(?m)^\s*(\d+)[\.\)]\s*(.*)$") {
+                Ok(re) => re,
+                Err(err) => {
+                    log::error!("Failed to compile option regex: {}", err);
+                    match regex::Regex::new("") {
+                        Ok(fallback) => fallback,
+                        Err(_) => unreachable!("Empty regex is guaranteed to compile"),
+                    }
+                }
+            }
         });
 
         let mut options = Vec::new();
@@ -263,7 +272,7 @@ impl AgentCore {
     }
 
     fn get_session_lock(&self, session_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-        let mut locks = self.session_locks.lock().unwrap();
+        let mut locks = self.session_locks.lock().unwrap_or_else(|err| err.into_inner());
         locks.entry(session_id.to_string())
             .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
             .clone()
@@ -339,7 +348,7 @@ impl AgentCore {
             cancelled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         {
-            let mut active = self.active_requests.lock().unwrap();
+            let mut active = self.active_requests.lock().unwrap_or_else(|err| err.into_inner());
             if active.contains_key(&request_id) {
                 return format!("Error: Duplicate active request ID {}", request_id);
             }
@@ -478,7 +487,11 @@ impl AgentCore {
                             };
                             let mut mcp = self.mcp_client_manager.write().await;
                             match mcp.call_tool_resolved(tool_name, &args) {
-                                Ok(val) => format!("Tool executed successfully:\n```json\n{}\n```", serde_json::to_string_pretty(&val).unwrap()),
+                                Ok(val) => {
+                                    let pretty = serde_json::to_string_pretty(&val)
+                                        .unwrap_or_else(|e| format!("Failed to serialize result: {}", e));
+                                    format!("Tool executed successfully:\n```json\n{}\n```", pretty)
+                                }
                                 Err(e) => format!("Tool execution failed: {:?}", e),
                             }
                         }
@@ -1237,7 +1250,7 @@ impl AgentCore {
             loop_state.record_prefetch_memory(None);
         } else if let Ok(ms) = self.memory_store.lock() {
             if let Some(store) = ms.as_ref() {
-                let mem_str = store.load_relevant_for_prompt(prompt, 5, 0.1);
+                let mem_str = store.load_relevant_fused(prompt, 5, 0.1);
                 if !mem_str.is_empty() {
                     let memory_context = format!(
                         "## Context from Long-Term Memory\n<long_term_memory>\n{}\n</long_term_memory>",
@@ -3475,7 +3488,11 @@ impl AgentCore {
 
                 // If it was a workflow tool, save output and advance if successful, or abort on failure.
                 if is_workflow_tool {
-                    let last_msg = messages.last().unwrap();
+                    let Some(last_msg) = messages.last() else {
+                        log::error!("Workflow tool executed but messages list is empty");
+                        loop_state.transition(AgentPhase::GoalParsing);
+                        continue;
+                    };
                     let output_val = if last_msg.role == "tool" {
                         last_msg.tool_result.clone()
                     } else {
@@ -3939,6 +3956,30 @@ impl AgentCore {
                 let final_text = extract_final_text(&response.text);
 
                 let mut text = final_text;
+
+                if loop_state.verification_attempts < 2 {
+                    if let Some(critique) = self.verify_candidate_response(prompt, &text).await {
+                        log::info!(
+                            "[Verification] Critique received (attempt {}): {}",
+                            loop_state.verification_attempts + 1,
+                            critique
+                        );
+                        messages.push(LlmMessage {
+                            role: "assistant".into(),
+                            text: response.text.clone(),
+                            reasoning_text: response.reasoning_text.clone(),
+                            ..Default::default()
+                        });
+                        messages.push(LlmMessage::user(&format!(
+                            "Critique: {}\nPlease correct the candidate response and address the critique.",
+                            critique
+                        )));
+                        loop_state.verification_attempts += 1;
+                        loop_state.transition(AgentPhase::RePlanning);
+                        continue;
+                    }
+                }
+
                 if is_dashboard_web_app_request {
                     if let Some(args) = generated_web_app_args_from_text(&text) {
                         let generated = self.generate_web_app(&args).await;
@@ -3980,7 +4021,9 @@ impl AgentCore {
                     "[ContextEngine] In-loop compaction triggered (round {})",
                     loop_state.round
                 );
-                messages = context_engine.compact(messages, loop_state.token_budget);
+                let compacted = context_engine.compact(messages.clone(), loop_state.token_budget);
+                self.summarize_and_store_pruned_messages(session_id, &messages, &compacted).await;
+                messages = compacted;
                 loop_state.token_used = context_engine.estimate_tokens(&messages);
                 self.persist_compacted_messages(session_id, &messages);
             }
@@ -4057,6 +4100,103 @@ impl AgentCore {
             &mut loop_state,
         )
         .await
+    }
+
+    pub async fn verify_candidate_response(
+        &self,
+        prompt: &str,
+        candidate_text: &str,
+    ) -> Option<String> {
+        let verification_system_prompt = "You are a rigorous response validator. Evaluate whether the candidate response completely and accurately answers the original prompt. If correct, output PASS. Otherwise, output corrections.";
+        let user_msg = format!("Original User Query:\n{}\n\nCandidate Response:\n{}", prompt, candidate_text);
+        let messages = vec![LlmMessage::user(&user_msg)];
+        let response = self.chat_with_fallback(&messages, &[], None, verification_system_prompt, Some(1024)).await;
+        if response.success {
+            let text = response.text.trim();
+            if text.to_ascii_lowercase().starts_with("pass") {
+                None
+            } else {
+                Some(text.to_string())
+            }
+        } else {
+            log::warn!("Verification call failed: {}", response.error_message);
+            None
+        }
+    }
+
+    pub async fn summarize_and_store_pruned_messages(
+        &self,
+        session_id: &str,
+        original_messages: &[LlmMessage],
+        compacted_messages: &[LlmMessage],
+    ) {
+        let before_len = original_messages.len();
+        let after_len = compacted_messages.len();
+        if after_len >= before_len {
+            return;
+        }
+
+        // Find which messages were dropped
+        let mut dropped_messages = Vec::new();
+        let mut comp_idx = 0;
+        for msg in original_messages {
+            if comp_idx < compacted_messages.len()
+                && msg.role == compacted_messages[comp_idx].role
+                && msg.text == compacted_messages[comp_idx].text
+                && msg.tool_call_id == compacted_messages[comp_idx].tool_call_id
+            {
+                comp_idx += 1;
+            } else {
+                dropped_messages.push(msg.clone());
+            }
+        }
+
+        if dropped_messages.is_empty() {
+            return;
+        }
+
+        let mut snippet = String::new();
+        for msg in &dropped_messages {
+            if msg.role == "system" {
+                continue;
+            }
+            snippet.push_str(&format!("{}: {}\n", msg.role, msg.text));
+            if !msg.tool_calls.is_empty() {
+                snippet.push_str(&format!("  Tool Calls: {:?}\n", msg.tool_calls));
+            }
+            if msg.role == "tool" {
+                snippet.push_str(&format!("  Tool Result: {}\n", msg.tool_result));
+            }
+        }
+
+        if snippet.is_empty() {
+            return;
+        }
+
+        let summarizer_system_prompt = "You are an episodic memory summarizer. Extract key facts, accomplishments, and decisions from the following conversation snippet in a bulleted format.";
+        let user_msg = format!("Conversation Snippet:\n{}", snippet);
+        let response = self
+            .chat_with_fallback(
+                &[LlmMessage::user(&user_msg)],
+                &[],
+                None,
+                summarizer_system_prompt,
+                Some(1024),
+            )
+            .await;
+
+        if response.success {
+            let summary = response.text.trim().to_string();
+            log::info!(
+                "[Compaction] Generated episodic memory summary:\n{}",
+                summary
+            );
+            if let Ok(mut ms_guard) = self.memory_store.lock() {
+                if let Some(store) = ms_guard.as_mut() {
+                    let _ = store.insert_episodic_memory(session_id, &summary);
+                }
+            }
+        }
     }
 }
 

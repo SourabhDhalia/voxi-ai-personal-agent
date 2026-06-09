@@ -4,8 +4,8 @@ pub struct SessionStoreRef<'a> {
 }
 
 impl<'a> SessionStoreRef<'a> {
-    pub fn store(&self) -> &SessionStore {
-        self.guard.as_ref().unwrap()
+    pub fn store(&self) -> Result<&SessionStore, String> {
+        self.guard.as_ref().ok_or_else(|| "SessionStore not initialized".to_string())
     }
 }
 

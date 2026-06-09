@@ -174,7 +174,14 @@ impl EventBus {
                 if let Ok(subs) = subscribers.lock() {
                     for sub in subs.iter() {
                         if sub.match_all || sub.event_type == event.event_type {
-                            (sub.callback)(&event);
+                            let callback = &sub.callback;
+                            let event_ref = &event;
+                            let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                                callback(event_ref);
+                            }));
+                            if let Err(e) = res {
+                                log::error!("EventBus: Subscriber callback panicked: {:?}", e);
+                            }
                         }
                     }
                 }
@@ -280,5 +287,36 @@ mod tests {
         let (lock, _) = &*bus.queue;
         let q = lock.lock().unwrap();
         assert_eq!(q.len(), MAX_QUEUE_SIZE);
+    }
+
+    #[test]
+    fn test_panicking_subscriber_does_not_crash_bus() {
+        let bus = EventBus::new();
+        let called_after_panic = Arc::new(AtomicI32::new(0));
+        let c = called_after_panic.clone();
+
+        // Subscriber 1: Panics
+        bus.subscribe_all(|_| {
+            panic!("Boom!");
+        });
+
+        // Subscriber 2: Normal
+        bus.subscribe_all(move |_| {
+            c.fetch_add(1, Ordering::SeqCst);
+        });
+
+        bus.start();
+
+        bus.publish(SystemEvent {
+            event_type: EventType::AppInstalled,
+            ..Default::default()
+        });
+
+        // Allow some time to dispatch
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        bus.stop();
+
+        // Subscriber 2 should still have been called successfully!
+        assert!(called_after_panic.load(Ordering::SeqCst) >= 1);
     }
 }

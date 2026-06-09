@@ -469,16 +469,23 @@ impl IpcServer {
                         .and_then(|value| value.as_str())
                         .unwrap_or("")
                         .trim();
+                    let store = match ss_ref.store() {
+                        Ok(s) => s,
+                        Err(err) => {
+                            log::error!("IPC get_usage: {}", err);
+                            return json!({"error": err}).to_string();
+                        }
+                    };
                     let usage = if session_id.is_empty() {
-                        ss_ref.store().load_daily_usage(date)
+                        store.load_daily_usage(date)
                     } else {
-                        ss_ref.store().load_token_usage(session_id)
+                        store.load_token_usage(session_id)
                     };
                     let baseline = crate::storage::session_store::TokenUsage::from_json(
                         params.get("baseline"),
                     );
                     let delta = usage.diff_from(&baseline);
-                    let total_tool_calls = ss_ref.store().get_total_tool_calls();
+                    let total_tool_calls = store.get_total_tool_calls();
                     json!({
                         "scope": if session_id.is_empty() { "daily" } else { "session" },
                         "session_id": if session_id.is_empty() { Value::Null } else { Value::String(session_id.to_string()) },

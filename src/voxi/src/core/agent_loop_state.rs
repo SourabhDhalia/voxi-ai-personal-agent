@@ -176,6 +176,9 @@ pub struct AgentLoopState {
     // Fallback strategy telemetry
     pub stuck_retry_count: usize,
     pub tool_budget_events: usize,
+
+    // Self-verification
+    pub verification_attempts: usize,
 }
 
 impl AgentLoopState {
@@ -215,6 +218,7 @@ impl AgentLoopState {
             active_workflow_id: None,
             current_workflow_step: 0,
             workflow_vars: std::collections::HashMap::new(),
+            verification_attempts: 0,
         }
     }
 
@@ -287,6 +291,7 @@ impl AgentLoopState {
             "last_prefetch_skills": self.last_prefetch_skills,
             "memory_prefetched": self.last_prefetch_memory.is_some(),
             "elapsed_secs": self.started_at.elapsed().as_secs(),
+            "verification_attempts": self.verification_attempts,
         })
     }
 

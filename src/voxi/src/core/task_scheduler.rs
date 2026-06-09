@@ -298,57 +298,69 @@ impl TaskScheduler {
             while running.load(Ordering::SeqCst) {
                 interval.tick().await;
 
-                let task_dir_path = task_dir.lock().ok().and_then(|dir| dir.clone());
-                if let Some(dir_path) = task_dir_path {
-                    let mut loaded = Vec::new();
-                    if let Ok(entries) = std::fs::read_dir(&dir_path) {
-                        for entry in entries.flatten() {
-                            if let Some(task) = TaskScheduler::parse_task_file(&entry.path()) {
-                                loaded.push(task);
+                let tasks_clone = tasks.clone();
+                let task_dir_clone = task_dir.clone();
+
+                let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let task_dir_path = task_dir_clone.lock().ok().and_then(|dir| dir.clone());
+                    if let Some(dir_path) = task_dir_path {
+                        let mut loaded = Vec::new();
+                        if let Ok(entries) = std::fs::read_dir(&dir_path) {
+                            for entry in entries.flatten() {
+                                if let Some(task) = TaskScheduler::parse_task_file(&entry.path()) {
+                                    loaded.push(task);
+                                }
+                            }
+                        }
+                        loaded.sort_by(|left, right| left.id.cmp(&right.id));
+                        if let Ok(mut shared_tasks) = tasks_clone.lock() {
+                            *shared_tasks = loaded;
+                        }
+                    }
+
+                    let task_list = match tasks_clone.lock() {
+                        Ok(t) => t.clone(),
+                        Err(_) => return,
+                    };
+                    let active_ids: std::collections::HashSet<String> =
+                        task_list.iter().map(|task| task.id.clone()).collect();
+                    next_run_at.retain(|task_id, _| active_ids.contains(task_id));
+
+                    let now = std::time::SystemTime::now();
+                    for task in &task_list {
+                        if !task.enabled {
+                            continue;
+                        }
+
+                        let due_at = next_run_at
+                            .entry(task.id.clone())
+                            .or_insert_with(|| task.initial_due_time());
+                        let should_run = now.duration_since(*due_at).is_ok();
+
+                        if should_run {
+                            log::debug!("Scheduler: executing task '{}'", task.name);
+
+                            if task.one_shot {
+                                if let Some(dir_path) = task_dir_clone.lock().ok().and_then(|dir| dir.clone())
+                                {
+                                    let _ = TaskScheduler::delete_task_file(&dir_path, &task.id);
+                                }
+                                if let Ok(mut ts) = tasks_clone.lock() {
+                                    ts.retain(|t| t.id != task.id);
+                                }
+                                next_run_at.remove(&task.id);
+                            } else {
+                                *due_at = task.next_due_time_from(now);
                             }
                         }
                     }
-                    loaded.sort_by(|left, right| left.id.cmp(&right.id));
-                    if let Ok(mut shared_tasks) = tasks.lock() {
-                        *shared_tasks = loaded;
-                    }
-                }
+                }));
 
-                let task_list = match tasks.lock() {
-                    Ok(t) => t.clone(),
-                    Err(_) => continue,
-                };
-                let active_ids: std::collections::HashSet<String> =
-                    task_list.iter().map(|task| task.id.clone()).collect();
-                next_run_at.retain(|task_id, _| active_ids.contains(task_id));
-
-                let now = std::time::SystemTime::now();
-                for task in &task_list {
-                    if !task.enabled {
-                        continue;
-                    }
-
-                    let due_at = next_run_at
-                        .entry(task.id.clone())
-                        .or_insert_with(|| task.initial_due_time());
-                    let should_run = now.duration_since(*due_at).is_ok();
-
-                    if should_run {
-                        log::debug!("Scheduler: executing task '{}'", task.name);
-
-                        if task.one_shot {
-                            if let Some(dir_path) = task_dir.lock().ok().and_then(|dir| dir.clone())
-                            {
-                                let _ = TaskScheduler::delete_task_file(&dir_path, &task.id);
-                            }
-                            if let Ok(mut ts) = tasks.lock() {
-                                ts.retain(|t| t.id != task.id);
-                            }
-                            next_run_at.remove(&task.id);
-                        } else {
-                            *due_at = task.next_due_time_from(now);
-                        }
-                    }
+                if let Err(e) = res {
+                    log::error!(
+                        "TaskScheduler: Background thread loop panicked! Panic payload: {:?}",
+                        e
+                    );
                 }
             }
             log::info!("TaskScheduler stopped");
