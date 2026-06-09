@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Voxi Dashboard</title>
   <meta name="description" content="Voxi AI Agent System Dashboard">
-  <link rel="stylesheet" href="/style.css?v=20260405d">
+  <link rel="stylesheet" href="/style.css?v=20260608c">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
@@ -31,6 +31,10 @@
         <li class="nav-item active" data-page="dashboard" id="nav-dashboard">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
           <span>Dashboard</span>
+        </li>
+        <li class="nav-item" data-page="search" id="nav-search">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <span>Search</span>
         </li>
         <li class="nav-item" data-page="sessions" id="nav-sessions">
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
@@ -68,9 +72,9 @@
           <span class="status-dot" id="status-dot"></span>
           <span class="status-label" id="status-label">Connecting...</span>
         </div>
-        <button class="theme-toggle-btn" id="theme-toggle-btn" title="Toggle Theme" aria-label="Toggle Theme">
-          <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-          <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Toggle light and dark theme" title="Toggle theme">
+          <svg class="theme-icon-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+          <svg class="theme-icon-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
         </button>
       </div>
     </nav>
@@ -244,6 +248,48 @@
             </div>
           </div>
         </div>
+
+        <!-- Live Trends -->
+        <h3 class="section-title">Live Trends <span class="section-sub">(this session · 5s samples)</span></h3>
+        <div class="trends-grid">
+          <div class="trend-card">
+            <div class="trend-head"><span class="trend-label">CPU Load (1m)</span><span class="trend-now" id="trend-cpu-now">—</span></div>
+            <canvas class="trend-canvas" id="chart-cpu" width="300" height="64" role="img" aria-label="CPU load trend (live)"></canvas>
+          </div>
+          <div class="trend-card">
+            <div class="trend-head"><span class="trend-label">Memory (MB)</span><span class="trend-now" id="trend-mem-now">—</span></div>
+            <canvas class="trend-canvas" id="chart-mem" width="300" height="64" role="img" aria-label="Memory usage trend (live)"></canvas>
+          </div>
+          <div class="trend-card">
+            <div class="trend-head"><span class="trend-label">LLM Calls (today)</span><span class="trend-now" id="trend-calls-now">—</span></div>
+            <canvas class="trend-canvas" id="chart-calls" width="300" height="64" role="img" aria-label="LLM calls trend (live)"></canvas>
+          </div>
+          <div class="trend-card">
+            <div class="trend-head"><span class="trend-label">Total Tokens (today)</span><span class="trend-now" id="trend-tokens-now">—</span></div>
+            <canvas class="trend-canvas" id="chart-tokens" width="300" height="64" role="img" aria-label="Total tokens trend (live)"></canvas>
+          </div>
+        </div>
+
+        <!-- Model Providers -->
+        <h3 class="section-title">Model Providers</h3>
+        <div class="llm-providers" id="llm-providers">
+          <p class="empty-state">Loading…</p>
+        </div>
+      </section>
+
+      <!-- Search Page -->
+      <section class="page" id="page-search">
+        <div class="page-header">
+          <h2 class="page-title">Semantic Search</h2>
+          <span class="refresh-hint">On-device embeddings · all-MiniLM-L6-v2</span>
+        </div>
+        <div class="search-box">
+          <svg class="search-box-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="search" id="search-input" placeholder="Search memory by meaning…  ( Ctrl / ⌘ K )" autocomplete="off" aria-label="Semantic search query">
+          <button id="search-btn" class="btn-primary">Search</button>
+        </div>
+        <p class="search-hint" id="search-hint">Matches stored agent memory by semantic similarity, not just keywords.</p>
+        <div class="card-list" id="search-results" aria-live="polite"></div>
       </section>
 
       <!-- Sessions Page -->
@@ -516,7 +562,7 @@
   </div>
 
   <!-- Toast container -->
-  <div id="toast-container" class="toast-container"></div>
+  <div id="toast-container" class="toast-container" role="status" aria-live="polite"></div>
 
   <!-- Hook Approval Modal -->
   <div id="hook-approval-modal" class="modal-overlay hidden">
@@ -553,7 +599,7 @@
   </div>
 
   <script src="/marked.min.js"></script>
-  <script src="/app.js?v=20260406b"></script>
+  <script src="/app.js?v=20260608c"></script>
 </body>
 
 </html>

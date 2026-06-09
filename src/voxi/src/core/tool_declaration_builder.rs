@@ -592,6 +592,18 @@ impl ToolDeclarationBuilder {
                 "required": []
             }),
         });
+        tools.push(LlmToolDecl {
+            name: "web_fetch".into(),
+            description: "Fetch a public web page or URL over HTTP(S) and return its readable text content. Use after web_search to read a result page, or to read a known URL.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Absolute http:// or https:// URL to fetch"},
+                    "max_chars": {"type": "integer", "description": "Maximum characters of content to return", "minimum": 500, "maximum": 50000}
+                },
+                "required": ["url"]
+            }),
+        });
     }
 
     fn push_document_tools(tools: &mut Vec<LlmToolDecl>) {

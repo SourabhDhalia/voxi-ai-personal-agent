@@ -17,6 +17,10 @@ impl OpenAiBackend {
     pub fn new(provider: &str) -> Self {
         let (endpoint, model) = match provider {
             "xai" => ("https://api.x.ai/v1", "grok-3-mini-fast"),
+            // OpenRouter is OpenAI-compatible and exposes 200+ models behind one
+            // key. Default model can be overridden via config `model` (e.g.
+            // "anthropic/claude-3.5-sonnet", "google/gemini-pro-1.5").
+            "openrouter" => ("https://openrouter.ai/api/v1", "openai/gpt-4o"),
             _ => ("https://api.openai.com/v1", "gpt-4o"),
         };
         OpenAiBackend {
@@ -171,5 +175,31 @@ impl LlmBackend for OpenAiBackend {
 
     fn get_name(&self) -> &str {
         &self.provider_name
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OpenAiBackend;
+    use crate::llm::backend::LlmBackend;
+    use serde_json::json;
+
+    #[test]
+    fn openrouter_uses_openrouter_endpoint() {
+        let backend = OpenAiBackend::new("openrouter");
+        assert_eq!(backend.endpoint, "https://openrouter.ai/api/v1");
+        assert_eq!(backend.provider_name, "openrouter");
+        assert_eq!(backend.model, "openai/gpt-4o");
+    }
+
+    #[test]
+    fn endpoint_overridable_via_config() {
+        let mut backend = OpenAiBackend::new("openrouter");
+        backend.initialize(&json!({
+            "api_key": "sk-test",
+            "model": "anthropic/claude-3.5-sonnet"
+        }));
+        assert_eq!(backend.model, "anthropic/claude-3.5-sonnet");
+        assert_eq!(backend.endpoint, "https://openrouter.ai/api/v1");
     }
 }
