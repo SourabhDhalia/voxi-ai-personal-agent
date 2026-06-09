@@ -431,8 +431,16 @@
         }
         const active = cfg.active_backend || '—';
         const fallbacks = Array.isArray(cfg.fallback_backends) ? cfg.fallback_backends : [];
-        const providers = (cfg.providers && typeof cfg.providers === 'object')
-            ? Object.keys(cfg.providers) : [];
+        let providers = [];
+        if (cfg.providers && typeof cfg.providers === 'object') {
+            if (Array.isArray(cfg.providers)) {
+                providers = cfg.providers.map(p => p.name || p);
+            } else {
+                providers = Object.keys(cfg.providers);
+            }
+        } else if (cfg.backends && typeof cfg.backends === 'object') {
+            providers = Object.keys(cfg.backends);
+        }
         let html = '<div class="llm-card">';
         html += '<div class="llm-row"><span class="llm-label">Active backend</span>'
             + '<span class="llm-active">' + escHtml(String(active)) + '</span></div>';
@@ -1534,10 +1542,10 @@
         if (lower.includes('cart') || lower.includes('added') || lower.includes('checkout')) {
             add('View cart', 'show cart');
         }
-        if (lower.includes('payment') || lower.includes('checkout') || lower.includes('order')) {
+        if (lower.includes('payment') || lower.includes('checkout') || (lower.includes('order') && !lower.includes('session management') && !lower.includes('available tools') && !lower.includes('tool policy'))) {
             add('Show payment options', 'show payment options');
         }
-        if (lower.includes('order') || lower.includes('checkout') || lower.includes('session')) {
+        if (lower.includes('cancel order') || lower.includes('cancel your order') || (lower.includes('checkout') && lower.includes('order')) || (lower.includes('order') && lower.includes('placed')) || lower.includes('confirm order')) {
             add('Cancel order', 'cancel order');
         }
 

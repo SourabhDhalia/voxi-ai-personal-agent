@@ -1645,7 +1645,24 @@ async fn api_search(
 // providers). Carries no secrets — API keys live in the separate key store.
 async fn api_llm_config() -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     match tokio::task::spawn_blocking(|| ipc_call("get_llm_config", json!({}))).await {
-        Ok(Ok(v)) => Ok(Json(v)),
+        Ok(Ok(mut v)) => {
+            let mut config = v.get_mut("value").cloned().unwrap_or(json!({}));
+
+            if let Ok(Ok(mut runtime_resp)) = tokio::task::spawn_blocking(|| ipc_call("get_llm_runtime", json!({}))).await {
+                if let Some(runtime_val) = runtime_resp.get_mut("value") {
+                    if let Some(primary) = runtime_val.get("runtime_primary_backend").cloned() {
+                        if !primary.is_null() {
+                            config["active_backend"] = primary;
+                        }
+                    }
+                    if let Some(providers) = runtime_val.get("providers").cloned() {
+                        config["providers"] = providers;
+                    }
+                }
+            }
+
+            Ok(Json(config))
+        }
         Ok(Err(e)) => Err(json_error(
             StatusCode::BAD_GATEWAY,
             &format!("agent unavailable: {e}"),

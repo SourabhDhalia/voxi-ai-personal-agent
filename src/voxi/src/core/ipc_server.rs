@@ -617,6 +617,13 @@ impl IpcServer {
                 }
             }
 
+            "get_llm_runtime" => {
+                json!({
+                    "status": "ok",
+                    "value": agent.get_llm_runtime()
+                })
+            }
+
             "set_llm_config" => {
                 let path = params["path"].as_str().unwrap_or("");
                 if path.is_empty() {
