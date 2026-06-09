@@ -883,7 +883,7 @@ impl AgentCore {
             .as_ref()
             .and_then(|profile| profile.max_iterations)
         {
-            loop_state.max_tool_rounds = max_iterations;
+            loop_state.set_max_tool_rounds(max_iterations);
         }
         let skill_reference_docs = if literal_json_output {
             Vec::new()

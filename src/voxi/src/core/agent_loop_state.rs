@@ -182,8 +182,18 @@ impl AgentLoopState {
     pub const DEFAULT_TOKEN_BUDGET: usize = 256_000;
     pub const DEFAULT_COMPACT_THRESHOLD: f32 = 0.90;
     pub const DEFAULT_MAX_TOOL_ROUNDS: usize = 10;
+    /// Hard ceiling on tool rounds. A session profile may raise the per-session
+    /// budget, but never above this — a runaway-loop safety net.
+    pub const ABSOLUTE_MAX_TOOL_ROUNDS: usize = 100;
     /// Idle detection window: if last N outputs are identical → Stuck
     pub const IDLE_WINDOW: usize = 3;
+
+    /// Apply a session-profile override to the tool-round budget, clamped to the
+    /// hard ceiling so a misconfigured or hostile profile cannot run the agent
+    /// loop away.
+    pub fn set_max_tool_rounds(&mut self, requested: usize) {
+        self.max_tool_rounds = requested.min(Self::ABSOLUTE_MAX_TOOL_ROUNDS);
+    }
 
     pub fn new(session_id: &str, goal: &str) -> Self {
         AgentLoopState {
@@ -415,6 +425,17 @@ mod tests {
         assert!(!s.is_round_limit_reached());
         s.round = 5;
         assert!(s.is_round_limit_reached());
+    }
+
+    #[test]
+    fn max_tool_rounds_clamped_to_ceiling() {
+        let mut s = AgentLoopState::new("sess1", "goal");
+        // A profile asking for a runaway budget is capped at the hard ceiling.
+        s.set_max_tool_rounds(1_000_000);
+        assert_eq!(s.max_tool_rounds, AgentLoopState::ABSOLUTE_MAX_TOOL_ROUNDS);
+        // A reasonable override is honored as-is.
+        s.set_max_tool_rounds(7);
+        assert_eq!(s.max_tool_rounds, 7);
     }
 
     #[test]
