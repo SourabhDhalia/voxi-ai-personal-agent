@@ -493,6 +493,25 @@ impl IpcServer {
                 json!({"status": "ok", "query": query, "count": results.len(), "results": results})
             }
 
+            "spawn_subagents" => {
+                let subtasks: Vec<String> = params
+                    .get("subtasks")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if subtasks.is_empty() {
+                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing subtasks"},"id":req_id})
+                        .to_string();
+                }
+                let session_id = Self::resolve_session_id(params["session_id"].as_str(), "ipc");
+                let fut = agent.run_subagents(&session_id, subtasks);
+                tokio::task::block_in_place(|| rt_handle.block_on(fut))
+            }
+
             "get_usage" => {
                 if let Some(ss_ref) = agent.get_session_store() {
                     let session_id = params
