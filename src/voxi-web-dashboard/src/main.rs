@@ -1312,7 +1312,27 @@ async fn api_config_set(
         let _ = std::fs::copy(&fpath, state.config_dir.join(format!("{}.bak", name)));
     }
     match std::fs::write(&fpath, content) {
-        Ok(()) => Ok(Json(json!({"status": "ok", "name": name}))),
+        Ok(()) => {
+            // Ask the daemon to apply the change live so the user does not have
+            // to restart. The daemon reports whether it reloaded in-place or
+            // still needs a restart for this particular config.
+            let reload_name = name.clone();
+            let reload = tokio::task::spawn_blocking(move || {
+                ipc_call("reload_config", json!({ "name": reload_name }))
+            })
+            .await
+            .ok()
+            .and_then(|r| r.ok());
+            let mut resp = json!({ "status": "ok", "name": name });
+            resp["reload"] = reload.unwrap_or_else(|| {
+                json!({
+                    "status": "restart_required",
+                    "applied": false,
+                    "detail": "Daemon did not confirm reload; restart to apply."
+                })
+            });
+            Ok(Json(resp))
+        }
         Err(_) => Err(json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "Failed to write config",
