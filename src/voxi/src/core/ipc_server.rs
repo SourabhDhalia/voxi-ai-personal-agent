@@ -616,6 +616,16 @@ impl IpcServer {
                 }
             }
 
+            "reload_config" => {
+                let name = params["name"].as_str().unwrap_or("");
+                if name.is_empty() {
+                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'name'"},"id":req_id})
+                        .to_string();
+                }
+                let fut = agent.reload_config(name);
+                tokio::task::block_in_place(|| rt_handle.block_on(fut))
+            }
+
             "start_channel" => {
                 let name = params["name"].as_str().unwrap_or("");
                 if name.is_empty() {

@@ -735,6 +735,106 @@ impl AgentCore {
         );
     }
 
+    /// Reloads a single config file into the running daemon so edits take
+    /// effect without a restart. Mirrors the boot-time load for each subsystem.
+    /// Returns a status describing whether the change was applied live or still
+    /// needs a restart (configs without a live reload path say so honestly).
+    pub async fn reload_config(&self, name: &str) -> Value {
+        let config_dir = self.platform.paths.config_dir.clone();
+        let applied = |detail: &str| {
+            json!({"status": "reloaded", "name": name, "applied": true, "detail": detail})
+        };
+
+        match name {
+            "tool_policy.json" => {
+                let policy_path = config_dir.join("tool_policy.json");
+                if let Ok(mut tp) = self.tool_policy.lock() {
+                    tp.load_config(&policy_path.to_string_lossy());
+                }
+                self.reload_safety_guard();
+                self.publish_runtime_event("reload_config", json!({"name": name}));
+                applied("Tool policy reloaded")
+            }
+            "safety_bounds.json" => {
+                self.reload_safety_guard();
+                self.publish_runtime_event("reload_config", json!({"name": name}));
+                applied("Safety guard reloaded")
+            }
+            "agent_roles.json" => {
+                if let Ok(mut roles) = self.agent_roles.write() {
+                    roles.ensure_builtin_roles();
+                    let role_path = self.role_file_path();
+                    let _ = roles.load_roles(&role_path.to_string_lossy());
+                }
+                self.publish_runtime_event("reload_config", json!({"name": name}));
+                applied("Agent roles reloaded")
+            }
+            "system_prompt.txt" => {
+                let prompt_path = config_dir.join("system_prompt.txt");
+                let prompt = std::fs::read_to_string(&prompt_path).unwrap_or_else(|_| {
+                    "You are Voxi, an AI assistant that can execute tools \
+                     to help users interact with the system."
+                        .into()
+                });
+                if let Ok(mut sp) = self.system_prompt.write() {
+                    *sp = prompt;
+                }
+                self.publish_runtime_event("reload_config", json!({"name": name}));
+                applied("System prompt reloaded")
+            }
+            "SOUL.md" => {
+                let soul_path = config_dir.join("SOUL.md");
+                if let Ok(soul) = std::fs::read_to_string(&soul_path) {
+                    if let Ok(mut sc) = self.soul_content.write() {
+                        *sc = Some(soul);
+                    }
+                }
+                self.publish_runtime_event("reload_config", json!({"name": name}));
+                applied("Persona reloaded")
+            }
+            "hooks.json" => {
+                let new_config = crate::core::hooks::HooksConfig::load(&config_dir);
+                if let Ok(mut hc) = self.hooks_config.lock() {
+                    *hc = new_config;
+                }
+                self.publish_runtime_event("reload_config", json!({"name": name}));
+                applied("Hooks reloaded")
+            }
+            "llm_config.json" | "llm_config_lmstudio.json" | "llm_config_mlx.json" => {
+                match self.reload_llm_backends().await {
+                    Ok(_) => {
+                        self.publish_runtime_event("reload_config", json!({"name": name}));
+                        applied("LLM backends reloaded")
+                    }
+                    Err(e) => {
+                        json!({"status": "error", "name": name, "applied": false, "detail": e})
+                    }
+                }
+            }
+            "mcp_servers.json" => {
+                {
+                    let mcp_config_path = config_dir.join("mcp_servers.json");
+                    let mut mcp = self.mcp_client_manager.write().await;
+                    let _ = mcp.load_config_and_connect(&mcp_config_path.to_string_lossy());
+                }
+                self.generate_mcp_workflows().await;
+                self.run_startup_indexing().await;
+                self.publish_runtime_event("reload_config", json!({"name": name}));
+                applied("MCP servers reloaded")
+            }
+            "voice_config.json" => {
+                // Read fresh by the web dashboard per request, so already live.
+                applied("Voice config is served live by the dashboard")
+            }
+            _ => json!({
+                "status": "restart_required",
+                "name": name,
+                "applied": false,
+                "detail": "No live reload path for this config yet; restart to apply."
+            }),
+        }
+    }
+
     pub async fn run_startup_indexing(&self) {
         use crate::core::tool_indexer;
 

@@ -1,3 +1,0 @@
-- [ ] Update `src/libvoxi-core/Cargo.toml` to switch `reqwest` from `native-tls-vendored` to dynamic `native-tls`.
-- [ ] Update `src/voxi/Cargo.toml` to switch `reqwest` from `native-tls-vendored` to dynamic `native-tls`.
-- [ ] Run verification tests to ensure offline build compiles successfully and build times are optimized.

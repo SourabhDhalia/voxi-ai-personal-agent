@@ -1794,9 +1794,11 @@
 
     function populateVoiceList() {
         if (!voiceVoiceSel || !('speechSynthesis' in window)) return;
-        const voices = window.speechSynthesis.getVoices() || [];
+        const voices = (window.speechSynthesis.getVoices() || [])
+            .slice()
+            .sort((a, b) => scoreVoice(b) - scoreVoice(a));
         voiceVoiceSel.innerHTML =
-            '<option value="">Default</option>' +
+            '<option value="">Default (best available)</option>' +
             voices.map(v =>
                 '<option value="' + escHtml(v.name) + '">' +
                 escHtml(v.name + ' (' + v.lang + ')') + '</option>'
@@ -1810,23 +1812,65 @@
         if (voiceSpeakChk) voiceSpeakChk.checked = !!voiceConfig.speak_replies;
         populateVoiceList();
         if (voiceNote) {
-            voiceNote.textContent = voiceConfig.engine === 'device'
-                ? 'Device engine uses the Voxi pipeline (requires models + streaming endpoint).'
-                : 'Browser engine: STT/TTS run locally in your browser.';
+            const notes = {
+                kokoro_browser:
+                    'Natural engine: neural TTS runs on-device (downloads a small ' +
+                    'model on first use; needs WebGPU). Falls back to a browser voice.',
+                device:
+                    'Device pipeline has no streaming endpoint on this build; ' +
+                    'voice falls back to the browser engine automatically.',
+                browser:
+                    'Browser engine: STT/TTS run locally in your browser. ' +
+                    'Pick a specific voice below for the most natural sound.'
+            };
+            voiceNote.textContent = notes[voiceConfig.engine] || notes.browser;
         }
+    }
+
+    // Names that signal a high-quality / natural voice across platforms.
+    const NATURAL_VOICE_HINTS = [
+        'natural', 'neural', 'online', 'enhanced', 'premium', 'google',
+        'siri', 'samantha', 'ava', 'allison', 'serena', 'zoe', 'jamie',
+        'aria', 'jenny', 'guy', 'libby', 'sonia'
+    ];
+    // macOS/Chrome novelty + legacy formant voices that sound robotic.
+    const ROBOTIC_VOICE_HINTS = [
+        'albert', 'bad news', 'bahh', 'bells', 'boing', 'bubbles', 'cellos',
+        'wobble', 'zarvox', 'trinoids', 'whisper', 'good news', 'jester',
+        'organ', 'superstar', 'fred', 'ralph', 'kathy', 'junior', 'deranged',
+        'hysterical', 'pipe organ', 'eddy', 'flo', 'grandma', 'grandpa',
+        'reed', 'rocko', 'sandy', 'shelley'
+    ];
+
+    function scoreVoice(v) {
+        const name = (v.name || '').toLowerCase();
+        let score = 0;
+        if (NATURAL_VOICE_HINTS.some(h => name.includes(h))) score += 100;
+        if (ROBOTIC_VOICE_HINTS.some(h => name.includes(h))) score -= 100;
+        // Remote/cloud voices (localService === false) are usually neural.
+        if (v.localService === false) score += 30;
+        // Default platform voice is a reasonable tiebreaker.
+        if (v.default) score += 5;
+        return score;
     }
 
     function pickVoice() {
         if (!('speechSynthesis' in window)) return null;
         const voices = window.speechSynthesis.getVoices() || [];
+        if (!voices.length) return null;
         if (voiceConfig.browser_voice) {
-            return voices.find(v => v.name === voiceConfig.browser_voice) || null;
+            const exact = voices.find(v => v.name === voiceConfig.browser_voice);
+            if (exact) return exact;
         }
-        return voices.find(v =>
-            v.lang === voiceConfig.language) ||
-            voices.find(v =>
-                v.lang.startsWith((voiceConfig.language || 'en').slice(0, 2))) ||
-            null;
+        const lang = voiceConfig.language || 'en-US';
+        const prefix = lang.slice(0, 2).toLowerCase();
+        const matches = voices.filter(v => {
+            const vlang = (v.lang || '').toLowerCase().replace('_', '-');
+            return vlang === lang.toLowerCase() || vlang.startsWith(prefix);
+        });
+        const pool = matches.length ? matches : voices;
+        // Highest-scoring (most natural) voice for the language wins.
+        return pool.slice().sort((a, b) => scoreVoice(b) - scoreVoice(a))[0] || null;
     }
 
     let kokoroModel = null;
@@ -1932,10 +1976,13 @@
                 'Voice input not supported in this browser (try Chrome/Edge/Safari)';
         } else {
             chatMic.addEventListener('click', () => {
+                // The "device" pipeline has no streaming endpoint on this build,
+                // so fall back to in-browser speech recognition instead of
+                // blocking voice input entirely.
                 if (voiceConfig.engine === 'device') {
-                    addChatMsg('assistant',
-                        'Device voice engine is selected but its streaming endpoint is not available on this build. Switch to the Browser engine in voice settings, or install voice models for the device pipeline.');
-                    return;
+                    console.info(
+                        'Device voice pipeline unavailable on this build; ' +
+                        'using browser speech recognition for input.');
                 }
                 startBrowserMic();
             });
@@ -2915,15 +2962,18 @@
             rawEditor.value = content;
             activeConfigParsed =
                 tryParseJson(content);
-            msg.textContent =
-                'Saved successfully!';
-            msg.className =
-                'config-modal-msg success';
+            const reload = resp.reload || {};
+            const live = reload.applied === true;
+            const label = CONFIG_LABELS[name] || name;
+            msg.textContent = live
+                ? 'Saved & applied live.'
+                : 'Saved. Restart the daemon to apply this config.';
+            msg.className = 'config-modal-msg ' +
+                (live ? 'success' : 'warning');
             await loadConfigs();
             showToast(
-                (CONFIG_LABELS[name] || name) +
-                ' saved',
-                'success'
+                label + (live ? ' applied live' : ' saved (restart to apply)'),
+                live ? 'success' : 'warning'
             );
         } else {
             msg.textContent =

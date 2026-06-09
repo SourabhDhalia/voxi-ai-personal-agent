@@ -125,3 +125,8 @@ src/voxi/error.log
 # Prompts
 .prompt
 .analysis/
+
+# Voxi Development Agent Operation Rules & Plans
+.dev_note/
+plans/
+
