@@ -51,6 +51,24 @@ impl AgentCore {
         }
     }
 
+    /// Semantic search over stored memory using the on-device embedding model.
+    /// Encapsulates the memory store: returns ranked hits, or an empty vec if
+    /// memory or the embedding engine is unavailable.
+    pub fn search_memory(
+        &self,
+        query: &str,
+        top_k: usize,
+        threshold: f32,
+    ) -> Vec<crate::storage::memory_store::SemanticHit> {
+        match self.memory_store.lock() {
+            Ok(guard) => match guard.as_ref() {
+                Some(store) => store.search_semantic(query, top_k, threshold),
+                None => Vec::new(),
+            },
+            Err(_) => Vec::new(),
+        }
+    }
+
     fn llm_config_path_affects_backends(path: &str) -> bool {
         matches!(
             path.split('.').next(),
@@ -494,6 +512,39 @@ impl AgentCore {
                     "resumable": false,
                 })
             })
+    }
+
+    /// Run several sub-tasks as parallel sub-agents, each in its own child
+    /// session, with bounded concurrency. Returns the aggregated results. This
+    /// is a top-level fan-out — each child is an independent agent turn (like a
+    /// separate IPC client), so it never nests inside the tool loop, and child
+    /// sessions cannot themselves fan out (spawn is not exposed as an LLM tool).
+    pub async fn run_subagents(&self, parent_session: &str, subtasks: Vec<String>) -> Value {
+        const MAX_SUBAGENTS: usize = 8;
+        const MAX_CONCURRENT: usize = 4;
+        let subtasks: Vec<String> = subtasks
+            .into_iter()
+            .map(|task| task.trim().to_string())
+            .filter(|task| !task.is_empty())
+            .take(MAX_SUBAGENTS)
+            .collect();
+        if subtasks.is_empty() {
+            return json!({ "error": "no subtasks provided" });
+        }
+        let parent = parent_session.to_string();
+        let results = crate::core::parallel::run_parallel_bounded(
+            subtasks,
+            MAX_CONCURRENT,
+            |index, task| {
+                let child_session = format!("{}__sub{}", parent, index + 1);
+                async move {
+                    let output = self.process_prompt(&child_session, &task, None).await;
+                    json!({ "index": index + 1, "subtask": task, "result": output })
+                }
+            },
+        )
+        .await;
+        json!({ "status": "success", "count": results.len(), "results": results })
     }
 
     pub fn session_runtime_status(&self, session_id: &str) -> Value {

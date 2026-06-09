@@ -352,6 +352,7 @@ async fn main() {
         .route("/api/bridge/chat", post(api_bridge_chat))
         .route("/api/voice/config", get(api_voice_config))
         .route("/api/capabilities", get(api_capabilities))
+        .route("/api/search", get(api_search))
         .route("/api/events", get(api_events))
         .route("/api/skills", get(api_skills_get).post(api_skills_post))
         .route("/api/skills/approve", post(api_skills_approve))
@@ -1580,6 +1581,43 @@ async fn api_voice_config(
             })
         });
     Ok(Json(json!({"status": "ok", "config": config})))
+}
+
+#[derive(serde::Deserialize)]
+struct SearchQuery {
+    q: Option<String>,
+    top_k: Option<u64>,
+    threshold: Option<f64>,
+}
+
+// Semantic search over agent memory, powered by the on-device ONNX embedding
+// model (all-MiniLM-L6-v2) and cosine ranking in the daemon.
+async fn api_search(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+    let q = query.q.unwrap_or_default().trim().to_string();
+    if q.is_empty() {
+        return Err(json_error(StatusCode::BAD_REQUEST, "Missing q"));
+    }
+    let top_k = query.top_k.unwrap_or(8).clamp(1, 50);
+    let threshold = query.threshold.unwrap_or(0.25);
+    let params = json!({ "query": q, "top_k": top_k, "threshold": threshold });
+    match tokio::task::spawn_blocking(move || ipc_call("semantic_search", params)).await {
+        Ok(Ok(v)) => Ok(Json(v)),
+        Ok(Err(e)) => Err(json_error(
+            StatusCode::BAD_GATEWAY,
+            &format!("agent unavailable: {e}"),
+        )),
+        Err(_) => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "search task failed",
+        )),
+    }
 }
 
 // Live agent capabilities for the chat slash-command palette: tools (via the

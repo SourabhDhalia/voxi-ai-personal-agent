@@ -660,6 +660,30 @@ impl AgentCore {
         }
 
         let mut loop_state = AgentLoopState::new(session_id, prompt);
+        // Resume in-flight progress if a prior run for this exact goal was
+        // interrupted before completion (durable checkpoint after a crash or
+        // restart). A different prompt, or a run that already completed, starts
+        // fresh.
+        {
+            let checkpoint = self.load_loop_snapshot(session_id);
+            let resumable = checkpoint
+                .get("resumable")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let same_goal = checkpoint
+                .get("original_goal")
+                .and_then(|v| v.as_str())
+                .map(|g| g == prompt)
+                .unwrap_or(false);
+            if resumable && same_goal {
+                loop_state.restore_from(&checkpoint);
+                log::info!(
+                    "[AgentLoop] Resumed session '{}' from checkpoint at round {}",
+                    session_id,
+                    loop_state.round
+                );
+            }
+        }
         let mut skip_memory_extraction = false;
         let mut auto_prepared_skill_name: Option<String> = None;
 
@@ -883,7 +907,7 @@ impl AgentCore {
             .as_ref()
             .and_then(|profile| profile.max_iterations)
         {
-            loop_state.max_tool_rounds = max_iterations;
+            loop_state.set_max_tool_rounds(max_iterations);
         }
         let skill_reference_docs = if literal_json_output {
             Vec::new()
@@ -3033,6 +3057,14 @@ impl AgentCore {
                                 &session_workdir,
                                 &search_config_dir,
                             ).await
+                        } else if tc_name == "web_fetch" {
+                            let url = tc_args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                            let max_chars = tc_args
+                                .get("max_chars")
+                                .and_then(|v| v.as_u64())
+                                .map(|v| v as usize)
+                                .unwrap_or(8000);
+                            feature_tools::web_fetch(url, max_chars).await
                         } else if tc_name == "remember" {
                             if let Some(store) = ms_clone {
                                 let key = tc_args.get("key").and_then(|v| v.as_str()).unwrap_or("");

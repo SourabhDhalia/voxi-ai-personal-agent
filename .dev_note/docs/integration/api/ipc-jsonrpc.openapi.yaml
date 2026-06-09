@@ -1,0 +1,128 @@
+openapi: "3.1.0"
+info:
+  title: Voxi Daemon IPC (JSON-RPC 2.0)
+  version: "1.0.0"
+  description: >
+    Voxi's primary control plane. Transport is JSON-RPC 2.0 over a local socket
+    using 4-byte big-endian length-prefix framing (NOT HTTP). This OpenAPI
+    document is a *documentation projection*: every method is modeled as a POST
+    to the synthetic `/rpc` endpoint carrying a JSON-RPC envelope. The method
+    catalog below is derived from `tests/system/*.json` contracts and
+    `core/ipc_server.rs`. Use the `tizenclaw-tests`/`voxi-tests` runner to
+    validate a live daemon against `tests/system/*.json`.
+servers:
+  - url: "unix:///run/voxi/ipc.sock"
+    description: Local IPC socket (length-prefixed JSON-RPC frames)
+paths:
+  /rpc:
+    post:
+      summary: Invoke a JSON-RPC method
+      operationId: invokeRpc
+      tags: [JSON-RPC]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RpcRequest" }
+            examples:
+              ping:
+                value: { jsonrpc: "2.0", id: 1, method: "ping", params: {} }
+              process_prompt:
+                value:
+                  jsonrpc: "2.0"
+                  id: 2
+                  method: "process_prompt"
+                  params: { session_id: "s1", prompt: "summarize my day" }
+              bridge_tool:
+                value:
+                  jsonrpc: "2.0"
+                  id: 3
+                  method: "bridge_tool"
+                  params:
+                    tool_name: "file_manager"
+                    allowed_tools: ["file_manager"]
+                    args: { session_id: "s1", operation: "read", path: "a.txt" }
+      responses:
+        "200":
+          description: A JSON-RPC response (success or error envelope)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/RpcSuccess" }
+                  - { $ref: "#/components/schemas/RpcError" }
+components:
+  schemas:
+    Method:
+      type: string
+      description: Catalog of supported JSON-RPC methods.
+      enum:
+        - ping
+        - runtime_status
+        - process_prompt
+        - bridge_tool
+        - channel_status
+        - start_channel
+        - stop_channel
+        - clawhub_update
+        - command_registry
+        - get_devel_status
+        - get_devel_result
+        - get_llm_config
+        - set_llm_config
+        - unset_llm_config
+        - get_llm_runtime
+        - get_session_runtime
+        - get_tool_audit
+        - get_usage
+        - list_registered_paths
+        - register_path
+        - list_skills
+        - toggle_skill
+        - set_hooks_config
+    RpcRequest:
+      type: object
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc: { type: string, const: "2.0" }
+        id:
+          oneOf: [{ type: integer }, { type: string }]
+          description: Omit for notifications.
+        method: { $ref: "#/components/schemas/Method" }
+        params:
+          type: object
+          additionalProperties: true
+          description: Method-specific parameters.
+    RpcSuccess:
+      type: object
+      required: [jsonrpc, id, result]
+      properties:
+        jsonrpc: { type: string, const: "2.0" }
+        id:
+          oneOf: [{ type: integer }, { type: string }]
+        result:
+          description: Method-specific result. Most methods include a `status` field.
+          type: object
+          additionalProperties: true
+          examples:
+            - { status: "ok" }
+    RpcError:
+      type: object
+      required: [jsonrpc, id, error]
+      properties:
+        jsonrpc: { type: string, const: "2.0" }
+        id:
+          oneOf: [{ type: integer }, { type: string }, { type: "null" }]
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: integer
+              description: >
+                JSON-RPC code. -32601 method not found, -32602 invalid params,
+                -32603 internal error, plus Voxi domain codes >= 1000.
+            message: { type: string }
+            data:
+              type: object
+              additionalProperties: true

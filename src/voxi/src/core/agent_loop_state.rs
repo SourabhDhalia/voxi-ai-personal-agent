@@ -182,8 +182,51 @@ impl AgentLoopState {
     pub const DEFAULT_TOKEN_BUDGET: usize = 256_000;
     pub const DEFAULT_COMPACT_THRESHOLD: f32 = 0.90;
     pub const DEFAULT_MAX_TOOL_ROUNDS: usize = 10;
+    /// Hard ceiling on tool rounds. A session profile may raise the per-session
+    /// budget, but never above this — a runaway-loop safety net.
+    pub const ABSOLUTE_MAX_TOOL_ROUNDS: usize = 100;
     /// Idle detection window: if last N outputs are identical → Stuck
     pub const IDLE_WINDOW: usize = 3;
+
+    /// Apply a session-profile override to the tool-round budget, clamped to the
+    /// hard ceiling so a misconfigured or hostile profile cannot run the agent
+    /// loop away.
+    pub fn set_max_tool_rounds(&mut self, requested: usize) {
+        self.max_tool_rounds = requested.min(Self::ABSOLUTE_MAX_TOOL_ROUNDS);
+    }
+
+    /// Restore in-flight loop progress from a snapshot produced by
+    /// [`Self::snapshot`]. Only the durable progress fields are restored
+    /// (counters, workflow position, follow-up state); transient handles and the
+    /// start time are left as-is, and `max_tool_rounds` is re-clamped to the
+    /// hard ceiling. Used to resume an interrupted run for the same goal.
+    pub fn restore_from(&mut self, snap: &Value) {
+        let usize_at = |key: &str, current: usize| -> usize {
+            snap.get(key)
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(current)
+        };
+        self.round = usize_at("round", self.round);
+        self.current_step = usize_at("current_step", self.current_step);
+        self.error_count = usize_at("error_count", self.error_count);
+        self.tool_retry_count = usize_at("tool_retry_count", self.tool_retry_count);
+        self.total_tool_calls = usize_at("total_tool_calls", self.total_tool_calls);
+        self.stuck_retry_count = usize_at("stuck_retry_count", self.stuck_retry_count);
+        self.tool_budget_events = usize_at("tool_budget_events", self.tool_budget_events);
+        self.current_workflow_step = usize_at("current_workflow_step", self.current_workflow_step);
+        self.max_tool_rounds =
+            usize_at("max_tool_rounds", self.max_tool_rounds).min(Self::ABSOLUTE_MAX_TOOL_ROUNDS);
+        if let Some(v) = snap.get("needs_follow_up").and_then(|v| v.as_bool()) {
+            self.needs_follow_up = v;
+        }
+        if let Some(v) = snap.get("last_error").and_then(|v| v.as_str()) {
+            self.last_error = Some(v.to_string());
+        }
+        if let Some(v) = snap.get("active_workflow_id").and_then(|v| v.as_str()) {
+            self.active_workflow_id = Some(v.to_string());
+        }
+    }
 
     pub fn new(session_id: &str, goal: &str) -> Self {
         AgentLoopState {
@@ -415,6 +458,47 @@ mod tests {
         assert!(!s.is_round_limit_reached());
         s.round = 5;
         assert!(s.is_round_limit_reached());
+    }
+
+    #[test]
+    fn max_tool_rounds_clamped_to_ceiling() {
+        let mut s = AgentLoopState::new("sess1", "goal");
+        // A profile asking for a runaway budget is capped at the hard ceiling.
+        s.set_max_tool_rounds(1_000_000);
+        assert_eq!(s.max_tool_rounds, AgentLoopState::ABSOLUTE_MAX_TOOL_ROUNDS);
+        // A reasonable override is honored as-is.
+        s.set_max_tool_rounds(7);
+        assert_eq!(s.max_tool_rounds, 7);
+    }
+
+    #[test]
+    fn restore_from_recovers_progress() {
+        let mut s = AgentLoopState::new("sess1", "do the thing");
+        s.round = 4;
+        s.current_step = 2;
+        s.error_count = 1;
+        s.total_tool_calls = 9;
+        s.needs_follow_up = true;
+        s.last_error = Some("boom".into());
+        let snap = s.snapshot();
+
+        let mut fresh = AgentLoopState::new("sess1", "do the thing");
+        fresh.restore_from(&snap);
+        assert_eq!(fresh.round, 4);
+        assert_eq!(fresh.current_step, 2);
+        assert_eq!(fresh.error_count, 1);
+        assert_eq!(fresh.total_tool_calls, 9);
+        assert!(fresh.needs_follow_up);
+        assert_eq!(fresh.last_error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn restore_from_reclamps_max_rounds() {
+        let mut s = AgentLoopState::new("sess1", "g");
+        // Simulate a tampered/legacy snapshot with an out-of-range budget.
+        let snap = serde_json::json!({ "max_tool_rounds": 5_000_000_u64 });
+        s.restore_from(&snap);
+        assert_eq!(s.max_tool_rounds, AgentLoopState::ABSOLUTE_MAX_TOOL_ROUNDS);
     }
 
     #[test]
