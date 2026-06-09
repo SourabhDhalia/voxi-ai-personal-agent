@@ -98,6 +98,7 @@ pub use permissions::{
 pub use plugin_lifecycle::{PluginLifecyclePhase, PluginLifecycleState};
 pub use policy_engine::{
     PolicyContext, PolicyEffect, PolicyEngine, PolicyEngineState, PolicyEvaluation, PolicyRule,
+    UnifiedPolicyAuthorizer,
 };
 pub use prompt::{
     collect_context_files, ContextFile, ProjectContext, PromptAssembly, PromptBuilder,

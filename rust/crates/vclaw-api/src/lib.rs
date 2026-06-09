@@ -1,3 +1,4 @@
+mod authorizer;
 mod client;
 mod error;
 mod http_client;
@@ -6,6 +7,7 @@ mod providers;
 mod sse;
 mod types;
 
+pub use authorizer::ToolAuthorizer;
 pub use client::{ApiClient, EventStream, ProviderClient};
 pub use error::ApiError;
 pub use http_client::{

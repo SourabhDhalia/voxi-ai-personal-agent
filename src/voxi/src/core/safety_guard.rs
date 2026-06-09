@@ -72,6 +72,7 @@ pub struct SafetyGuard {
     dangerous_labels: Vec<String>,
     allow_irreversible: bool,
     max_tool_calls_per_session: usize,
+    pub authorizer: Option<std::sync::Arc<dyn vclaw_api::ToolAuthorizer + Send + Sync>>,
 }
 
 impl Default for SafetyGuard {
@@ -99,6 +100,7 @@ impl SafetyGuard {
             dangerous_labels,
             allow_irreversible: false,
             max_tool_calls_per_session: 50,
+            authorizer: None,
         }
     }
 
@@ -320,6 +322,15 @@ impl SafetyGuard {
         side_effect: SideEffect,
         session_call_count: usize,
     ) -> Result<(), String> {
+        if let Some(auth) = &self.authorizer {
+            let side_effect_str = match side_effect {
+                SideEffect::None => "none",
+                SideEffect::Irreversible => "irreversible",
+                SideEffect::Reversible => "reversible",
+            };
+            return auth.authorize(tool_name, args, side_effect_str, session_call_count);
+        }
+
         self.tool_name_allowed(tool_name)?;
 
         if side_effect == SideEffect::Irreversible && !self.allow_irreversible {
@@ -590,4 +601,41 @@ mod tests {
             );
         }
     }
+
+    struct MockAuthorizer {
+        should_allow: bool,
+    }
+
+    impl vclaw_api::ToolAuthorizer for MockAuthorizer {
+        fn authorize(
+            &self,
+            _tool_name: &str,
+            _args: &serde_json::Value,
+            _side_effect_level: &str,
+            _call_count: usize,
+        ) -> Result<(), String> {
+            if self.should_allow {
+                Ok(())
+            } else {
+                Err("blocked by mock authorizer".to_string())
+            }
+        }
+    }
+
+    #[test]
+    fn test_authorizer_routing() {
+        let mut guard = SafetyGuard::new();
+        
+        // When authorizer is None, normal logic should pass clean tool call
+        assert!(guard.check_tool_call("echo", &serde_json::json!({}), SideEffect::None, 0).is_ok());
+
+        // Set authorizer that blocks everything
+        guard.authorizer = Some(std::sync::Arc::new(MockAuthorizer { should_allow: false }));
+        assert!(guard.check_tool_call("echo", &serde_json::json!({}), SideEffect::None, 0).is_err());
+
+        // Set authorizer that allows everything
+        guard.authorizer = Some(std::sync::Arc::new(MockAuthorizer { should_allow: true }));
+        assert!(guard.check_tool_call("echo", &serde_json::json!({}), SideEffect::None, 0).is_ok());
+    }
 }
+
