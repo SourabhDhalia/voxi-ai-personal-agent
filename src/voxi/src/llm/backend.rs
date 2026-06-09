@@ -143,9 +143,34 @@ pub trait LlmBackend: Send + Sync {
 pub fn create_backend(name: &str) -> Option<Box<dyn LlmBackend>> {
     match name {
         "gemini" => Some(Box::new(super::gemini::GeminiBackend::new())),
-        "openai" | "xai" => Some(Box::new(super::openai::OpenAiBackend::new(name))),
+        "openai" | "xai" | "openrouter" => {
+            Some(Box::new(super::openai::OpenAiBackend::new(name)))
+        }
         "anthropic" => Some(Box::new(super::anthropic::AnthropicBackend::new())),
         "ollama" => Some(Box::new(super::ollama::OllamaBackend::new())),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn openrouter_backend_is_created() {
+        let backend = create_backend("openrouter").expect("openrouter backend should exist");
+        assert_eq!(backend.get_name(), "openrouter");
+    }
+
+    #[test]
+    fn openai_compatible_providers_resolve() {
+        for name in ["openai", "xai", "openrouter"] {
+            assert!(create_backend(name).is_some(), "{name} should resolve");
+        }
+    }
+
+    #[test]
+    fn unknown_provider_is_none() {
+        assert!(create_backend("does-not-exist").is_none());
     }
 }

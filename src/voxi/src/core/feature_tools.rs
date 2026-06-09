@@ -853,3 +853,181 @@ pub async fn web_search(
         Err(err) => json!({ "error": err }),
     }
 }
+
+/// SSRF guard: hosts we refuse to fetch — loopback, private, link-local,
+/// unspecified, and cloud-metadata addresses.
+fn is_blocked_fetch_host(host: &str) -> bool {
+    let h = host.trim_matches('.').to_ascii_lowercase();
+    if h.is_empty()
+        || h == "localhost"
+        || h.ends_with(".localhost")
+        || h == "metadata.google.internal"
+    {
+        return true;
+    }
+    if let Ok(ip) = h.parse::<std::net::IpAddr>() {
+        return match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_loopback() || v4.is_private() || v4.is_link_local() || v4.is_unspecified()
+            }
+            std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+        };
+    }
+    false
+}
+
+/// Extract the host from an absolute URL without pulling in a URL parser.
+fn fetch_host(url: &str) -> Option<String> {
+    let after = url.split_once("://")?.1;
+    let authority = after.split(['/', '?', '#']).next()?;
+    let host_port = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let host = if let Some(rest) = host_port.strip_prefix('[') {
+        rest.split(']').next()?.to_string()
+    } else {
+        host_port.split(':').next()?.to_string()
+    };
+    if host.is_empty() {
+        None
+    } else {
+        Some(host)
+    }
+}
+
+/// Strip HTML to readable text. Regex-based with a graceful passthrough if the
+/// patterns fail to compile (so this never panics on a malformed pattern).
+fn html_to_text(html: &str) -> String {
+    use std::sync::OnceLock;
+    static SCRIPT_STYLE: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    static TAGS: OnceLock<Option<regex::Regex>> = OnceLock::new();
+    let ss = SCRIPT_STYLE
+        .get_or_init(|| regex::Regex::new(r"(?is)<(script|style)\b[^>]*>.*?</(?:script|style)>").ok());
+    let tg = TAGS.get_or_init(|| regex::Regex::new(r"(?s)<[^>]+>").ok());
+    let stage1 = match ss {
+        Some(re) => re.replace_all(html, " ").into_owned(),
+        None => html.to_string(),
+    };
+    let stage2 = match tg {
+        Some(re) => re.replace_all(&stage1, " ").into_owned(),
+        None => stage1,
+    };
+    let decoded = stage2
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'");
+    decoded.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Fetch a public URL over HTTP(S) and return its readable text content. Refuses
+/// non-HTTP schemes and internal/metadata hosts (SSRF guard); HTML is stripped
+/// to text and the result is capped at `max_chars`.
+pub async fn web_fetch(url: &str, max_chars: usize) -> Value {
+    let url = url.trim();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return json!({ "error": "URL must start with http:// or https://" });
+    }
+    let host = match fetch_host(url) {
+        Some(h) => h,
+        None => return json!({ "error": "Could not parse host from URL" }),
+    };
+    if is_blocked_fetch_host(&host) {
+        return json!({
+            "error": "Refusing to fetch a loopback, private, link-local, or metadata address"
+        });
+    }
+    let cap = max_chars.clamp(500, 50_000);
+    let client = crate::generic::infra::http_client::default_client();
+    let response = match client
+        .get(url)
+        .header("User-Agent", "VoxiAgent/1.0 (+web_fetch)")
+        .header("Accept", "text/html,text/plain,application/json;q=0.9,*/*;q=0.8")
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(err) => return json!({ "error": format!("Fetch failed: {}", err) }),
+    };
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let body = match response.text().await {
+        Ok(b) => b,
+        Err(err) => return json!({ "error": format!("Read failed: {}", err) }),
+    };
+    if !status.is_success() {
+        return json!({ "error": format!("HTTP {}", status.as_u16()), "url": url });
+    }
+    let looks_html = content_type.contains("html")
+        || (content_type.is_empty() && body.to_ascii_lowercase().contains("<html"));
+    let text = if looks_html { html_to_text(&body) } else { body };
+    let truncated = text.chars().count() > cap;
+    let content: String = if truncated {
+        text.chars().take(cap).collect()
+    } else {
+        text
+    };
+    json!({
+        "status": "success",
+        "url": url,
+        "content_type": content_type,
+        "truncated": truncated,
+        "content": content
+    })
+}
+
+#[cfg(test)]
+mod web_fetch_tests {
+    use super::*;
+
+    #[test]
+    fn blocks_internal_hosts() {
+        for h in [
+            "localhost",
+            "127.0.0.1",
+            "10.0.0.5",
+            "192.168.1.1",
+            "169.254.169.254",
+            "0.0.0.0",
+            "metadata.google.internal",
+        ] {
+            assert!(is_blocked_fetch_host(h), "{h} should be blocked");
+        }
+    }
+
+    #[test]
+    fn allows_public_hosts() {
+        for h in ["example.com", "8.8.8.8", "api.search.brave.com"] {
+            assert!(!is_blocked_fetch_host(h), "{h} should be allowed");
+        }
+    }
+
+    #[test]
+    fn extracts_host() {
+        assert_eq!(
+            fetch_host("https://example.com/path?q=1").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            fetch_host("http://user:pw@host.tld:8080/x").as_deref(),
+            Some("host.tld")
+        );
+        assert_eq!(fetch_host("https://[::1]:80/").as_deref(), Some("::1"));
+        assert_eq!(fetch_host("not a url"), None);
+    }
+
+    #[test]
+    fn strips_html() {
+        let html = "<html><head><style>x{color:red}</style></head><body><script>bad()</script><p>Hello&nbsp;<b>World</b></p></body></html>";
+        let text = html_to_text(html);
+        assert!(text.contains("Hello World"), "got: {text}");
+        assert!(!text.contains("bad()"), "script not stripped: {text}");
+        assert!(!text.contains("color:red"), "style not stripped: {text}");
+    }
+}

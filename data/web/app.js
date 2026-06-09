@@ -74,6 +74,7 @@
         if (pageEl) pageEl.classList.add('active');
 
         if (page === 'dashboard') loadDashboard();
+        else if (page === 'search') focusSearch();
         else if (page === 'sessions') loadSessions();
         else if (page === 'tasks') loadTasks();
         else if (page === 'logs') loadLogs();
@@ -416,7 +417,35 @@
         if (metricsInterval)
             clearInterval(metricsInterval);
         await refreshMetrics();
+        loadLlmConfig();
         metricsInterval = setInterval(refreshMetrics, 5000);
+    }
+
+    async function loadLlmConfig() {
+        const el = document.getElementById('llm-providers');
+        if (!el) return;
+        const cfg = await apiFetch('llm/config');
+        if (!cfg || typeof cfg !== 'object') {
+            el.innerHTML = '<p class="empty-state">Model configuration unavailable.</p>';
+            return;
+        }
+        const active = cfg.active_backend || '—';
+        const fallbacks = Array.isArray(cfg.fallback_backends) ? cfg.fallback_backends : [];
+        const providers = (cfg.providers && typeof cfg.providers === 'object')
+            ? Object.keys(cfg.providers) : [];
+        let html = '<div class="llm-card">';
+        html += '<div class="llm-row"><span class="llm-label">Active backend</span>'
+            + '<span class="llm-active">' + escHtml(String(active)) + '</span></div>';
+        if (fallbacks.length) {
+            html += '<div class="llm-row"><span class="llm-label">Fallbacks</span>'
+                + '<span class="llm-value">' + fallbacks.map(f => escHtml(String(f))).join(', ') + '</span></div>';
+        }
+        if (providers.length) {
+            html += '<div class="llm-row"><span class="llm-label">Configured</span>'
+                + '<span class="llm-value">' + providers.map(p => escHtml(String(p))).join(', ') + '</span></div>';
+        }
+        html += '</div>';
+        el.innerHTML = html;
     }
 
     function fmtTokens(n) {
@@ -509,6 +538,8 @@
                     s(id) && (s(id).textContent = connected ? '0' : '—');
                 });
             }
+
+            updateCharts(m);
         }
 
         if (sessions && s('stat-sessions'))
@@ -3621,6 +3652,119 @@
         return html;
     }
 
+    // --- Live Trend Sparklines (canvas, no deps) ---
+    const CHART_MAX = 60;
+    const chartHistory = { cpu: [], mem: [], calls: [], tokens: [] };
+
+    function pushSample(key, value) {
+        if (value == null || isNaN(value)) return;
+        const arr = chartHistory[key];
+        if (!arr) return;
+        arr.push(value);
+        if (arr.length > CHART_MAX) arr.shift();
+    }
+
+    function drawSparkline(canvasId, data, color) {
+        const canvas = document.getElementById(canvasId);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        const dpr = window.devicePixelRatio || 1;
+        const cssW = canvas.clientWidth || 300;
+        const cssH = canvas.clientHeight || 64;
+        if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+            canvas.width = Math.round(cssW * dpr);
+            canvas.height = Math.round(cssH * dpr);
+        }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, cssW, cssH);
+        if (!data || data.length < 2) return;
+        const pad = 4;
+        const w = cssW - pad * 2;
+        const h = cssH - pad * 2;
+        let min = Math.min.apply(null, data);
+        let max = Math.max.apply(null, data);
+        if (max - min < 1e-9) max = min + 1;
+        const xAt = i => pad + (i / (data.length - 1)) * w;
+        const yAt = v => pad + h - ((v - min) / (max - min)) * h;
+        ctx.beginPath();
+        ctx.moveTo(xAt(0), yAt(data[0]));
+        for (let i = 1; i < data.length; i++) ctx.lineTo(xAt(i), yAt(data[i]));
+        ctx.lineTo(xAt(data.length - 1), pad + h);
+        ctx.lineTo(xAt(0), pad + h);
+        ctx.closePath();
+        ctx.fillStyle = color + '22';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(xAt(0), yAt(data[0]));
+        for (let i = 1; i < data.length; i++) ctx.lineTo(xAt(i), yAt(data[i]));
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(xAt(data.length - 1), yAt(data[data.length - 1]), 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+    }
+
+    function chartColors() {
+        const css = getComputedStyle(document.documentElement);
+        const get = (n, d) => (css.getPropertyValue(n) || d).trim() || d;
+        return {
+            cpu: get('--c-teal', '#2dd4bf'),
+            mem: get('--accent-light', '#818cf8'),
+            calls: get('--c-amber', '#fbbf24'),
+            tokens: get('--c-violet', '#c084fc'),
+        };
+    }
+
+    function drawAllCharts() {
+        const c = chartColors();
+        drawSparkline('chart-cpu', chartHistory.cpu, c.cpu);
+        drawSparkline('chart-mem', chartHistory.mem, c.mem);
+        drawSparkline('chart-calls', chartHistory.calls, c.calls);
+        drawSparkline('chart-tokens', chartHistory.tokens, c.tokens);
+    }
+    // Allow the theme toggle to redraw with theme-aware colors.
+    window.__voxiRedrawCharts = drawAllCharts;
+
+    function updateCharts(m) {
+        if (!m) return;
+        const cpu = (m.cpu && m.cpu.load_1m != null) ? m.cpu.load_1m : null;
+        const mem = (m.memory && m.memory.vm_rss_kb != null) ? m.memory.vm_rss_kb / 1024 : null;
+        const calls = (m.counters && m.counters.llm_calls != null) ? m.counters.llm_calls : null;
+        const tokens = m.tokens ? ((m.tokens.prompt || 0) + (m.tokens.completion || 0)) : null;
+        pushSample('cpu', cpu);
+        pushSample('mem', mem);
+        pushSample('calls', calls);
+        pushSample('tokens', tokens);
+        drawAllCharts();
+        const setNow = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        setNow('trend-cpu-now', cpu != null ? cpu.toFixed(2) : '—');
+        setNow('trend-mem-now', mem != null ? mem.toFixed(0) + ' MB' : '—');
+        setNow('trend-calls-now', calls != null ? calls : '—');
+        setNow('trend-tokens-now', tokens != null ? fmtTokens(tokens) : '—');
+    }
+
+    // --- Theme toggle (light / dark) ---
+    (function initTheme() {
+        const saved = localStorage.getItem('voxi-theme');
+        if (saved === 'light' || saved === 'dark') {
+            document.documentElement.setAttribute('data-theme', saved);
+        }
+        const toggle = document.getElementById('theme-toggle');
+        if (toggle) {
+            toggle.addEventListener('click', function () {
+                const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+                const next = cur === 'light' ? 'dark' : 'light';
+                document.documentElement.setAttribute('data-theme', next);
+                localStorage.setItem('voxi-theme', next);
+                if (typeof window.__voxiRedrawCharts === 'function') window.__voxiRedrawCharts();
+            });
+        }
+    })();
+
     // --- Initial Load ---
     formatChatSessionMeta();
     startOutboundPolling();
@@ -3652,4 +3796,75 @@
             }
         });
     }
+
+    // --- Semantic Search (ONNX-backed) ---
+    function focusSearch() {
+        const input = document.getElementById('search-input');
+        if (input) { input.focus(); input.select(); }
+    }
+
+    async function runSearch() {
+        const input = document.getElementById('search-input');
+        const resultsEl = document.getElementById('search-results');
+        const hintEl = document.getElementById('search-hint');
+        if (!input || !resultsEl) return;
+        const q = input.value.trim();
+        if (!q) { resultsEl.innerHTML = ''; if (hintEl) hintEl.textContent = ''; return; }
+        resultsEl.innerHTML =
+            '<div class="skeleton-card shimmer"></div>' +
+            '<div class="skeleton-card shimmer"></div>' +
+            '<div class="skeleton-card shimmer"></div>';
+        if (hintEl) hintEl.textContent = 'Searching…';
+        const data = await apiFetch('search?q=' + encodeURIComponent(q) + '&top_k=12');
+        const results = (data && Array.isArray(data.results)) ? data.results : [];
+        renderSearchResults(results, q);
+    }
+
+    function renderSearchResults(results, q) {
+        const resultsEl = document.getElementById('search-results');
+        const hintEl = document.getElementById('search-hint');
+        if (!resultsEl) return;
+        if (!results.length) {
+            resultsEl.innerHTML =
+                '<p class="empty-state">No semantically similar memory found for &ldquo;' +
+                escHtml(q) + '&rdquo;.</p>';
+            if (hintEl) hintEl.textContent =
+                'Tip: semantic search matches meaning — try a natural phrase.';
+            return;
+        }
+        if (hintEl) hintEl.textContent =
+            results.length + ' result' + (results.length === 1 ? '' : 's') +
+            ' ranked by semantic similarity.';
+        resultsEl.innerHTML = results.map(function (r) {
+            const score = Math.max(0, Math.min(1, Number(r.score) || 0));
+            const pct = Math.round(score * 100);
+            return '<div class="search-result">' +
+                '<div class="search-result-head">' +
+                '<span class="search-result-key">' + escHtml(r.key || '(untitled)') + '</span>' +
+                (r.category ? '<span class="search-result-cat">' + escHtml(r.category) + '</span>' : '') +
+                '<span class="search-score" title="cosine similarity">' + pct + '%</span>' +
+                '</div>' +
+                '<div class="search-result-snippet">' + escHtml(r.snippet || '') + '</div>' +
+                '</div>';
+        }).join('');
+    }
+
+    (function bindSearch() {
+        const btn = document.getElementById('search-btn');
+        const input = document.getElementById('search-input');
+        if (btn) btn.addEventListener('click', runSearch);
+        if (input) {
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
+            });
+        }
+        // Global Ctrl/Cmd+K opens semantic search.
+        document.addEventListener('keydown', function (e) {
+            if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+                e.preventDefault();
+                navigateTo('search');
+                focusSearch();
+            }
+        });
+    })();
 })();

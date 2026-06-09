@@ -1,0 +1,215 @@
+openapi: "3.1.0"
+info:
+  title: Voxi Web Dashboard API
+  version: "1.0.0"
+  description: >
+    HTTP API backing the Voxi web dashboard (axum). Routes mirror
+    `src/voxi-web-dashboard/src/main.rs`. Session-cookie auth via
+    `/api/auth/login`. Error bodies follow RFC 7807 (application/problem+json).
+servers:
+  - url: "http://127.0.0.1:8090"
+    description: Local dashboard (loopback)
+tags:
+  - name: Status
+  - name: Chat
+  - name: Sessions
+  - name: Tasks
+  - name: Logs
+  - name: Auth
+  - name: Config
+  - name: OTA
+  - name: Apps
+  - name: Bridge
+  - name: Skills
+  - name: Agent
+security:
+  - SessionCookie: []
+paths:
+  /.well-known/agent.json:
+    get:
+      summary: Agent card (A2A discovery)
+      operationId: agentCard
+      tags: [Agent]
+      security: []
+      responses: { "200": { description: Agent capability card } }
+  /api/status:
+    get:
+      summary: Runtime status
+      operationId: getStatus
+      tags: [Status]
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/metrics:
+    get:
+      summary: Runtime metrics (CPU/mem/uptime, cross-platform)
+      operationId: getMetrics
+      tags: [Status]
+      responses: { "200": { description: OK } }
+  /api/chat:
+    post:
+      summary: Send a chat prompt
+      operationId: postChat
+      tags: [Chat]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id, prompt]
+              properties:
+                session_id: { type: string }
+                prompt: { type: string }
+      responses:
+        "200": { description: Assistant response or stream handle }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+  /api/chat/stop:
+    post:
+      summary: Stop the active chat turn
+      operationId: stopChat
+      tags: [Chat]
+      responses: { "200": { description: Stopped } }
+  /api/chat/active:
+    get:
+      summary: Is a chat turn active?
+      operationId: chatActive
+      tags: [Chat]
+      responses: { "200": { description: OK } }
+  /api/sessions/dates:
+    get:
+      summary: Dates with sessions (for the date navigator)
+      operationId: sessionDates
+      tags: [Sessions]
+      responses: { "200": { description: OK } }
+  /api/tasks:
+    get:
+      summary: List scheduled tasks (paginated)
+      operationId: listTasks
+      tags: [Tasks]
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses: { "200": { description: Paginated tasks } }
+    delete:
+      summary: Delete tasks
+      operationId: deleteTasks
+      tags: [Tasks]
+      responses:
+        "200": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/logs:
+    get:
+      summary: Logs (paginated by date)
+      operationId: getLogs
+      tags: [Logs]
+      parameters:
+        - { name: date, in: query, schema: { type: string, format: date } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 500 } }
+      responses: { "200": { description: Paginated log lines } }
+  /api/auth/login:
+    post:
+      summary: Log in (establishes session cookie)
+      operationId: login
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password }
+      responses:
+        "200": { description: Session established (Set-Cookie) }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/auth/logout:
+    post: { summary: Log out, operationId: logout, tags: [Auth], responses: { "200": { description: OK } } }
+  /api/auth/session:
+    get: { summary: Current session, operationId: authSession, tags: [Auth], responses: { "200": { description: OK } } }
+  /api/ota/check:
+    get: { summary: Check for OTA update, operationId: otaCheck, tags: [OTA], responses: { "200": { description: OK } } }
+  /api/ota/update:
+    post: { summary: Apply OTA update, operationId: otaUpdate, tags: [OTA], responses: { "202": { description: Update started } } }
+  /api/ota/rollback:
+    post: { summary: Roll back update, operationId: otaRollback, tags: [OTA], responses: { "200": { description: OK } } }
+  /api/apps:
+    get: { summary: List installed apps/plugins, operationId: listApps, tags: [Apps], responses: { "200": { description: OK } } }
+  /api/apps/{id}:
+    get:
+      summary: App detail
+      operationId: appDetail
+      tags: [Apps]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: OK }, "404": { $ref: "#/components/responses/NotFound" } }
+    delete:
+      summary: Uninstall app
+      operationId: appDelete
+      tags: [Apps]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: Deleted }, "404": { $ref: "#/components/responses/NotFound" } }
+  /api/bridge/tool:
+    post:
+      summary: Execute a single tool via the bridge (safety-guarded)
+      operationId: bridgeTool
+      tags: [Bridge]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool_name, args]
+              properties:
+                tool_name: { type: string }
+                allowed_tools: { type: array, items: { type: string } }
+                args: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: "Tool result; success=false on policy deny" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/skills:
+    get: { summary: List skills, operationId: getSkills, tags: [Skills], responses: { "200": { description: OK } } }
+    post: { summary: Author/update a skill, operationId: postSkill, tags: [Skills], responses: { "200": { description: OK } } }
+  /api/skills/approve:
+    post: { summary: Approve a pending skill, operationId: approveSkill, tags: [Skills], responses: { "200": { description: OK } } }
+  /api/a2a:
+    post:
+      summary: Agent-to-agent message intake
+      operationId: a2a
+      tags: [Agent]
+      responses: { "200": { description: OK } }
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: voxi_session
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    Unauthorized:
+      description: Missing/invalid session
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    NotFound:
+      description: Not found
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    TooManyRequests:
+      description: Rate limited
+      headers: { Retry-After: { schema: { type: integer } } }
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }

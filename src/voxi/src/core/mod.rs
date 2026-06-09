@@ -38,6 +38,7 @@ pub mod workflow_engine;
 pub mod action_bridge;
 pub mod agent_loop_state;
 pub mod auto_skill_agent;
+pub mod parallel;
 pub mod autonomous_trigger;
 pub mod context_engine;
 pub mod context_fusion_engine;
