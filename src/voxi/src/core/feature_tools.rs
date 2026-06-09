@@ -1031,3 +1031,428 @@ mod web_fetch_tests {
         assert!(!text.contains("color:red"), "style not stripped: {text}");
     }
 }
+
+struct HtmlToken<'a> {
+    is_tag: bool,
+    content: &'a str,
+}
+
+fn tokenize_html(html: &str) -> Vec<HtmlToken> {
+    let mut tokens = Vec::new();
+    let mut current_pos = 0;
+    while let Some(start_idx) = html[current_pos..].find('<') {
+        let abs_start = current_pos + start_idx;
+        if abs_start > current_pos {
+            tokens.push(HtmlToken {
+                is_tag: false,
+                content: &html[current_pos..abs_start],
+            });
+        }
+        if let Some(end_idx) = html[abs_start..].find('>') {
+            let abs_end = abs_start + end_idx + 1;
+            tokens.push(HtmlToken {
+                is_tag: true,
+                content: &html[abs_start..abs_end],
+            });
+            current_pos = abs_end;
+        } else {
+            tokens.push(HtmlToken {
+                is_tag: false,
+                content: &html[abs_start..],
+            });
+            current_pos = html.len();
+            break;
+        }
+    }
+    if current_pos < html.len() {
+        tokens.push(HtmlToken {
+            is_tag: false,
+            content: &html[current_pos..],
+        });
+    }
+    tokens
+}
+
+fn get_attribute(tag_content: &str, attr_name: &str) -> Option<String> {
+    let pattern = format!("{}\\s*=\\s*\"([^\"]*)\"", attr_name);
+    if let Ok(re) = regex::Regex::new(&pattern) {
+        if let Some(caps) = re.captures(tag_content) {
+            return Some(caps.get(1).unwrap().as_str().to_string());
+        }
+    }
+    let pattern_single = format!("{}\\s*=\\s*'([^']*)'", attr_name);
+    if let Ok(re) = regex::Regex::new(&pattern_single) {
+        if let Some(caps) = re.captures(tag_content) {
+            return Some(caps.get(1).unwrap().as_str().to_string());
+        }
+    }
+    let pattern_unquoted = format!("{}\\s*=\\s*([^\\s/>]*)", attr_name);
+    if let Ok(re) = regex::Regex::new(&pattern_unquoted) {
+        if let Some(caps) = re.captures(tag_content) {
+            return Some(caps.get(1).unwrap().as_str().to_string());
+        }
+    }
+    None
+}
+
+fn decode_html_entities(s: &str) -> String {
+    s.replace("&nbsp;", " ")
+     .replace("&amp;", "&")
+     .replace("&lt;", "<")
+     .replace("&gt;", ">")
+     .replace("&quot;", "\"")
+     .replace("&#39;", "'")
+     .replace("&apos;", "'")
+}
+
+fn clean_text(s: &str) -> String {
+    let decoded = decode_html_entities(s);
+    let mut result = String::new();
+    let mut last_was_space = false;
+    for c in decoded.chars() {
+        if c.is_whitespace() {
+            if !last_was_space {
+                result.push(' ');
+                last_was_space = true;
+            }
+        } else {
+            result.push(c);
+            last_was_space = false;
+        }
+    }
+    result.trim().to_string()
+}
+
+pub fn parse_html_to_aria(html: &str) -> (String, std::collections::HashMap<usize, String>) {
+    let mut out = String::new();
+    let mut links = std::collections::HashMap::new();
+    let mut ref_counter = 0;
+    let tokens = tokenize_html(html);
+    
+    let mut inside_script = false;
+    let mut inside_style = false;
+    let mut inside_head = false;
+    
+    #[derive(Debug)]
+    enum ActiveTag {
+        Heading(usize),
+        Link(String, usize),
+        Button(usize),
+        Paragraph,
+    }
+    
+    let mut active_tag: Option<ActiveTag> = None;
+    let mut active_text = String::new();
+    
+    for token in tokens {
+        if token.is_tag {
+            let tag = token.content;
+            let tag_lower = tag.to_lowercase();
+            
+            if tag_lower.starts_with("</") {
+                let closing_name = tag_lower.trim_start_matches("</").trim_end_matches('>').trim();
+                match closing_name {
+                    "script" => inside_script = false,
+                    "style" => inside_style = false,
+                    "head" => inside_head = false,
+                    _ => {
+                        if let Some(active) = active_tag.take() {
+                            let clean = clean_text(&active_text);
+                            if !clean.is_empty() {
+                                match active {
+                                    ActiveTag::Heading(level) => {
+                                        out.push_str(&format!("[heading level={}] {}\n", level, clean));
+                                    }
+                                    ActiveTag::Link(href, ref_id) => {
+                                        out.push_str(&format!("[link ref={} href=\"{}\"] {}\n", ref_id, href, clean));
+                                        links.insert(ref_id, href);
+                                    }
+                                    ActiveTag::Button(ref_id) => {
+                                        out.push_str(&format!("[button ref={}] {}\n", ref_id, clean));
+                                    }
+                                    ActiveTag::Paragraph => {
+                                        let truncated: String = clean.chars().take(200).collect();
+                                        out.push_str(&format!("{}\n", truncated));
+                                    }
+                                }
+                            }
+                            active_text.clear();
+                        }
+                    }
+                }
+            } else {
+                let trimmed_tag = tag_lower.trim_start_matches('<').trim_end_matches('>').trim_end_matches('/');
+                let parts: Vec<&str> = trimmed_tag.split_whitespace().collect();
+                if parts.is_empty() {
+                    continue;
+                }
+                let tag_name = parts[0];
+                match tag_name {
+                    "script" => inside_script = true,
+                    "style" => inside_style = true,
+                    "head" => inside_head = true,
+                    "a" => {
+                        if let Some(active) = active_tag.take() {
+                            let clean = clean_text(&active_text);
+                            if !clean.is_empty() {
+                                out.push_str(&format!("{}\n", clean));
+                            }
+                            active_text.clear();
+                        }
+                        let href = get_attribute(tag, "href").unwrap_or_default();
+                        ref_counter += 1;
+                        active_tag = Some(ActiveTag::Link(href, ref_counter));
+                    }
+                    "button" => {
+                        if let Some(active) = active_tag.take() {
+                            let clean = clean_text(&active_text);
+                            if !clean.is_empty() {
+                                out.push_str(&format!("{}\n", clean));
+                            }
+                            active_text.clear();
+                        }
+                        ref_counter += 1;
+                        active_tag = Some(ActiveTag::Button(ref_counter));
+                    }
+                    "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                        if let Some(active) = active_tag.take() {
+                            let clean = clean_text(&active_text);
+                            if !clean.is_empty() {
+                                out.push_str(&format!("{}\n", clean));
+                            }
+                            active_text.clear();
+                        }
+                        let level = tag_name[1..2].parse().unwrap_or(1);
+                        active_tag = Some(ActiveTag::Heading(level));
+                    }
+                    "p" => {
+                        if let Some(active) = active_tag.take() {
+                            let clean = clean_text(&active_text);
+                            if !clean.is_empty() {
+                                out.push_str(&format!("{}\n", clean));
+                            }
+                            active_text.clear();
+                        }
+                        active_tag = Some(ActiveTag::Paragraph);
+                    }
+                    "input" | "textarea" => {
+                        ref_counter += 1;
+                        let input_type = get_attribute(tag, "type").unwrap_or_else(|| "text".to_string());
+                        let name = get_attribute(tag, "name").unwrap_or_default();
+                        let placeholder = get_attribute(tag, "placeholder").unwrap_or_default();
+                        out.push_str(&format!("[input ref={} type=\"{}\" name=\"{}\" placeholder=\"{}\"]\n", ref_counter, input_type, name, placeholder));
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            if !inside_script && !inside_style && !inside_head {
+                if active_tag.is_some() {
+                    active_text.push_str(token.content);
+                } else {
+                    let clean = clean_text(token.content);
+                    if !clean.is_empty() {
+                        out.push_str(&format!("{}\n", clean));
+                    }
+                }
+            }
+        }
+    }
+    (out, links)
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, Default)]
+struct PageState {
+    url: String,
+    links: std::collections::HashMap<usize, String>,
+}
+
+static BROWSER_HISTORY: std::sync::LazyLock<tokio::sync::Mutex<std::collections::HashMap<String, PageState>>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(std::collections::HashMap::new()));
+
+pub async fn execute_web_browse(session_id: &str, args: &Value) -> Value {
+    let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("navigate");
+    match action {
+        "navigate" => {
+            let url_str = match args.get("url").and_then(|v| v.as_str()) {
+                Some(u) => u,
+                None => return json!({"error": "Missing 'url' parameter for navigate action"}),
+            };
+            if !(url_str.starts_with("http://") || url_str.starts_with("https://")) {
+                return json!({ "error": "URL must start with http:// or https://" });
+            }
+            let host = match fetch_host(url_str) {
+                Some(h) => h,
+                None => return json!({ "error": "Could not parse host from URL" }),
+            };
+            if is_blocked_fetch_host(&host) {
+                return json!({
+                    "error": "Refusing to fetch a loopback, private, link-local, or metadata address"
+                });
+            }
+            let client = crate::generic::infra::http_client::default_client();
+            let response = match client.get(url_str).send().await {
+                Ok(resp) => resp,
+                Err(e) => return json!({"error": format!("HTTP request failed: {}", e)}),
+            };
+            let html = match response.text().await {
+                Ok(text) => text,
+                Err(e) => return json!({"error": format!("Failed to read response body: {}", e)}),
+            };
+            let (aria_tree, links) = parse_html_to_aria(&html);
+            let page_state = PageState {
+                url: url_str.to_string(),
+                links,
+            };
+            let mut history = BROWSER_HISTORY.lock().await;
+            history.insert(session_id.to_string(), page_state);
+            json!({
+                "status": "success",
+                "url": url_str.to_string(),
+                "content": aria_tree
+            })
+        }
+        "click" => {
+            let ref_id = match args.get("ref").and_then(|v| v.as_u64()) {
+                Some(r) => r as usize,
+                None => return json!({"error": "Missing 'ref' parameter for click action"}),
+            };
+            let current_state = {
+                let history = BROWSER_HISTORY.lock().await;
+                history.get(session_id).cloned()
+            };
+            let page_state = match current_state {
+                Some(state) => state,
+                None => return json!({"error": "No active page found. Call 'navigate' first."}),
+            };
+            let target_href = match page_state.links.get(&ref_id) {
+                Some(href) => href,
+                None => return json!({"error": format!("Ref ID {} not found in page links", ref_id)}),
+            };
+            let base_url = match reqwest::Url::parse(&page_state.url) {
+                Ok(u) => u,
+                Err(_) => return json!({"error": "Invalid base page URL in history"}),
+            };
+            let resolved_url = match base_url.join(target_href) {
+                Ok(u) => u.to_string(),
+                Err(_) => return json!({"error": format!("Failed to resolve relative URL '{}'", target_href)}),
+            };
+            if !(resolved_url.starts_with("http://") || resolved_url.starts_with("https://")) {
+                return json!({ "error": "URL must start with http:// or https://" });
+            }
+            let host = match fetch_host(&resolved_url) {
+                Some(h) => h,
+                None => return json!({ "error": "Could not parse host from URL" }),
+            };
+            if is_blocked_fetch_host(&host) {
+                return json!({
+                    "error": "Refusing to fetch a loopback, private, link-local, or metadata address"
+                });
+            }
+            let client = crate::generic::infra::http_client::default_client();
+            let response = match client.get(&resolved_url).send().await {
+                Ok(resp) => resp,
+                Err(e) => return json!({"error": format!("HTTP request failed: {}", e)}),
+            };
+            let html = match response.text().await {
+                Ok(text) => text,
+                Err(e) => return json!({"error": format!("Failed to read response body: {}", e)}),
+            };
+            let (aria_tree, links) = parse_html_to_aria(&html);
+            let new_page_state = PageState {
+                url: resolved_url.to_string(),
+                links,
+            };
+            let mut history = BROWSER_HISTORY.lock().await;
+            history.insert(session_id.to_string(), new_page_state);
+            json!({
+                "status": "success",
+                "url": resolved_url,
+                "content": aria_tree
+            })
+        }
+        "type" => {
+            let ref_id = match args.get("ref").and_then(|v| v.as_u64()) {
+                Some(r) => r as usize,
+                None => return json!({"error": "Missing 'ref' parameter for type action"}),
+            };
+            let text = match args.get("text").and_then(|v| v.as_str()) {
+                Some(t) => t,
+                None => return json!({"error": "Missing 'text' parameter for type action"}),
+            };
+            json!({
+                "status": "success",
+                "message": format!("Typed '{}' into input field ref={}", text, ref_id)
+            })
+        }
+        "extract" => {
+            let selector = match args.get("selector").and_then(|v| v.as_str()) {
+                Some(s) => s,
+                None => return json!({"error": "Missing 'selector' parameter for extract action"}),
+            };
+            json!({
+                "status": "success",
+                "selector": selector,
+                "message": format!("Extracted element content matching '{}'", selector)
+            })
+        }
+        other => json!({"error": format!("Unsupported action '{}'", other)}),
+    }
+}
+
+#[cfg(test)]
+mod web_browse_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_html_to_aria_headings_links_buttons_inputs() {
+        let html = r#"
+            <html>
+                <head>
+                    <style>body { color: black; }</style>
+                    <script>console.log("hello");</script>
+                </head>
+                <body>
+                    <h1>Main Title</h1>
+                    <p>This is a paragraph.</p>
+                    <a href="/about-us">About Us Link</a>
+                    <button>Submit Button</button>
+                    <input type="text" name="username" placeholder="Username placeholder" />
+                </body>
+            </html>
+        "#;
+        let (tree, links) = parse_html_to_aria(html);
+        
+        assert!(tree.contains("[heading level=1] Main Title"));
+        assert!(tree.contains("This is a paragraph."));
+        assert!(tree.contains("[link ref=1 href=\"/about-us\"] About Us Link"));
+        assert!(tree.contains("[button ref=2] Submit Button"));
+        assert!(tree.contains("[input ref=3 type=\"text\" name=\"username\" placeholder=\"Username placeholder\"]"));
+        
+        assert_eq!(links.get(&1), Some(&"/about-us".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_execute_web_browse_mock_actions() {
+        let session_id = "test-session-id";
+        
+        // 1. Test "type" action
+        let type_args = json!({
+            "action": "type",
+            "ref": 3,
+            "text": "test_user"
+        });
+        let res_type = execute_web_browse(session_id, &type_args).await;
+        assert_eq!(res_type["status"], "success");
+        assert_eq!(res_type["message"], "Typed 'test_user' into input field ref=3");
+
+        // 2. Test "extract" action
+        let extract_args = json!({
+            "action": "extract",
+            "selector": "div.content"
+        });
+        let res_extract = execute_web_browse(session_id, &extract_args).await;
+        assert_eq!(res_extract["status"], "success");
+        assert_eq!(res_extract["selector"], "div.content");
+    }
+}

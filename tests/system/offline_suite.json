@@ -23,6 +23,7 @@
     "tests/system/hooks_pre_tool_deny.json",
     "tests/system/hooks_external_disabled_by_default.json",
     "tests/system/skills_list_and_invoke.json",
-    "tests/system/skills_direct_invocation.json"
+    "tests/system/skills_direct_invocation.json",
+    "tests/system/web_browse_bridge.json"
   ]
 }

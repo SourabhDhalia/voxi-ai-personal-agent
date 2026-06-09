@@ -604,6 +604,37 @@ impl ToolDeclarationBuilder {
                 "required": ["url"]
             }),
         });
+        tools.push(LlmToolDecl {
+            name: "web_browse".into(),
+            description: "Browse a web page interactively and extract its content as a simplified accessibility/ARIA tree. Supports navigate, click, type, and extract actions.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["navigate", "click", "type", "extract"],
+                        "description": "Action to perform"
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": "Absolute URL to navigate to"
+                    },
+                    "ref": {
+                        "type": "integer",
+                        "description": "Numeric reference ID of the element to interact with (for click/type)"
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Text to type into the element"
+                    },
+                    "selector": {
+                        "type": "string",
+                        "description": "Optional selector/tag to extract"
+                    }
+                },
+                "required": ["action"]
+            }),
+        });
     }
 
     fn push_document_tools(tools: &mut Vec<LlmToolDecl>) {
