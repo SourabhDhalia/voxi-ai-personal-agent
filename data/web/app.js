@@ -413,7 +413,35 @@
         if (metricsInterval)
             clearInterval(metricsInterval);
         await refreshMetrics();
+        loadLlmConfig();
         metricsInterval = setInterval(refreshMetrics, 5000);
+    }
+
+    async function loadLlmConfig() {
+        const el = document.getElementById('llm-providers');
+        if (!el) return;
+        const cfg = await apiFetch('llm/config');
+        if (!cfg || typeof cfg !== 'object') {
+            el.innerHTML = '<p class="empty-state">Model configuration unavailable.</p>';
+            return;
+        }
+        const active = cfg.active_backend || '—';
+        const fallbacks = Array.isArray(cfg.fallback_backends) ? cfg.fallback_backends : [];
+        const providers = (cfg.providers && typeof cfg.providers === 'object')
+            ? Object.keys(cfg.providers) : [];
+        let html = '<div class="llm-card">';
+        html += '<div class="llm-row"><span class="llm-label">Active backend</span>'
+            + '<span class="llm-active">' + escHtml(String(active)) + '</span></div>';
+        if (fallbacks.length) {
+            html += '<div class="llm-row"><span class="llm-label">Fallbacks</span>'
+                + '<span class="llm-value">' + fallbacks.map(f => escHtml(String(f))).join(', ') + '</span></div>';
+        }
+        if (providers.length) {
+            html += '<div class="llm-row"><span class="llm-label">Configured</span>'
+                + '<span class="llm-value">' + providers.map(p => escHtml(String(p))).join(', ') + '</span></div>';
+        }
+        html += '</div>';
+        el.innerHTML = html;
     }
 
     function fmtTokens(n) {

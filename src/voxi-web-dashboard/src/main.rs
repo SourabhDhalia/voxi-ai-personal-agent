@@ -353,6 +353,7 @@ async fn main() {
         .route("/api/voice/config", get(api_voice_config))
         .route("/api/capabilities", get(api_capabilities))
         .route("/api/search", get(api_search))
+        .route("/api/llm/config", get(api_llm_config))
         .route("/api/events", get(api_events))
         .route("/api/skills", get(api_skills_get).post(api_skills_post))
         .route("/api/skills/approve", post(api_skills_approve))
@@ -1616,6 +1617,22 @@ async fn api_search(
         Err(_) => Err(json_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "search task failed",
+        )),
+    }
+}
+
+// Read-only LLM provider configuration (active backend, fallbacks, configured
+// providers). Carries no secrets — API keys live in the separate key store.
+async fn api_llm_config() -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    match tokio::task::spawn_blocking(|| ipc_call("get_llm_config", json!({}))).await {
+        Ok(Ok(v)) => Ok(Json(v)),
+        Ok(Err(e)) => Err(json_error(
+            StatusCode::BAD_GATEWAY,
+            &format!("agent unavailable: {e}"),
+        )),
+        Err(_) => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "llm config task failed",
         )),
     }
 }

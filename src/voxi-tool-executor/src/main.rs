@@ -29,6 +29,7 @@ fn default_tools_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(home).join(".voxi/tools")
 }
 
+#[cfg(target_os = "macos")]
 fn default_data_dir() -> std::path::PathBuf {
     std::env::var("VOXI_DATA_DIR")
         .map(std::path::PathBuf::from)
@@ -47,6 +48,7 @@ fn socket_path_override() -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
 }
 
+#[cfg(target_os = "macos")]
 fn default_socket_path() -> std::path::PathBuf {
     default_data_dir().join("run").join(SOCKET_NAME)
 }
