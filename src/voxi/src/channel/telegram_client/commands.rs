@@ -647,10 +647,13 @@ Reset: {}",
                     );
                 };
                 let session_id = Self::chat_session_id(chat_id, state);
-                let usage = session_store
-                    .store()
-                    .load_token_usage(&session_id)
-                    .to_json();
+                let usage = match session_store.store() {
+                    Ok(s) => s.load_token_usage(&session_id).to_json(),
+                    Err(err) => {
+                        log::error!("Telegram commands: {}", err);
+                        serde_json::Value::Null
+                    }
+                };
                 Self::format_chat_usage_report(state, &usage)
             }
             TelegramInteractionMode::Coding => {

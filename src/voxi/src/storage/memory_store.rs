@@ -741,6 +741,179 @@ impl MemoryStore {
         self.build_relevant_memory_context(scored_memories, effective_top_k)
     }
 
+    /// Loads subset of memory files by hybrid search using RAG OnDeviceEmbedding and Keyword RRF
+    pub fn load_relevant_fused(&self, query: &str, top_k: usize, threshold: f32) -> String {
+        let effective_top_k = top_k.min(MEMORY_VECTOR_TOP_K_LIMIT);
+        
+        // Ensure embeddings are up-to-date
+        let _ = self.backfill_missing_embeddings(MEMORY_VECTOR_BACKFILL_LIMIT);
+        
+        let engine_guard = self.embedding_engine.lock().unwrap();
+        if !engine_guard.is_available() {
+            return self.load_for_prompt();
+        }
+        let prompt_emb = engine_guard.encode(query);
+        if prompt_emb.is_empty() {
+            return self.load_for_prompt();
+        }
+        drop(engine_guard);
+
+        // Retrieve all candidate memories from DB
+        let conn_res = self.db.lock();
+        let Ok(conn) = conn_res else {
+            return self.load_for_prompt();
+        };
+
+        let mut stmt = match conn.prepare(
+            "SELECT key, value, category, updated_at, embedding, embedding_dim FROM memories"
+        ) {
+            Ok(s) => s,
+            Err(_) => return self.load_for_prompt(),
+        };
+
+        let rows = match stmt.query_map(params![], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<Vec<u8>>>(4)?,
+                row.get::<_, i64>(5)?,
+            ))
+        }) {
+            Ok(r) => r,
+            Err(_) => return self.load_for_prompt(),
+        };
+
+        // Parse candidates
+        struct Candidate {
+            key: String,
+            value: String,
+            category: String,
+            updated_at: String,
+            vector_score: f32,
+            keyword_score: f32,
+        }
+
+        let mut candidates = Vec::new();
+        let keywords: Vec<String> = query
+            .split_whitespace()
+            .map(|w| w.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect())
+            .filter(|w: &String| !w.is_empty())
+            .collect();
+
+        for row in rows.filter_map(|r| r.ok()) {
+            let (key, value, category, updated_at, opt_blob, dim) = row;
+            
+            // Calculate Vector Similarity
+            let mut similarity = 0.0f32;
+            if let Some(blob) = opt_blob {
+                if let Some(embedding) = Self::decode_embedding_blob(&blob, dim as usize) {
+                    similarity = prompt_emb
+                        .iter()
+                        .zip(embedding.iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
+                }
+            }
+
+            // Calculate Keyword score
+            let mut keyword_score = 0.0f32;
+            let key_lower = key.to_lowercase();
+            let value_lower = value.to_lowercase();
+            for kw in &keywords {
+                let occurrences_in_key = key_lower.matches(kw).count();
+                let occurrences_in_val = value_lower.matches(kw).count();
+                keyword_score += (occurrences_in_key * 2) as f32 + occurrences_in_val as f32;
+            }
+
+            candidates.push(Candidate {
+                key,
+                value,
+                category,
+                updated_at,
+                vector_score: similarity,
+                keyword_score,
+            });
+        }
+
+        // Rank Vector search
+        // Sort candidates by vector_score descending
+        let mut vector_ranked = candidates.iter().enumerate().collect::<Vec<_>>();
+        vector_ranked.sort_by(|a, b| b.1.vector_score.partial_cmp(&a.1.vector_score).unwrap_or(std::cmp::Ordering::Equal));
+        
+        let mut vector_ranks = std::collections::HashMap::new();
+        for (rank, &(idx, candidate)) in vector_ranked.iter().enumerate() {
+            if candidate.vector_score >= threshold {
+                vector_ranks.insert(idx, rank + 1); // 1-indexed rank
+            }
+        }
+
+        // Rank Keyword search
+        // Sort candidates by keyword_score descending
+        let mut keyword_ranked = candidates.iter().enumerate().collect::<Vec<_>>();
+        keyword_ranked.sort_by(|a, b| b.1.keyword_score.partial_cmp(&a.1.keyword_score).unwrap_or(std::cmp::Ordering::Equal));
+
+        let mut keyword_ranks = std::collections::HashMap::new();
+        for (rank, &(idx, candidate)) in keyword_ranked.iter().enumerate() {
+            if candidate.keyword_score > 0.0 {
+                keyword_ranks.insert(idx, rank + 1); // 1-indexed rank
+            }
+        }
+
+        // Calculate RRF Score for each candidate that matched at least one
+        struct ScoredCandidate {
+            rrf_score: f32,
+            key: String,
+            value: String,
+            category: String,
+            updated_at: String,
+        }
+
+        let mut scored_results = Vec::new();
+        for (idx, candidate) in candidates.iter().enumerate() {
+            let opt_v_rank = vector_ranks.get(&idx);
+            let opt_k_rank = keyword_ranks.get(&idx);
+
+            if opt_v_rank.is_some() || opt_k_rank.is_some() {
+                let rank_v = opt_v_rank.copied().unwrap_or(100000);
+                let rank_k = opt_k_rank.copied().unwrap_or(100000);
+                
+                let rrf_score = 1.0 / (60.0 + rank_v as f32) + 1.0 / (60.0 + rank_k as f32);
+                
+                scored_results.push(ScoredCandidate {
+                    rrf_score,
+                    key: candidate.key.clone(),
+                    value: candidate.value.clone(),
+                    category: candidate.category.clone(),
+                    updated_at: candidate.updated_at.clone(),
+                });
+            }
+        }
+
+        // Sort by RRF score descending
+        scored_results.sort_by(|a, b| b.rrf_score.partial_cmp(&a.rrf_score).unwrap_or(std::cmp::Ordering::Equal));
+
+        // Format to Markdown context
+        let mut scored_memories = Vec::new();
+        for item in scored_results {
+            scored_memories.push((
+                item.rrf_score,
+                format!("{} ({})", item.category, item.key),
+                Self::markdown_for_entry(&item.key, &item.value, &item.category, &item.updated_at),
+            ));
+        }
+
+        self.build_relevant_memory_context(scored_memories, effective_top_k)
+    }
+
+    /// Insert an episodic memory summary
+    pub fn insert_episodic_memory(&self, session_id: &str, summary: &str) -> Result<(), String> {
+        let key = format!("episodic_{}_{}", session_id, uuid::Uuid::new_v4());
+        self.set(&key, summary, "episodic");
+        Ok(())
+    }
+
     pub fn encode_text_embedding(&self, text: &str) -> Option<Vec<f32>> {
         let engine_guard = self.embedding_engine.lock().ok()?;
         if !engine_guard.is_available() {
@@ -995,5 +1168,36 @@ mod tests {
         // Should have moved to long-term
         assert!(!md_dir.join(&filename).exists());
         assert!(md_dir.join("long-term").join(&filename).exists());
+    }
+
+    #[test]
+    fn test_load_relevant_fused() {
+        let tmp = tempdir().unwrap();
+        let md_dir = tmp.path().join("memory");
+        let db_path = tmp.path().join("mem.db");
+        let model_dir = tmp.path().join("models");
+
+        let store = MemoryStore::new(
+            md_dir.to_str().unwrap(),
+            db_path.to_str().unwrap(),
+            model_dir.to_str().unwrap(),
+        )
+        .unwrap();
+
+        // Write memories
+        store.set("fact::light", "Living room light is GPIO 17", "facts");
+        store.set("pref::lang", "Use Korean language option", "preferences");
+        store.set("action::exec", "Last ran ls command", "episodic");
+
+        // Search with query "Korean language"
+        let fused_context = store.load_relevant_fused("Korean language", 2, 0.1);
+        
+        // Assert fused context contains the matching keyword memory
+        assert!(fused_context.contains("pref::lang"));
+        assert!(fused_context.contains("Use Korean language option"));
+        
+        // Search with query "GPIO 17"
+        let fused_context_2 = store.load_relevant_fused("GPIO 17", 2, 0.1);
+        assert!(fused_context_2.contains("fact::light"));
     }
 }

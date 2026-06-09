@@ -182,11 +182,17 @@ fn run_transcript_consumer(
     handle: Option<tokio::runtime::Handle>,
 ) {
     let fallback = handle.is_none().then(|| {
-        tokio::runtime::Builder::new_current_thread()
+        match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .expect("build fallback voice runtime")
-    });
+        {
+            Ok(rt) => Some(rt),
+            Err(err) => {
+                log::error!("Failed to build fallback voice runtime: {}", err);
+                None
+            }
+        }
+    }).flatten();
 
     while running.load(Ordering::SeqCst) {
         let item = match rx.recv_timeout(std::time::Duration::from_millis(250)) {
@@ -205,7 +211,10 @@ fn run_transcript_consumer(
         let response = match (&handle, &fallback) {
             (Some(h), _) => h.block_on(fut),
             (None, Some(rt)) => rt.block_on(fut),
-            (None, None) => unreachable!("fallback runtime is built when no handle"),
+            _ => {
+                log::error!("VoiceChannel: no tokio runtime available to block on process_prompt");
+                continue;
+            }
         };
 
         if let Err(e) = engine.speak(&response) {

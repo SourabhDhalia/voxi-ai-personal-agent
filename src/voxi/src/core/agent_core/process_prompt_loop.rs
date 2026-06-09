@@ -161,7 +161,9 @@ impl AgentCore {
                 "[AgentLoop] Pre-loop compaction triggered ({}% used)",
                 (loop_state.token_used as f32 / loop_state.token_budget as f32 * 100.0) as u32
             );
-            messages = context_engine.compact(messages, loop_state.token_budget);
+            let compacted = context_engine.compact(messages.clone(), loop_state.token_budget);
+            self.summarize_and_store_pruned_messages(session_id, &messages, &compacted).await;
+            messages = compacted;
             loop_state.token_used = context_engine.estimate_tokens(&messages);
             self.persist_compacted_messages(session_id, &messages);
         }
