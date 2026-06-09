@@ -1,0 +1,72 @@
+{
+  "name": "web-browse-bridge",
+  "offline_safe": true,
+  "steps": [
+    {
+      "name": "web-browse-type-mock",
+      "method": "bridge_tool",
+      "params": {
+        "tool_name": "web_browse",
+        "allowed_tools": ["web_browse"],
+        "args": {
+          "session_id": "test-browse-session",
+          "action": "type",
+          "ref": 5,
+          "text": "voxi-agent"
+        }
+      },
+      "assertions": [
+        {
+          "path": "status",
+          "equals": "success"
+        },
+        {
+          "path": "message",
+          "contains": "Typed 'voxi-agent' into input field ref=5"
+        }
+      ]
+    },
+    {
+      "name": "web-browse-extract-mock",
+      "method": "bridge_tool",
+      "params": {
+        "tool_name": "web_browse",
+        "allowed_tools": ["web_browse"],
+        "args": {
+          "session_id": "test-browse-session",
+          "action": "extract",
+          "selector": "h1"
+        }
+      },
+      "assertions": [
+        {
+          "path": "status",
+          "equals": "success"
+        },
+        {
+          "path": "selector",
+          "equals": "h1"
+        }
+      ]
+    },
+    {
+      "name": "web-browse-ssrf-block",
+      "method": "bridge_tool",
+      "params": {
+        "tool_name": "web_browse",
+        "allowed_tools": ["web_browse"],
+        "args": {
+          "session_id": "test-browse-session",
+          "action": "navigate",
+          "url": "http://127.0.0.1/admin"
+        }
+      },
+      "assertions": [
+        {
+          "path": "error",
+          "contains": "Refusing to fetch a loopback"
+        }
+      ]
+    }
+  ]
+}

@@ -187,6 +187,8 @@ impl AgentCore {
             "forget",
             "web_search",
             "validate_web_search",
+            "web_browse",
+            "web_fetch",
         ];
         builtins.retain(|tool| supported.iter().any(|name| tool.name == *name));
         builtins
@@ -757,6 +759,13 @@ impl AgentCore {
                     &self.platform.paths.config_dir,
                 )
                 .await
+            }
+            "web_browse" => {
+                let requested_session_id = args
+                    .get("session_id")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("ipc-bridge");
+                feature_tools::execute_web_browse(requested_session_id, args).await
             }
             "remember" => {
                 let key = args
