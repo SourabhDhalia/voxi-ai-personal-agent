@@ -1,0 +1,213 @@
+openapi: "3.1.0"
+info:
+  title: Voxi Integration API (proposed)
+  version: "1.0.0"
+  description: >
+    PROPOSED external REST API to let third-party clients drive Voxi's new
+    capabilities over HTTP — model routing (providers incl. OpenRouter), the
+    skill system (incl. self-authoring), sandboxed tool execution, and tiered
+    memory. Greenfield design (not yet implemented). Bearer-token auth, RFC 7807
+    errors, cursor pagination, explicit versioning under /v1.
+servers:
+  - url: "https://{host}/v1"
+    variables: { host: { default: "127.0.0.1:8091" } }
+security:
+  - BearerAuth: []
+tags:
+  - name: Models
+  - name: Skills
+  - name: Sandbox
+  - name: Memory
+paths:
+  /models/providers:
+    get:
+      summary: List configured model providers
+      operationId: listProviders
+      tags: [Models]
+      responses:
+        "200":
+          description: Providers (anthropic, openai, gemini, ollama, openrouter, …)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: "#/components/schemas/Provider" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      summary: Add/configure a provider (e.g. OpenRouter)
+      operationId: upsertProvider
+      tags: [Models]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProviderInput" }
+            examples:
+              openrouter:
+                value:
+                  name: "openrouter"
+                  api_key: "sk-or-…"
+                  model: "anthropic/claude-3.5-sonnet"
+      responses:
+        "201": { description: Created }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /skills:
+    get:
+      summary: List skills (paginated)
+      operationId: listSkills
+      tags: [Skills]
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        "200":
+          description: Paginated skills
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/Skill" } }
+                  pagination: { $ref: "#/components/schemas/CursorPage" }
+    post:
+      summary: Author a skill (manual or agent self-authored)
+      operationId: createSkill
+      tags: [Skills]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SkillInput" }
+      responses:
+        "201": { description: Created (pending approval) }
+        "400": { $ref: "#/components/responses/BadRequest" }
+  /sandbox/exec:
+    post:
+      summary: Execute a tool/command inside the sandbox
+      operationId: sandboxExec
+      tags: [Sandbox]
+      description: >
+        Runs a command in an isolated backend (none/subprocess/namespace/
+        container) subject to SafetyGuard policy. See ADR-0002.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool_name, args]
+              properties:
+                tool_name: { type: string }
+                args: { type: object, additionalProperties: true }
+                backend:
+                  type: string
+                  enum: [none, subprocess, namespace, container]
+                  default: subprocess
+      responses:
+        "200":
+          description: Execution result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ToolResult" }
+        "403":
+          description: Blocked by safety policy
+          content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+  /memory/search:
+    get:
+      summary: Search tiered memory (core/archival/recall)
+      operationId: searchMemory
+      tags: [Memory]
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string } }
+        - { name: tier, in: query, schema: { type: string, enum: [core, archival, recall] } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 100 } }
+      responses:
+        "200":
+          description: Paginated memory hits
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, pagination]
+                properties:
+                  data: { type: array, items: { $ref: "#/components/schemas/MemoryItem" } }
+                  pagination: { $ref: "#/components/schemas/CursorPage" }
+components:
+  securitySchemes:
+    BearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    Provider:
+      type: object
+      required: [name, enabled]
+      properties:
+        name: { type: string }
+        enabled: { type: boolean }
+        model: { type: string }
+        endpoint: { type: string, format: uri }
+    ProviderInput:
+      type: object
+      required: [name, api_key]
+      properties:
+        name: { type: string }
+        api_key: { type: string }
+        model: { type: string }
+        endpoint: { type: string, format: uri }
+    Skill:
+      type: object
+      required: [id, name, status]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        status: { type: string, enum: [active, pending, discarded] }
+        source: { type: string, enum: [manual, self_authored, clawhub] }
+    SkillInput:
+      type: object
+      required: [name, body]
+      properties:
+        name: { type: string }
+        body: { type: string, description: "SKILL.md content (agentskills.io-compatible)" }
+    ToolResult:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+        stdout: { type: string }
+        stderr: { type: string }
+        truncated: { type: boolean }
+        error: { type: string }
+    MemoryItem:
+      type: object
+      required: [id, tier, content]
+      properties:
+        id: { type: string }
+        tier: { type: string, enum: [core, archival, recall] }
+        content: { type: string }
+        score: { type: number }
+    CursorPage:
+      type: object
+      required: [next_cursor, has_more]
+      properties:
+        next_cursor: { type: string, nullable: true }
+        has_more: { type: boolean }
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+  responses:
+    BadRequest:
+      description: Invalid request
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    Unauthorized:
+      description: Missing/invalid token
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
