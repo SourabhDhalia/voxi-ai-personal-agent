@@ -660,6 +660,30 @@ impl AgentCore {
         }
 
         let mut loop_state = AgentLoopState::new(session_id, prompt);
+        // Resume in-flight progress if a prior run for this exact goal was
+        // interrupted before completion (durable checkpoint after a crash or
+        // restart). A different prompt, or a run that already completed, starts
+        // fresh.
+        {
+            let checkpoint = self.load_loop_snapshot(session_id);
+            let resumable = checkpoint
+                .get("resumable")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let same_goal = checkpoint
+                .get("original_goal")
+                .and_then(|v| v.as_str())
+                .map(|g| g == prompt)
+                .unwrap_or(false);
+            if resumable && same_goal {
+                loop_state.restore_from(&checkpoint);
+                log::info!(
+                    "[AgentLoop] Resumed session '{}' from checkpoint at round {}",
+                    session_id,
+                    loop_state.round
+                );
+            }
+        }
         let mut skip_memory_extraction = false;
         let mut auto_prepared_skill_name: Option<String> = None;
 
