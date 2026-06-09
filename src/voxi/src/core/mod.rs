@@ -8,6 +8,7 @@ pub mod runtime_paths;
 pub mod skill_capability_manager;
 pub mod skill_support;
 pub mod textual_skill_scanner;
+pub mod skill_scanner;
 pub mod tool_declaration_builder;
 pub mod tool_dispatcher;
 pub mod tool_policy;

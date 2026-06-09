@@ -10,6 +10,8 @@ mod peer_validator;
 use serde_json::{json, Value};
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::Command;
@@ -17,6 +19,15 @@ use tokio::sync::Mutex;
 
 const SOCKET_NAME: &str = "voxi-tool-executor.sock";
 const MAX_PAYLOAD: usize = 10 * 1024 * 1024;
+const DEFAULT_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_MAX_OUTPUT_BYTES: usize = 1_048_576;
+
+/// Environment variable names that are safe to pass to child processes.
+const SAFE_ENV_VARS: &[&str] = &[
+    "PATH", "HOME", "LANG", "TERM", "USER", "SHELL",
+    "TMPDIR", "XDG_RUNTIME_DIR", "DISPLAY", "WAYLAND_DISPLAY",
+    "LC_ALL", "LC_CTYPE",
+];
 
 fn default_tools_dir() -> std::path::PathBuf {
     if let Ok(path) = std::env::var("VOXI_TOOLS_DIR") {
@@ -169,9 +180,25 @@ where
         }
     };
 
-    log::debug!("Executing [{}]: {} {:?} cwd={:?}", mode, bin_path, args, cwd);
+    let timeout_secs = req["timeout_secs"]
+        .as_u64()
+        .unwrap_or(DEFAULT_TIMEOUT_SECS);
+    let max_output_bytes = req["max_output_bytes"]
+        .as_u64()
+        .map(|v| v as usize)
+        .unwrap_or(DEFAULT_MAX_OUTPUT_BYTES);
+
+    log::debug!("Executing [{}]: {} {:?} cwd={:?} timeout={}s max_output={}",
+        mode, bin_path, args, cwd, timeout_secs, max_output_bytes);
 
     let mut command = Command::new(&bin_path);
+    // Scrub all environment variables then selectively re-add safe ones
+    command.env_clear();
+    for &var_name in SAFE_ENV_VARS {
+        if let Ok(val) = std::env::var(var_name) {
+            command.env(var_name, val);
+        }
+    }
     command
         .args(&args)
         .stdin(Stdio::piped())
@@ -198,15 +225,24 @@ where
     let mut stderr = child.stderr.take().expect("Failed to grab stderr");
     let stdin_opt = child.stdin.take();
 
+    // Shared output size counter for output bomb protection
+    let total_output_bytes = Arc::new(AtomicUsize::new(0));
+
     let writer = Arc::new(Mutex::new(writer));
 
     let stdout_writer = writer.clone();
+    let stdout_counter = total_output_bytes.clone();
     let stdout_task = tokio::spawn(async move {
         let mut buf = [0u8; 4096];
         loop {
             match stdout.read(&mut buf).await {
                 Ok(0) => break,
                 Ok(n) => {
+                    let prev = stdout_counter.fetch_add(n, Ordering::Relaxed);
+                    if prev + n > max_output_bytes {
+                        log::warn!("Output size limit exceeded ({} bytes), stopping stdout", prev + n);
+                        break;
+                    }
                     let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
                     let mut lock = stdout_writer.lock().await;
                     let _ =
@@ -218,12 +254,18 @@ where
     });
 
     let stderr_writer = writer.clone();
+    let stderr_counter = total_output_bytes.clone();
     let stderr_task = tokio::spawn(async move {
         let mut buf = [0u8; 4096];
         loop {
             match stderr.read(&mut buf).await {
                 Ok(0) => break,
                 Ok(n) => {
+                    let prev = stderr_counter.fetch_add(n, Ordering::Relaxed);
+                    if prev + n > max_output_bytes {
+                        log::warn!("Output size limit exceeded ({} bytes), stopping stderr", prev + n);
+                        break;
+                    }
                     let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
                     let mut lock = stderr_writer.lock().await;
                     let _ =
@@ -264,11 +306,25 @@ where
         tokio::spawn(async {})
     };
 
-    let exit_status = match child.wait().await {
-        Ok(status) => status,
-        Err(e) => {
+    let timeout_duration = Duration::from_secs(timeout_secs);
+    let exit_result = tokio::time::timeout(timeout_duration, child.wait()).await;
+
+    let exit_code = match exit_result {
+        Ok(Ok(status)) => status.code().unwrap_or(-1),
+        Ok(Err(e)) => {
             log::error!("Failed to wait on child: {}", e);
             return;
+        }
+        Err(_) => {
+            log::warn!("Child process timed out after {}s, killing", timeout_secs);
+            let _ = child.kill().await;
+            let mut lock = writer.lock().await;
+            let _ = send_payload(
+                &mut *lock,
+                &json!({"event": "error", "message": format!("Process timed out after {}s", timeout_secs)}),
+            )
+            .await;
+            -1
         }
     };
 
@@ -277,7 +333,7 @@ where
     let mut lock = writer.lock().await;
     let _ = send_payload(
         &mut *lock,
-        &json!({"event": "exit", "code": exit_status.code().unwrap_or(-1)}),
+        &json!({"event": "exit", "code": exit_code}),
     )
     .await;
 }
