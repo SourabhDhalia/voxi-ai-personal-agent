@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Voxi Dashboard</title>
   <meta name="description" content="Voxi AI Agent System Dashboard">
-  <link rel="stylesheet" href="/style.css?v=20260608b">
+  <link rel="stylesheet" href="/style.css?v=20260608c">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
@@ -268,6 +268,12 @@
             <div class="trend-head"><span class="trend-label">Total Tokens (today)</span><span class="trend-now" id="trend-tokens-now">—</span></div>
             <canvas class="trend-canvas" id="chart-tokens" width="300" height="64" role="img" aria-label="Total tokens trend (live)"></canvas>
           </div>
+        </div>
+
+        <!-- Model Providers -->
+        <h3 class="section-title">Model Providers</h3>
+        <div class="llm-providers" id="llm-providers">
+          <p class="empty-state">Loading…</p>
         </div>
       </section>
 
@@ -592,7 +598,7 @@
   </div>
 
   <script src="/marked.min.js"></script>
-  <script src="/app.js?v=20260608b"></script>
+  <script src="/app.js?v=20260608c"></script>
 </body>
 
 </html>
