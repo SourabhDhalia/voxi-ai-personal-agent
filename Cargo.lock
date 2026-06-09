@@ -1201,6 +1201,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
+name = "rusty-claude-cli"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vclaw-commands",
+ "vclaw-plugins",
+ "vclaw-runtime",
+ "vclaw-tools",
+]
+
+[[package]]
 name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1650,6 +1662,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "vclaw-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "vclaw-cli"
+version = "0.1.0"
+dependencies = [
+ "rusty-claude-cli",
+]
+
+[[package]]
+name = "vclaw-commands"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "vclaw-plugins"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "vclaw-api",
+ "vclaw-commands",
+]
+
+[[package]]
+name = "vclaw-runtime"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "vclaw-api",
+ "vclaw-commands",
+ "vclaw-plugins",
+]
+
+[[package]]
+name = "vclaw-tools"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "vclaw-api",
+ "vclaw-plugins",
+ "vclaw-runtime",
+]
+
+[[package]]
 name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1683,6 +1754,7 @@ dependencies = [
  "tokio",
  "tower-http 0.5.2",
  "uuid",
+ "vclaw-api",
  "voxi-core",
  "voxi-voice",
  "zip",

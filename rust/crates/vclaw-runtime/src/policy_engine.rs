@@ -368,3 +368,59 @@ mod tests {
         assert!(evaluation.rationale.contains("does not allow writes"));
     }
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UnifiedPolicyAuthorizer {
+    pub policy: PolicyEngineState,
+    pub context: PolicyContext,
+}
+
+impl vclaw_api::ToolAuthorizer for UnifiedPolicyAuthorizer {
+    fn authorize(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+        side_effect_level: &str,
+        _call_count: usize,
+    ) -> Result<(), String> {
+        let scope = match tool_name {
+            "web_browse" | "web_fetch" => crate::permissions::PermissionScope::Network,
+            "run_command" | "exec" | "execute" => crate::permissions::PermissionScope::Execute,
+            "write_file" | "delete_file" | "create_dir" | "write_text" => {
+                crate::permissions::PermissionScope::Write
+            }
+            _ => crate::permissions::PermissionScope::Read,
+        };
+
+        let min_level = match side_effect_level {
+            "irreversible" => crate::permissions::PermissionLevel::Sensitive,
+            "none" => crate::permissions::PermissionLevel::Low,
+            _ => crate::permissions::PermissionLevel::Standard,
+        };
+
+        let request = crate::permissions::PermissionRequest {
+            scope,
+            target: args.to_string(),
+            reason: format!("Authorize tool call: {}", tool_name),
+            tool_name: Some(tool_name.to_string()),
+            minimum_level: min_level,
+            bash_plan: None,
+            metadata: std::collections::BTreeMap::new(),
+        };
+
+        let evaluation = PolicyEngine::evaluate(&self.policy, &request, &self.context);
+
+        match evaluation.outcome {
+            crate::permissions::PermissionOutcome::Allowed => Ok(()),
+            crate::permissions::PermissionOutcome::Denied => Err(format!(
+                "Tool '{}' blocked by policy: {}",
+                tool_name, evaluation.rationale
+            )),
+            crate::permissions::PermissionOutcome::Escalated => Err(format!(
+                "Tool '{}' requires manual confirmation: {}",
+                tool_name, evaluation.rationale
+            )),
+        }
+    }
+}
+
