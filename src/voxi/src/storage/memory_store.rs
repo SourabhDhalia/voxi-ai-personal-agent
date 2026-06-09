@@ -15,6 +15,69 @@ const MEMORY_VECTOR_SCAN_LIMIT: usize = 256;
 const MEMORY_VECTOR_BACKFILL_LIMIT: usize = 24;
 const MEMORY_VECTOR_TOP_K_LIMIT: usize = 8;
 
+/// A single semantic-search result returned to callers (e.g. the dashboard
+/// `/api/search` endpoint).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SemanticHit {
+    pub key: String,
+    pub category: String,
+    pub score: f32,
+    pub snippet: String,
+}
+
+/// Internal candidate row used while ranking.
+struct EmbeddingCandidate {
+    key: String,
+    category: String,
+    embedding: Vec<f32>,
+    snippet: String,
+}
+
+/// Collapse whitespace and cap a value to a short single-line preview.
+fn snippet_of(value: &str) -> String {
+    let flat = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() > 280 {
+        let s: String = flat.chars().take(280).collect();
+        format!("{s}…")
+    } else {
+        flat
+    }
+}
+
+/// Pure cosine ranking over L2-normalized embeddings (cosine == dot product).
+/// Candidates whose dimension does not match `query` are skipped; results that
+/// clear `threshold` are returned sorted by descending score, truncated to
+/// `top_k`. Kept free of I/O so it is unit-testable without the ONNX model.
+fn rank_by_cosine(
+    query: &[f32],
+    candidates: Vec<EmbeddingCandidate>,
+    top_k: usize,
+    threshold: f32,
+) -> Vec<SemanticHit> {
+    let mut hits: Vec<SemanticHit> = candidates
+        .into_iter()
+        .filter_map(|c| {
+            if c.embedding.len() != query.len() {
+                return None;
+            }
+            let score: f32 = query.iter().zip(c.embedding.iter()).map(|(a, b)| a * b).sum();
+            if score >= threshold {
+                Some(SemanticHit {
+                    key: c.key,
+                    category: c.category,
+                    score,
+                    snippet: c.snippet,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+    hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    hits.truncate(top_k);
+    hits
+}
+
 /// Sanitizes a string for use as a filename
 fn sanitize_filename(s: &str) -> String {
     let s = s.replace("::", "_").replace(" ", "-");
@@ -533,6 +596,76 @@ impl MemoryStore {
         .unwrap_or_default()
     }
 
+    /// Semantic search over stored memory embeddings. Encodes `query` with the
+    /// on-device model and returns the top-`top_k` entries by cosine similarity.
+    /// Returns an empty vec if the embedding engine is unavailable or nothing
+    /// clears `threshold`. Falls back to nothing (callers may use `search` for a
+    /// keyword fallback).
+    pub fn search_semantic(&self, query: &str, top_k: usize, threshold: f32) -> Vec<SemanticHit> {
+        let query_emb = {
+            let Ok(engine) = self.embedding_engine.lock() else {
+                return Vec::new();
+            };
+            if !engine.is_available() {
+                return Vec::new();
+            }
+            engine.encode(query)
+        };
+        if query_emb.is_empty() {
+            return Vec::new();
+        }
+        let candidates = self.load_embedding_candidates(query_emb.len());
+        rank_by_cosine(&query_emb, candidates, top_k, threshold)
+    }
+
+    /// Load embedding rows of the expected dimension carrying the current model.
+    fn load_embedding_candidates(&self, dim: usize) -> Vec<EmbeddingCandidate> {
+        let Ok(conn) = self.db.lock() else {
+            return Vec::new();
+        };
+        let Ok(mut stmt) = conn.prepare(
+            "SELECT key, value, category, embedding, embedding_dim
+             FROM memories
+             WHERE embedding IS NOT NULL
+               AND embedding_dim = ?1
+               AND embedding_model = ?2
+             ORDER BY updated_at DESC
+             LIMIT ?3",
+        ) else {
+            return Vec::new();
+        };
+        let rows = stmt.query_map(
+            params![
+                dim as i64,
+                MEMORY_EMBEDDING_MODEL,
+                MEMORY_VECTOR_SCAN_LIMIT as i64
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                    row.get::<_, i64>(4)?,
+                ))
+            },
+        );
+        let Ok(rows) = rows else {
+            return Vec::new();
+        };
+        rows.filter_map(|r| r.ok())
+            .filter_map(|(key, value, category, blob, edim)| {
+                let embedding = Self::decode_embedding_blob(&blob, edim as usize)?;
+                Some(EmbeddingCandidate {
+                    key,
+                    category,
+                    embedding,
+                    snippet: snippet_of(&value),
+                })
+            })
+            .collect()
+    }
+
     pub fn delete(&self, key: &str) -> bool {
         // Find existing metadata before deleting from DB
         let (cat_opt, ts_opt) = {
@@ -895,6 +1028,46 @@ impl MemoryStore {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn cand(key: &str, emb: Vec<f32>) -> EmbeddingCandidate {
+        EmbeddingCandidate {
+            key: key.into(),
+            category: "general".into(),
+            embedding: emb,
+            snippet: key.into(),
+        }
+    }
+
+    #[test]
+    fn rank_by_cosine_orders_and_filters() {
+        let query = vec![1.0_f32, 0.0];
+        let candidates = vec![
+            cand("aligned", vec![1.0, 0.0]),        // score 1.0
+            cand("orthogonal", vec![0.0, 1.0]),     // score 0.0 -> below threshold
+            cand("diagonal", vec![0.7071, 0.7071]), // score ~0.707
+            cand("wrong_dim", vec![1.0]),           // skipped (dim mismatch)
+        ];
+        let hits = rank_by_cosine(&query, candidates, 10, 0.5);
+        assert_eq!(hits.len(), 2, "orthogonal filtered, wrong_dim skipped");
+        assert_eq!(hits[0].key, "aligned");
+        assert_eq!(hits[1].key, "diagonal");
+        assert!(hits[0].score > hits[1].score);
+    }
+
+    #[test]
+    fn rank_by_cosine_respects_top_k() {
+        let query = vec![1.0_f32, 0.0];
+        let candidates = (0..5).map(|i| cand(&format!("k{i}"), vec![1.0, 0.0])).collect();
+        let hits = rank_by_cosine(&query, candidates, 2, 0.0);
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[test]
+    fn snippet_of_collapses_and_caps() {
+        assert_eq!(snippet_of("  a   b\n\nc  "), "a b c");
+        let long = "x ".repeat(400);
+        assert!(snippet_of(&long).chars().count() <= 281);
+    }
 
     #[test]
     fn normalize_markdown_body_collapses_extra_blank_lines() {

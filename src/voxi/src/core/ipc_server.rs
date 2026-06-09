@@ -457,6 +457,42 @@ impl IpcServer {
                 })
             }
 
+            "semantic_search" => {
+                let query = params
+                    .get("query")
+                    .or_else(|| params.get("q"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                if query.is_empty() {
+                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing query"},"id":req_id})
+                        .to_string();
+                }
+                let top_k = params
+                    .get("top_k")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(8)
+                    .clamp(1, 50) as usize;
+                let threshold = params
+                    .get("threshold")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.25) as f32;
+                let hits = agent.search_memory(&query, top_k, threshold);
+                let results: Vec<Value> = hits
+                    .into_iter()
+                    .map(|h| {
+                        json!({
+                            "key": h.key,
+                            "category": h.category,
+                            "score": h.score,
+                            "snippet": h.snippet,
+                        })
+                    })
+                    .collect();
+                json!({"status": "ok", "query": query, "count": results.len(), "results": results})
+            }
+
             "get_usage" => {
                 if let Some(ss_ref) = agent.get_session_store() {
                     let session_id = params

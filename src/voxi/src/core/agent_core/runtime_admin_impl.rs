@@ -51,6 +51,24 @@ impl AgentCore {
         }
     }
 
+    /// Semantic search over stored memory using the on-device embedding model.
+    /// Encapsulates the memory store: returns ranked hits, or an empty vec if
+    /// memory or the embedding engine is unavailable.
+    pub fn search_memory(
+        &self,
+        query: &str,
+        top_k: usize,
+        threshold: f32,
+    ) -> Vec<crate::storage::memory_store::SemanticHit> {
+        match self.memory_store.lock() {
+            Ok(guard) => match guard.as_ref() {
+                Some(store) => store.search_semantic(query, top_k, threshold),
+                None => Vec::new(),
+            },
+            Err(_) => Vec::new(),
+        }
+    }
+
     fn llm_config_path_affects_backends(path: &str) -> bool {
         matches!(
             path.split('.').next(),
