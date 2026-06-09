@@ -1907,15 +1907,23 @@ async fn api_events(
 
     let event_stream = futures_util::stream::unfold(rx, |mut rx| async move {
         loop {
-            match rx.recv().await {
-                Ok(line) => {
-                    let sse_event = axum::response::sse::Event::default().data(line);
-                    return Some((Ok::<_, std::convert::Infallible>(sse_event), rx));
+            if !RUNNING.load(Ordering::SeqCst) {
+                return None;
+            }
+            tokio::select! {
+                res = rx.recv() => {
+                    match res {
+                        Ok(line) => {
+                            let sse_event = axum::response::sse::Event::default().data(line);
+                            return Some((Ok::<_, std::convert::Infallible>(sse_event), rx));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                    }
                 }
-                // This client fell behind the broadcast buffer; skip and continue.
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                // Hub closed (pump dropped); end this SSE stream.
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                    continue;
+                }
             }
         }
     });

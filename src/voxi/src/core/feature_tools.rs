@@ -1036,8 +1036,7 @@ struct HtmlToken<'a> {
     is_tag: bool,
     content: &'a str,
 }
-
-fn tokenize_html(html: &str) -> Vec<HtmlToken> {
+fn tokenize_html(html: &str) -> Vec<HtmlToken<'_>> {
     let mut tokens = Vec::new();
     let mut current_pos = 0;
     while let Some(start_idx) = html[current_pos..].find('<') {

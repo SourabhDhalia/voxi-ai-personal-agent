@@ -673,6 +673,25 @@ stop_daemon() {
   wait_for_process_name_exit "voxi" "${PKG_NAME}" 5 || true
   wait_for_process_name_exit "voxi-web-dashboard" "${WEB_DASHBOARD_NAME}" 5 || true
 
+  # Force-kill remaining lingering processes if any survived
+  local current_uid
+  current_uid="$(id -u)"
+  if pgrep -u "${current_uid}" -f "${INSTALL_DIR}/${TOOL_EXECUTOR_NAME}([[:space:]]|$)" &>/dev/null || pgrep -u "${current_uid}" -x "${TOOL_EXECUTOR_NAME}" &>/dev/null; then
+    warn "Force-killing lingering tool-executor..."
+    run pkill -9 -u "${current_uid}" -f "${INSTALL_DIR}/${TOOL_EXECUTOR_NAME}([[:space:]]|$)" || true
+    run pkill -9 -u "${current_uid}" -x "${TOOL_EXECUTOR_NAME}" || true
+  fi
+  if pgrep -u "${current_uid}" -f "${INSTALL_DIR}/${PKG_NAME}([[:space:]]|$)" &>/dev/null || pgrep -u "${current_uid}" -x "${PKG_NAME}" &>/dev/null; then
+    warn "Force-killing lingering voxi daemon..."
+    run pkill -9 -u "${current_uid}" -f "${INSTALL_DIR}/${PKG_NAME}([[:space:]]|$)" || true
+    run pkill -9 -u "${current_uid}" -x "${PKG_NAME}" || true
+  fi
+  if pgrep -u "${current_uid}" -f "${INSTALL_DIR}/${WEB_DASHBOARD_NAME}([[:space:]]|$)" &>/dev/null || pgrep -u "${current_uid}" -x "${WEB_DASHBOARD_NAME}" &>/dev/null; then
+    warn "Force-killing lingering web dashboard..."
+    run pkill -9 -u "${current_uid}" -f "${INSTALL_DIR}/${WEB_DASHBOARD_NAME}([[:space:]]|$)" || true
+    run pkill -9 -u "${current_uid}" -x "${WEB_DASHBOARD_NAME}" || true
+  fi
+
   if [ "${DRY_RUN}" = false ]; then
     local remaining
     remaining="$(process_report)"

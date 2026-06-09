@@ -229,9 +229,11 @@ impl Channel for WebDashboard {
 
     fn stop(&mut self) {
         if let Some(pid) = self.child_pid.take() {
+            let cpid = pid as libc::pid_t;
             let pgid = -(pid as libc::pid_t);
-            // Send SIGTERM for graceful shutdown
+            // Send SIGTERM to the process directly and its group for graceful shutdown
             unsafe {
+                libc::kill(cpid, libc::SIGTERM);
                 libc::kill(pgid, libc::SIGTERM);
             }
             // Give the process up to 3 seconds, then force-kill
@@ -242,6 +244,7 @@ impl Channel for WebDashboard {
                 }
                 if std::time::Instant::now() >= deadline {
                     unsafe {
+                        libc::kill(cpid, libc::SIGKILL);
                         libc::kill(pgid, libc::SIGKILL);
                     }
                     break;
