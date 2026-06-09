@@ -7,6 +7,7 @@
 //!   - `VOXI_LLM_BACKEND_CHAT(messages, tools, on_chunk, user_data, system_prompt) -> response_h`
 //!   - `VOXI_LLM_BACKEND_SHUTDOWN()`
 
+use libloading::Library;
 use serde_json::Value;
 use std::ffi::{CStr, CString};
 use std::path::Path;
@@ -37,14 +38,12 @@ pub struct PluginLlmBackend {
     name: String,
     plugin_path: String,
     base_config: Option<Value>,
-    lib_handle: Option<*mut libc::c_void>,
+    lib: Option<Library>,
 }
 
-// SAFETY: dlopen handles are process-global and the resolved function pointers
-// are safe to call from any thread. We serialize all calls through `&self`
-// (shared references), so there are no data races on the handle itself.
-unsafe impl Send for PluginLlmBackend {}
-unsafe impl Sync for PluginLlmBackend {}
+// `libloading::Library` is itself `Send + Sync`, so `PluginLlmBackend` derives
+// those bounds automatically. No hand-rolled `unsafe impl` (and no
+// `transmute_copy` of raw `dlsym` results) is required.
 
 impl PluginLlmBackend {
     pub fn new(plugin_path: &str, base_config: Option<Value>) -> Self {
@@ -56,58 +55,34 @@ impl PluginLlmBackend {
                 .to_string(),
             plugin_path: plugin_path.to_string(),
             base_config,
-            lib_handle: None,
+            lib: None,
         }
     }
 
     /// Load the shared library and resolve the plugin name via
     /// `VOXI_LLM_BACKEND_GET_NAME`.
     fn load_library(&mut self) -> Result<(), String> {
-        let c_path = std::ffi::CString::new(self.plugin_path.as_str())
-            .map_err(|e| format!("Invalid path: {}", e))?;
+        // SAFETY: loading an arbitrary shared library runs its initializers; the
+        // operator controls which `.so` is configured. Failures (missing file,
+        // bad ELF, missing deps) are returned as `Err`, never panicked, so the
+        // daemon degrades gracefully when a plugin is absent.
+        let lib = unsafe { Library::new(self.plugin_path.as_str()) }
+            .map_err(|e| format!("Failed to load plugin '{}': {}", self.plugin_path, e))?;
 
-        let handle = unsafe { libc::dlopen(c_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-        if handle.is_null() {
-            let err = unsafe {
-                let msg = libc::dlerror();
-                if msg.is_null() {
-                    "Unknown dlopen error".to_string()
-                } else {
-                    CStr::from_ptr(msg).to_string_lossy().into_owned()
+        // Resolve plugin name via VOXI_LLM_BACKEND_GET_NAME (optional).
+        // SAFETY: the symbol is asserted to match the documented C ABI signature.
+        unsafe {
+            if let Ok(name_fn) = lib.get::<PluginGetNameFn>(b"VOXI_LLM_BACKEND_GET_NAME\0") {
+                let name_ptr = name_fn();
+                if !name_ptr.is_null() {
+                    self.name = CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
                 }
-            };
-            return Err(format!("dlopen failed for '{}': {}", self.plugin_path, err));
-        }
-
-        // Resolve plugin name via VOXI_LLM_BACKEND_GET_NAME
-        if let Some(name_fn) =
-            Self::resolve_symbol_static::<PluginGetNameFn>(handle, "VOXI_LLM_BACKEND_GET_NAME")
-        {
-            let name_ptr = unsafe { name_fn() };
-            if !name_ptr.is_null() {
-                self.name = unsafe { CStr::from_ptr(name_ptr) }
-                    .to_string_lossy()
-                    .into_owned();
             }
         }
 
-        self.lib_handle = Some(handle);
+        self.lib = Some(lib);
         log::info!("Loaded LLM plugin: {} ({})", self.name, self.plugin_path);
         Ok(())
-    }
-
-    fn resolve_symbol<T>(&self, handle: *mut libc::c_void, name: &str) -> Option<T> {
-        Self::resolve_symbol_static(handle, name)
-    }
-
-    fn resolve_symbol_static<T>(handle: *mut libc::c_void, name: &str) -> Option<T> {
-        let c_name = CString::new(name).ok()?;
-        let sym = unsafe { libc::dlsym(handle, c_name.as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute_copy(&sym) })
-        }
     }
 
     // ─────────────────────────────────────────
@@ -353,14 +328,14 @@ impl LlmBackend for PluginLlmBackend {
             return false;
         }
 
-        let handle = match self.lib_handle {
-            Some(h) => h,
+        let lib = match self.lib.as_ref() {
+            Some(l) => l,
             None => return false,
         };
 
-        if let Some(init_fn) =
-            self.resolve_symbol::<PluginInitFn>(handle, "VOXI_LLM_BACKEND_INITIALIZE")
-        {
+        // SAFETY: the symbol is asserted to match the documented C ABI signature.
+        let init_sym = unsafe { lib.get::<PluginInitFn>(b"VOXI_LLM_BACKEND_INITIALIZE\0") };
+        if let Ok(init_fn) = init_sym {
             let final_config = match self.base_config.as_ref() {
                 Some(bc) => {
                     let mut merged = bc.clone();
@@ -406,8 +381,8 @@ impl LlmBackend for PluginLlmBackend {
         system_prompt: &str,
         _max_tokens: Option<u32>,
     ) -> LlmResponse {
-        let handle = match self.lib_handle {
-            Some(h) => h,
+        let lib = match self.lib.as_ref() {
+            Some(l) => l,
             None => {
                 return LlmResponse {
                     success: false,
@@ -417,17 +392,17 @@ impl LlmBackend for PluginLlmBackend {
             }
         };
 
-        let chat_fn =
-            match self.resolve_symbol::<PluginChatFn>(handle, "VOXI_LLM_BACKEND_CHAT") {
-                Some(f) => f,
-                None => {
-                    return LlmResponse {
-                        success: false,
-                        error_message: "Plugin missing VOXI_LLM_BACKEND_CHAT symbol".into(),
-                        ..Default::default()
-                    }
+        // SAFETY: the symbol is asserted to match the documented C ABI signature.
+        let chat_fn = match unsafe { lib.get::<PluginChatFn>(b"VOXI_LLM_BACKEND_CHAT\0") } {
+            Ok(f) => f,
+            Err(_) => {
+                return LlmResponse {
+                    success: false,
+                    error_message: "Plugin missing VOXI_LLM_BACKEND_CHAT symbol".into(),
+                    ..Default::default()
                 }
-            };
+            }
+        };
 
         // Build C API handles from Rust types
         let messages_h = unsafe { Self::build_messages_handle(messages) };
@@ -465,19 +440,22 @@ impl LlmBackend for PluginLlmBackend {
     }
 
     fn shutdown(&mut self) {
-        if let Some(handle) = self.lib_handle.take() {
-            // Call VOXI_LLM_BACKEND_SHUTDOWN before closing the library
-            if let Some(shutdown_fn) = Self::resolve_symbol_static::<PluginShutdownFn>(
-                handle,
-                "VOXI_LLM_BACKEND_SHUTDOWN",
-            ) {
-                unsafe { shutdown_fn() };
-                log::info!(
-                    "Called VOXI_LLM_BACKEND_SHUTDOWN for plugin '{}'",
-                    self.name
-                );
+        if let Some(lib) = self.lib.take() {
+            // Call VOXI_LLM_BACKEND_SHUTDOWN before the library is unloaded.
+            // SAFETY: the symbol is asserted to match the documented C ABI signature.
+            unsafe {
+                if let Ok(shutdown_fn) =
+                    lib.get::<PluginShutdownFn>(b"VOXI_LLM_BACKEND_SHUTDOWN\0")
+                {
+                    shutdown_fn();
+                    log::info!(
+                        "Called VOXI_LLM_BACKEND_SHUTDOWN for plugin '{}'",
+                        self.name
+                    );
+                }
             }
-            unsafe { libc::dlclose(handle) };
+            // Dropping the Library unloads it (equivalent to dlclose).
+            drop(lib);
             log::info!("Unloaded LLM plugin: {}", self.name);
         }
     }
