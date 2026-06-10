@@ -1749,6 +1749,64 @@
         }, 1500);
     }
 
+    // Stream a chat turn via /api/chat/stream (NDJSON). Appends tokens to a live
+    // bubble as they arrive. `state.received` flips true once any data lands, so
+    // the caller knows whether a fallback re-send is safe. `onFirst` fires when
+    // the first chunk arrives (used to drop the thinking indicator).
+    async function sendChatStreaming(prompt, sessionId, requestId, state, onFirst) {
+        const welcome = chatMessages.querySelector('.chat-welcome');
+        if (welcome) welcome.remove();
+        const live = document.createElement('div');
+        live.className = 'chat-msg assistant markdown-body chat-streaming';
+        chatMessages.appendChild(live);
+
+        let acc = '';
+        let resolvedSession = sessionId;
+        try {
+            const resp = await fetch(API + '/api/chat/stream', {
+                method: 'POST',
+                headers: Object.assign({ 'Content-Type': 'application/json' }, getAuthHeaders()),
+                body: JSON.stringify({ prompt: prompt, session_id: sessionId, request_id: requestId })
+            });
+            if (!resp.ok || !resp.body) throw new Error('stream unavailable');
+            const reader = resp.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                let nl;
+                while ((nl = buf.indexOf('\n')) >= 0) {
+                    const line = buf.slice(0, nl).trim();
+                    buf = buf.slice(nl + 1);
+                    if (!line) continue;
+                    let msg;
+                    try { msg = JSON.parse(line); } catch (e) { continue; }
+                    state.received = true;
+                    if (msg.type === 'meta') {
+                        resolvedSession = msg.session_id || resolvedSession;
+                    } else if (msg.type === 'chunk') {
+                        if (!acc && onFirst) onFirst();
+                        acc += msg.chunk;
+                        live.textContent = acc;
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                    } else if (msg.type === 'done') {
+                        acc = (msg.text != null && msg.text !== '') ? msg.text : acc;
+                    } else if (msg.type === 'error') {
+                        live.remove();
+                        throw new Error(msg.error || 'agent error');
+                    }
+                }
+            }
+        } catch (err) {
+            live.remove();
+            throw err;
+        }
+        live.remove();
+        return { session_id: resolvedSession, response: acc };
+    }
+
     async function sendChat() {
         if (!chatInput || !chatMessages) return;
         const prompt = chatInput.value.trim();
@@ -1763,45 +1821,66 @@
         sessionStorage.setItem('active_request_id_' + (sessionId || 'new'), requestId);
 
         showThinkingIndicator(sessionId || 'new', requestId);
-
-        try {
-            const resp = await apiPost('chat', {
-                prompt: prompt,
-                session_id: sessionId,
-                request_id: requestId
-            });
-
-            const thinkingId = 'think-' + requestId;
-            const indicator = document.getElementById(thinkingId);
+        const removeThinking = () => {
+            const indicator = document.getElementById('think-' + requestId);
             if (indicator) indicator.remove();
-
-            if (resp && resp.session_id) {
+        };
+        const finishSession = (resolvedId) => {
+            if (resolvedId) {
                 sessionStorage.removeItem('active_request_id_' + sessionId);
                 sessionStorage.removeItem('active_request_id_new');
-                if (!sessionId) {
-                    if (currentChatSessionId === null) {
-                        currentChatSessionId = resp.session_id;
-                        selectChatSession(resp.session_id);
-                    }
+                if (!sessionId && currentChatSessionId === null) {
+                    currentChatSessionId = resolvedId;
+                    selectChatSession(resolvedId);
                 }
             }
+        };
 
+        const streamState = { received: false };
+        try {
+            const result = await sendChatStreaming(
+                prompt, sessionId, requestId, streamState, removeThinking);
+            removeThinking();
+            finishSession(result.session_id);
+            if (result.response) {
+                if (result.session_id === currentChatSessionId) {
+                    addChatMsg('assistant', result.response);
+                }
+                await loadChatSessions();
+            } else if (result.session_id === currentChatSessionId) {
+                addChatMsg('assistant', 'Error: no response from agent.');
+            }
+            return;
+        } catch (err) {
+            removeThinking();
+            // Only fall back to the non-streaming path if nothing was received,
+            // so the prompt is never processed twice.
+            if (streamState.received) {
+                if (sessionId === currentChatSessionId) {
+                    addChatMsg('assistant', 'Error: ' + (err && err.message || 'stream interrupted'));
+                }
+                return;
+            }
+        }
+
+        // Fallback: non-streaming request/response.
+        showThinkingIndicator(sessionId || 'new', requestId);
+        try {
+            const resp = await apiPost('chat', {
+                prompt: prompt, session_id: sessionId, request_id: requestId
+            });
+            removeThinking();
+            finishSession(resp && resp.session_id);
             if (resp && resp.response) {
                 if (resp.session_id === currentChatSessionId) {
                     addChatMsg('assistant', resp.response);
                 }
                 await loadChatSessions();
-            } else {
-                if (resp && resp.session_id === currentChatSessionId) {
-                    addChatMsg('assistant',
-                        (resp && resp.error) ||
-                        'Error: no response from agent.');
-                }
+            } else if (resp && resp.session_id === currentChatSessionId) {
+                addChatMsg('assistant', (resp && resp.error) || 'Error: no response from agent.');
             }
         } catch (err) {
-            const thinkingId = 'think-' + requestId;
-            const indicator = document.getElementById(thinkingId);
-            if (indicator) indicator.remove();
+            removeThinking();
             sessionStorage.removeItem('active_request_id_' + sessionId);
             sessionStorage.removeItem('active_request_id_new');
             if (sessionId === currentChatSessionId) {
