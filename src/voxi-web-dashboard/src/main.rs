@@ -19,7 +19,7 @@ use axum::{
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -29,6 +29,73 @@ use tower_http::{
 static RUNNING: AtomicBool = AtomicBool::new(true);
 static DASHBOARD_SESSION_COUNTER: AtomicUsize = AtomicUsize::new(1);
 static START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+// ─── Golden-signal metrics (Prometheus exposition, no external crate) ─────────
+// Traffic, errors, saturation (in-flight), and latency for every HTTP request.
+const LATENCY_BUCKETS_MS: [u64; 10] = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
+static HTTP_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static HTTP_REQUESTS_ERRORS: AtomicU64 = AtomicU64::new(0);
+static HTTP_IN_FLIGHT: AtomicI64 = AtomicI64::new(0);
+static HTTP_LATENCY_SUM_MS: AtomicU64 = AtomicU64::new(0);
+// One counter per bucket; index == LATENCY_BUCKETS_MS index, last is implicit +Inf.
+static HTTP_LATENCY_BUCKETS: [AtomicU64; 10] = [const { AtomicU64::new(0) }; 10];
+
+/// Record one completed request into the golden-signal counters.
+fn record_request(elapsed_ms: u64, status: u16) {
+    HTTP_REQUESTS_TOTAL.fetch_add(1, Ordering::Relaxed);
+    if status >= 500 {
+        HTTP_REQUESTS_ERRORS.fetch_add(1, Ordering::Relaxed);
+    }
+    HTTP_LATENCY_SUM_MS.fetch_add(elapsed_ms, Ordering::Relaxed);
+    for (i, &edge) in LATENCY_BUCKETS_MS.iter().enumerate() {
+        if elapsed_ms <= edge {
+            HTTP_LATENCY_BUCKETS[i].fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+    }
+    // Over the largest bucket: counts only toward total/+Inf, handled at render.
+}
+
+/// Render the current metrics in Prometheus text exposition format.
+fn render_prometheus(daemon_up: bool, uptime_secs: u64) -> String {
+    let total = HTTP_REQUESTS_TOTAL.load(Ordering::Relaxed);
+    let errors = HTTP_REQUESTS_ERRORS.load(Ordering::Relaxed);
+    let in_flight = HTTP_IN_FLIGHT.load(Ordering::Relaxed);
+    let sum_ms = HTTP_LATENCY_SUM_MS.load(Ordering::Relaxed);
+    let mut out = String::with_capacity(1024);
+    out.push_str("# HELP voxi_dashboard_http_requests_total Total HTTP requests handled.\n");
+    out.push_str("# TYPE voxi_dashboard_http_requests_total counter\n");
+    out.push_str(&format!("voxi_dashboard_http_requests_total {}\n", total));
+    out.push_str("# HELP voxi_dashboard_http_request_errors_total HTTP responses with status >= 500.\n");
+    out.push_str("# TYPE voxi_dashboard_http_request_errors_total counter\n");
+    out.push_str(&format!("voxi_dashboard_http_request_errors_total {}\n", errors));
+    out.push_str("# HELP voxi_dashboard_http_in_flight In-flight HTTP requests.\n");
+    out.push_str("# TYPE voxi_dashboard_http_in_flight gauge\n");
+    out.push_str(&format!("voxi_dashboard_http_in_flight {}\n", in_flight.max(0)));
+    out.push_str("# HELP voxi_dashboard_http_request_duration_ms Request latency in milliseconds.\n");
+    out.push_str("# TYPE voxi_dashboard_http_request_duration_ms histogram\n");
+    let mut cumulative = 0u64;
+    for (i, &edge) in LATENCY_BUCKETS_MS.iter().enumerate() {
+        cumulative += HTTP_LATENCY_BUCKETS[i].load(Ordering::Relaxed);
+        out.push_str(&format!(
+            "voxi_dashboard_http_request_duration_ms_bucket{{le=\"{}\"}} {}\n",
+            edge, cumulative
+        ));
+    }
+    out.push_str(&format!(
+        "voxi_dashboard_http_request_duration_ms_bucket{{le=\"+Inf\"}} {}\n",
+        total
+    ));
+    out.push_str(&format!("voxi_dashboard_http_request_duration_ms_sum {}\n", sum_ms));
+    out.push_str(&format!("voxi_dashboard_http_request_duration_ms_count {}\n", total));
+    out.push_str("# HELP voxi_dashboard_daemon_up Daemon IPC reachability (1=up, 0=down).\n");
+    out.push_str("# TYPE voxi_dashboard_daemon_up gauge\n");
+    out.push_str(&format!("voxi_dashboard_daemon_up {}\n", if daemon_up { 1 } else { 0 }));
+    out.push_str("# HELP voxi_dashboard_uptime_seconds Dashboard process uptime.\n");
+    out.push_str("# TYPE voxi_dashboard_uptime_seconds gauge\n");
+    out.push_str(&format!("voxi_dashboard_uptime_seconds {}\n", uptime_secs));
+    out
+}
 
 async fn add_no_cache_headers(response: Response) -> Response {
     let mut response = response;
@@ -368,11 +435,13 @@ async fn main() {
     ));
 
     let app = Router::new()
+        .route("/metrics", get(metrics_prometheus))
         .nest_service("/apps", ServeDir::new(web_root.join("apps")))
         .merge(api_routes)
         .nest_service("/", ServeDir::new(&web_root))
         .layer(cors)
         .layer(middleware::map_response(add_no_cache_headers))
+        .layer(middleware::from_fn(track_metrics))
         .with_state(state);
 
     let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
@@ -688,6 +757,18 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     out
 }
 
+/// Wrap every request to record golden-signal metrics (traffic, errors,
+/// saturation, latency). Applied as an outer layer so it covers all routes.
+async fn track_metrics(req: axum::extract::Request, next: middleware::Next) -> Response {
+    HTTP_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
+    let start = std::time::Instant::now();
+    let response = next.run(req).await;
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    HTTP_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+    record_request(elapsed_ms, response.status().as_u16());
+    response
+}
+
 /// Auth gate for `/api/*`. Everything requires a valid Bearer token except a
 /// small public allowlist (login, health, the agent card) and the SSE stream,
 /// which self-validates via its query-string token because `EventSource`
@@ -731,7 +812,38 @@ async fn validate_token(headers: &HeaderMap, state: &AppState) -> bool {
 }
 
 async fn api_status() -> Json<Value> {
-    Json(json!({"status": "running", "version": "1.0.0", "channels": "active"}))
+    // Probe real daemon reachability over IPC instead of reporting a constant.
+    let daemon_connected = tokio::task::spawn_blocking(ipc_get_usage)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+    let uptime_secs = get_process_uptime() as u64;
+    Json(json!({
+        "status": if daemon_connected { "healthy" } else { "degraded" },
+        "version": env!("CARGO_PKG_VERSION"),
+        "daemon_connected": daemon_connected,
+        "uptime_seconds": uptime_secs,
+    }))
+}
+
+/// Prometheus scrape endpoint. Public (unauthenticated) so monitoring systems
+/// can scrape it, matching standard `/metrics` convention.
+async fn metrics_prometheus() -> Response {
+    use axum::response::IntoResponse;
+    let daemon_up = tokio::task::spawn_blocking(ipc_get_usage)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+    let uptime_secs = get_process_uptime() as u64;
+    let body = render_prometheus(daemon_up, uptime_secs);
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        body,
+    )
+        .into_response()
 }
 
 async fn api_metrics() -> Json<Value> {
