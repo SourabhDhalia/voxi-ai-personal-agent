@@ -2898,3 +2898,13 @@ select:focus-visible,
     .page-header { flex-wrap: wrap; gap: 8px; }
     .btn-primary, .btn-send { min-height: 44px; }  /* touch target */
 }
+
+/* Live log tail toggle — active state. */
+.btn-live-on {
+    color: #fff !important;
+    background: #ef4444 !important;
+    border-color: #ef4444 !important;
+}
+.btn-live-on { animation: live-pulse 1.6s ease-in-out infinite; }
+@keyframes live-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.65; } }
+@media (prefers-reduced-motion: reduce) { .btn-live-on { animation: none; } }

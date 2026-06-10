@@ -132,6 +132,10 @@
             window.chatPollInterval = null;
         }
 
+        if (page !== 'logs' && logLiveTimer) {
+            stopLogLive();
+        }
+
         const navEl =
             document.getElementById('nav-' + page);
         const pageEl =
@@ -1023,6 +1027,18 @@
     let logDateNav = null;
     let logDates = [];
     let currentLogDate = null;
+    let logLiveTimer = null;
+    let logLiveOn = false;
+    function scrollLogsBottom() {
+        const el = document.getElementById('log-content');
+        if (el) el.scrollTop = el.scrollHeight;
+    }
+    function stopLogLive() {
+        logLiveOn = false;
+        if (logLiveTimer) { clearInterval(logLiveTimer); logLiveTimer = null; }
+        const btn = document.getElementById('log-live-toggle');
+        if (btn) { btn.classList.remove('btn-live-on'); btn.setAttribute('aria-pressed', 'false'); }
+    }
     // Per-file pagination state: { [label]: { offset: 0, totalLines: 0 } }
     let logPagination = {};
     const LOG_PAGE_SIZE = 500;
@@ -1052,6 +1068,7 @@
                 const nextBtn = document.getElementById('log-next-day-btn');
                 if (prevBtn) {
                     prevBtn.addEventListener('click', () => {
+                        stopLogLive();
                         const idx = logDates.indexOf(currentLogDate);
                         if (idx > 0) {
                             logPagination = {};
@@ -1061,11 +1078,29 @@
                 }
                 if (nextBtn) {
                     nextBtn.addEventListener('click', () => {
+                        stopLogLive();
                         const idx = logDates.indexOf(currentLogDate);
                         if (idx >= 0 && idx < logDates.length - 1) {
                             logPagination = {};
                             loadLogContent(logDates[idx + 1]);
                         }
+                    });
+                }
+                // Live tail: poll the latest date and auto-scroll to the bottom.
+                const liveBtn = document.getElementById('log-live-toggle');
+                if (liveBtn) {
+                    liveBtn.addEventListener('click', () => {
+                        if (logLiveOn) { stopLogLive(); return; }
+                        logLiveOn = true;
+                        liveBtn.classList.add('btn-live-on');
+                        liveBtn.setAttribute('aria-pressed', 'true');
+                        const tick = () => {
+                            const d = logDates[logDates.length - 1] || currentLogDate;
+                            logPagination = {};
+                            Promise.resolve(loadLogContent(d, false)).then(scrollLogsBottom);
+                        };
+                        tick();
+                        logLiveTimer = setInterval(tick, 3000);
                     });
                 }
             }
