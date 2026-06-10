@@ -10,7 +10,7 @@
 
 use axum::{
     extract::{Path as AxumPath, Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware,
     response::{Json, Response},
     routing::{get, post},
@@ -22,7 +22,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tower_http::{
-    cors::{Any, CorsLayer},
+    cors::CorsLayer,
     services::ServeDir,
 };
 
@@ -281,7 +281,10 @@ async fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     let mut port: u16 = default_dashboard_port();
-    let mut localhost_only = false;
+    // Secure default: bind to loopback only. Operators opt into network
+    // exposure explicitly with --allow-remote. --localhost-only is still
+    // accepted (now the default) for backward compatibility.
+    let mut allow_remote = false;
     let mut web_root_str = String::new();
     let mut config_dir_str = String::new();
     let mut data_dir_str = String::new();
@@ -311,7 +314,11 @@ async fn main() {
                 i += 2;
             }
             "--localhost-only" => {
-                localhost_only = true;
+                // Default behavior now; kept for backward compatibility.
+                i += 1;
+            }
+            "--allow-remote" => {
+                allow_remote = true;
                 i += 1;
             }
             _ => {
@@ -360,16 +367,19 @@ async fn main() {
         event_pump_started: Arc::new(AtomicBool::new(false)),
     };
 
-    let bind_addr = if localhost_only {
-        format!("127.0.0.1:{}", port)
-    } else {
+    let bind_addr = if allow_remote {
+        log::warn!("--allow-remote set: binding 0.0.0.0 (dashboard reachable on the network)");
         format!("0.0.0.0:{}", port)
+    } else {
+        format!("127.0.0.1:{}", port)
     };
 
+    // No wildcard CORS: the dashboard UI is same-origin, so cross-origin browser
+    // requests are denied. Server-to-server A2A callers are unaffected (CORS is a
+    // browser mechanism). Limit methods/headers to what the same-origin UI uses.
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
 
     let api_routes = Router::new()
         .route("/.well-known/agent.json", get(api_agent_card))
