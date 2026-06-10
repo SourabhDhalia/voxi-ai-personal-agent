@@ -362,6 +362,11 @@ async fn main() {
         .route("/api/a2a", post(api_a2a));
 
 
+    let api_routes = api_routes.route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        require_auth,
+    ));
+
     let app = Router::new()
         .nest_service("/apps", ServeDir::new(web_root.join("apps")))
         .merge(api_routes)
@@ -683,24 +688,44 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     out
 }
 
-async fn validate_token(headers: &HeaderMap, state: &AppState) -> bool {
-    let stored = state
-        .admin_pw_hash
-        .lock()
-        .map(|h| h.clone())
-        .unwrap_or_default();
+/// Auth gate for `/api/*`. Everything requires a valid Bearer token except a
+/// small public allowlist (login, health, the agent card) and the SSE stream,
+/// which self-validates via its query-string token because `EventSource`
+/// cannot set request headers.
+async fn require_auth(
+    State(state): State<AppState>,
+    req: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    use axum::response::IntoResponse;
+    let path = req.uri().path();
+    const PUBLIC: &[&str] = &[
+        "/api/auth/login",
+        "/api/status",
+        "/.well-known/agent.json",
+        "/api/events",
+    ];
+    if PUBLIC.contains(&path) {
+        return next.run(req).await;
+    }
+    if validate_token(req.headers(), &state).await {
+        next.run(req).await
+    } else {
+        json_error(StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+    }
+}
 
+async fn validate_token(headers: &HeaderMap, state: &AppState) -> bool {
     headers
         .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
         .map(|token| {
-            let in_memory = state
+            state
                 .active_tokens
                 .lock()
                 .map(|t| t.contains(token))
-                .unwrap_or(false);
-            in_memory || validate_auth_token(token, &stored)
+                .unwrap_or(false)
         })
         .unwrap_or(false)
 }
@@ -1897,17 +1922,11 @@ async fn api_events(
 ) -> Result<axum::response::Sse<impl futures_util::Stream<Item = Result<axum::response::sse::Event, std::convert::Infallible>>>, (StatusCode, Json<Value>)> {
     // Validate token
     let is_valid = if let Some(ref token) = query.token {
-        let stored = state
-            .admin_pw_hash
-            .lock()
-            .map(|h| h.clone())
-            .unwrap_or_default();
-        let in_memory = state
+        state
             .active_tokens
             .lock()
             .map(|t| t.contains(token))
-            .unwrap_or(false);
-        in_memory || validate_auth_token(token, &stored)
+            .unwrap_or(false)
     } else {
         false
     };
@@ -2474,6 +2493,12 @@ fn ipc_bridge_list_tools(allowed_tools: Vec<String>) -> Result<Value, String> {
 
 // ─── Utility ──────────────────────────────────────────────────
 
+// NOTE: This is a NON-cryptographic digest (SipHash via DefaultHasher), kept
+// only for admin-password storage in a local, user-readable file. It is NOT
+// SHA-256 despite the name. The KDF should be upgraded to Argon2id once a
+// vendored crypto crate is available; tracked as Phase 1 follow-up. Auth tokens
+// no longer derive from this value, so it is not a network-reachable forgery
+// vector.
 fn sha256_hex(input: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -2485,39 +2510,17 @@ fn sha256_hex(input: &str) -> String {
     format!("{:016x}{:016x}", h1, h2)
 }
 
-fn generate_auth_token(password_hash: &str) -> String {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let expires_at = ts + 60 * 60 * 12;
-    let signature = sha256_hex(&format!("{}:{}", password_hash, expires_at));
-    format!("v1.{}.{}", expires_at, signature)
-}
-
-fn validate_auth_token(token: &str, password_hash: &str) -> bool {
-    let mut parts = token.split('.');
-    let version = parts.next().unwrap_or("");
-    let expires_at = parts
-        .next()
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(0);
-    let signature = parts.next().unwrap_or("");
-
-    if version != "v1" || signature.is_empty() || parts.next().is_some() {
-        return false;
-    }
-
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    if expires_at <= now {
-        return false;
-    }
-
-    let expected = sha256_hex(&format!("{}:{}", password_hash, expires_at));
-    signature == expected
+/// Mint an opaque, unforgeable session token from 32 bytes of OS entropy.
+/// Tokens are random — never derived from the password hash — so knowledge of
+/// the (weak) stored hash does not let an attacker forge a valid token. Tokens
+/// are tracked server-side in `active_tokens` and invalidated on logout/restart.
+fn generate_auth_token(_password_hash: &str) -> String {
+    // 256 bits of CSPRNG entropy (uuid v4 is getrandom-backed), rendered as hex.
+    format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    )
 }
 
 fn load_admin_password(path: &str) -> Option<String> {
