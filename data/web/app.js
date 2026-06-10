@@ -2,6 +2,53 @@
 (function () {
     'use strict';
 
+    // --- HTML sanitizer (XSS guard for rendered Markdown) ---
+    // Markdown from LLM output / sessions / tool results is attacker-influenceable
+    // and `marked` does not sanitize. We parse to an inert DOM (DOMParser never
+    // executes scripts), then keep only an allowlist of tags/attributes.
+    const SANITIZE_TAGS = new Set(['A','P','BR','HR','PRE','CODE','BLOCKQUOTE',
+        'UL','OL','LI','STRONG','EM','B','I','DEL','H1','H2','H3','H4','H5','H6',
+        'TABLE','THEAD','TBODY','TR','TH','TD','IMG','SPAN','DIV']);
+    const SANITIZE_ATTRS = new Set(['href','src','alt','title','class','colspan','rowspan']);
+    function sanitizeHtml(dirty) {
+        const doc = new DOMParser().parseFromString(String(dirty), 'text/html');
+        const walk = (node) => {
+            for (const child of Array.from(node.childNodes)) {
+                if (child.nodeType === 1) {
+                    if (!SANITIZE_TAGS.has(child.tagName)) {
+                        child.replaceWith(...Array.from(child.childNodes));
+                        continue;
+                    }
+                    for (const attr of Array.from(child.attributes)) {
+                        const name = attr.name.toLowerCase();
+                        const bad = name.startsWith('on') ||
+                            !SANITIZE_ATTRS.has(name) ||
+                            ((name === 'href' || name === 'src') &&
+                             /^\s*(javascript|data|vbscript):/i.test(attr.value));
+                        if (bad) child.removeAttribute(attr.name);
+                    }
+                    if (child.tagName === 'A') {
+                        child.setAttribute('rel', 'noopener noreferrer nofollow');
+                        child.setAttribute('target', '_blank');
+                    }
+                    walk(child);
+                } else if (child.nodeType === 8) {
+                    child.remove();
+                }
+            }
+        };
+        walk(doc.body);
+        return doc.body.innerHTML;
+    }
+    function renderMarkdown(text) {
+        if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
+            return sanitizeHtml(marked.parse(String(text == null ? '' : text)));
+        }
+        const d = document.createElement('div');
+        d.textContent = String(text == null ? '' : text);
+        return d.innerHTML;
+    }
+
     // --- Theme State ---
     const savedTheme = localStorage.getItem('voxi_theme') || 'dark';
     document.documentElement.setAttribute('data-theme', savedTheme);
@@ -662,9 +709,7 @@
         const resp =
             await apiFetch('sessions/' + id);
         if (resp && resp.content) {
-            content.innerHTML = (typeof marked !== 'undefined' && typeof marked.parse === 'function')
-                ? marked.parse(resp.content)
-                : escHtml(resp.content);
+            content.innerHTML = renderMarkdown(resp.content);
         } else {
             content.innerHTML =
                 'Failed to load session.';
@@ -828,9 +873,7 @@
         const resp =
             await apiFetch('tasks/' + file);
         if (resp && resp.content) {
-            content.innerHTML = (typeof marked !== 'undefined' && typeof marked.parse === 'function')
-                ? marked.parse(resp.content)
-                : escHtml(resp.content);
+            content.innerHTML = renderMarkdown(resp.content);
         } else {
             content.innerHTML =
                 'Failed to load task.';
@@ -1473,8 +1516,8 @@
         if (role === 'assistant' && text.startsWith('⚠️ **Safety Confirmation Required**')) {
             el.classList.add('safety-card');
             el.innerHTML = renderSafetyConfirmation(text);
-        } else if (role === 'assistant' && typeof marked !== 'undefined' && typeof marked.parse === 'function') {
-            el.innerHTML = marked.parse(text);
+        } else if (role === 'assistant') {
+            el.innerHTML = renderMarkdown(text);
         } else {
             el.textContent = text;
         }
