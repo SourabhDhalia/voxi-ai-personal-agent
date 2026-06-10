@@ -75,7 +75,6 @@ use crate::core::tool_dispatcher::ToolDispatcher;
 use crate::infra::key_store::KeyStore;
 use crate::llm::backend::{self, LlmBackend, LlmMessage, LlmResponse};
 use crate::storage::session_store::SessionStore;
-use crate::channel::mcp_client::McpClientManager;
 
 
 const MAX_CONTEXT_MESSAGES: usize = 120;

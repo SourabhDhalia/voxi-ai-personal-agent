@@ -825,7 +825,7 @@ impl IpcServer {
             }
 
             "get_hooks_config" => {
-                let config = agent.hooks_config.lock().unwrap();
+                let config = agent.hooks_config.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 match serde_json::to_value(&*config) {
                     Ok(val) => val,
                     Err(e) => json!({"error": format!("Serialization failed: {}", e)}),
@@ -838,7 +838,7 @@ impl IpcServer {
                     Ok(new_config) => {
                         match new_config.save(&agent.platform.paths.config_dir) {
                             Ok(_) => {
-                                *agent.hooks_config.lock().unwrap() = new_config;
+                                *agent.hooks_config.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = new_config;
                                 json!({"status": "ok"})
                             }
                             Err(e) => json!({"error": e}),
@@ -857,7 +857,7 @@ impl IpcServer {
                 if approval_id.is_empty() {
                     json!({"error": "Missing 'approval_id'"})
                 } else {
-                    let mut approvals = agent.pending_approvals.lock().unwrap();
+                    let mut approvals = agent.pending_approvals.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     if let Some(tx) = approvals.remove(&approval_id) {
                         let _ = tx.send(allowed);
                         json!({"status": "ok"})

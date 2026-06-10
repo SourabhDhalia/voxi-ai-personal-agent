@@ -878,6 +878,7 @@ fn sanitize_generated_code_name(name: &str) -> String {
 }
 
 #[cfg(feature = "builtin-tools")]
+#[allow(dead_code)]
 fn generated_code_date_prefix() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -895,6 +896,7 @@ fn generated_code_date_prefix() -> String {
 }
 
 #[cfg(feature = "builtin-tools")]
+#[allow(dead_code)]
 fn generated_code_script_path(base_dir: &Path, runtime: &str, name: &str) -> Option<PathBuf> {
     let (_, suffix) = generated_code_runtime_spec(runtime)?;
     let codes_dir = base_dir.join("codes");

@@ -4,7 +4,6 @@
 //! by downloading and replacing the binary.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -20,6 +19,7 @@ pub struct UpdateManifest {
 
 pub struct OtaUpdater {
     manifest_url: String,
+    #[allow(dead_code)]
     install_path: String,
 }
 

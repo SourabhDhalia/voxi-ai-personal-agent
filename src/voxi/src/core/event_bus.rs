@@ -160,9 +160,9 @@ impl EventBus {
         let (lock, cvar) = &*queue;
         while running.load(Ordering::SeqCst) {
             let event = {
-                let mut q = lock.lock().unwrap();
+                let mut q = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 while q.is_empty() && running.load(Ordering::SeqCst) {
-                    q = cvar.wait(q).unwrap();
+                    q = cvar.wait(q).unwrap_or_else(|poisoned| poisoned.into_inner());
                 }
                 if !running.load(Ordering::SeqCst) && q.is_empty() {
                     break;
@@ -285,7 +285,7 @@ mod tests {
             bus.publish(SystemEvent::default());
         }
         let (lock, _) = &*bus.queue;
-        let q = lock.lock().unwrap();
+        let q = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(q.len(), MAX_QUEUE_SIZE);
     }
 

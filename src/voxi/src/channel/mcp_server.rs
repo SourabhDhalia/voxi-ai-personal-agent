@@ -179,7 +179,7 @@ impl McpServer {
             .unwrap_or_else(|| json!({}));
 
         let found = self.tools.iter().find(|t| t.name == tool_name);
-        let tool = match found {
+        let _tool = match found {
             Some(t) => t,
             None => {
                 return json!({

@@ -1,6 +1,6 @@
 //! Agent factory — creates specialized agent instances from role definitions.
 
-use serde_json::{json, Value};
+
 
 pub struct AgentFactory;
 
@@ -16,7 +16,7 @@ impl AgentFactory {
     }
 
     /// Create a sub-agent session with the given role's system prompt.
-    pub fn create_agent_session(role_name: &str, system_prompt: &str) -> String {
+    pub fn create_agent_session(role_name: &str, _system_prompt: &str) -> String {
         let session_id = format!(
             "agent_{}_{}",
             role_name,

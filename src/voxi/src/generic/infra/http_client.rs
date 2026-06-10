@@ -97,6 +97,7 @@ fn parse_pem_certs(pem_data: &[u8]) -> Vec<Vec<u8>> {
 
 /// Simple base64 decoder (no external dependency).
 fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
+    #[allow(dead_code)]
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     fn decode_char(c: u8) -> Option<u8> {

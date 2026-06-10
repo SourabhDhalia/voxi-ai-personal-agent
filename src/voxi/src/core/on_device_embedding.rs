@@ -3,7 +3,6 @@
 //! Loads ONNX Runtime via `dlopen` for graceful fallback.
 //! Generates 384-dim embeddings independently of LLM backend.
 
-#![allow(clippy::all)]
 
 use super::wordpiece_tokenizer::WordPieceTokenizer;
 
@@ -103,6 +102,7 @@ struct OrtFunctions {
         *const OrtSessionOptions,
         *mut *mut OrtSession,
     ) -> *mut OrtStatus,
+    #[allow(dead_code)]
     get_allocator_with_default_options:
         unsafe extern "C" fn(*mut *mut OrtAllocator) -> *mut OrtStatus,
     create_cpu_memory_info:

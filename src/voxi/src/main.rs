@@ -3,9 +3,6 @@
 //! Initializes platform detection, logging, AgentCore, IPC server,
 //! and runs the main loop until SIGTERM/SIGINT is received.
 
-// Suppress unused warnings during migration.
-// TODO: Remove once all modules are wired into the daemon.
-#![allow(unused)]
 
 pub mod channel;
 pub mod common;
@@ -124,7 +121,7 @@ async fn main() {
     // Load from channel_config.json
     let channel_config_path = platform.paths.config_dir.join("channel_config.json");
     {
-        let mut reg = channel_registry.lock().unwrap();
+        let mut reg = channel_registry.lock().unwrap_or_else(|p| p.into_inner());
         reg.load_config(&channel_config_path.to_string_lossy(), Some(agent.clone()));
 
         // Ensure web_dashboard is always registered (auto_start follows config).
@@ -210,7 +207,7 @@ async fn main() {
 
     // ── Shutdown ──
     log::info!("Voxi daemon shutting down...");
-    channel_registry.lock().unwrap().stop_all();
+    channel_registry.lock().unwrap_or_else(|p| p.into_inner()).stop_all();
     task_scheduler.stop();
     ipc.stop();
     let _ = ipc_handle.join();

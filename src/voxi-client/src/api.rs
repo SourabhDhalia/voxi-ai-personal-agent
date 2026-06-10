@@ -5,17 +5,48 @@
 //! to Rust consumers via `rlib`.
 
 use std::io::{Read, Write};
-use std::os::unix::io::FromRawFd;
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
 const MAX_IPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
-const IPC_TIMEOUT_SECS: u64 = 60;
 const SOCKET_NAME: &str = "voxi.sock";
 
 /// Process uptime and system metrics.
+#[cfg(target_os = "macos")]
+fn parse_proc_status() -> (i64, i64, i32) {
+    let pid = std::process::id();
+    let output = std::process::Command::new("ps")
+        .args(&["-o", "rss=,vsz=", "-p", &pid.to_string()])
+        .output();
+    let mut rss_kb = 0;
+    let mut vm_kb = 0;
+    if let Ok(out) = output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let parts: Vec<&str> = text.split_whitespace().collect();
+        if parts.len() >= 2 {
+            rss_kb = parts[0].parse().unwrap_or(0);
+            vm_kb = parts[1].parse().unwrap_or(0);
+        }
+    }
+    
+    // Thread count on macOS
+    let thread_output = std::process::Command::new("ps")
+        .args(&["-M", "-p", &pid.to_string()])
+        .output();
+    let mut threads = 1;
+    if let Ok(out) = thread_output {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let lines_count = text.lines().count();
+        if lines_count > 1 {
+            threads = (lines_count - 1) as i32;
+        }
+    }
+    (rss_kb, vm_kb, threads)
+}
+
+#[cfg(not(target_os = "macos"))]
 fn parse_proc_status() -> (i64, i64, i32) {
     let mut rss_kb: i64 = 0;
     let mut vm_kb: i64 = 0;
@@ -43,6 +74,18 @@ fn parse_proc_status() -> (i64, i64, i32) {
     (rss_kb, vm_kb, threads)
 }
 
+#[cfg(target_os = "macos")]
+fn parse_loadavg() -> (f64, f64, f64) {
+    let mut loadavg = [0.0f64; 3];
+    let count = unsafe { libc::getloadavg(loadavg.as_mut_ptr(), 3) };
+    if count == 3 {
+        (loadavg[0], loadavg[1], loadavg[2])
+    } else {
+        (0.0, 0.0, 0.0)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 fn parse_loadavg() -> (f64, f64, f64) {
     if let Ok(content) = std::fs::read_to_string("/proc/loadavg") {
         let parts: Vec<&str> = content.split_whitespace().collect();
@@ -55,6 +98,13 @@ fn parse_loadavg() -> (f64, f64, f64) {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn get_process_uptime() -> f64 {
+    static START_TIME: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(std::time::Instant::now);
+    START_TIME.elapsed().as_secs_f64()
+}
+
+#[cfg(not(target_os = "macos"))]
 fn get_process_uptime() -> f64 {
     let sys_uptime = std::fs::read_to_string("/proc/uptime")
         .ok()
@@ -620,6 +670,7 @@ impl Voxi {
 
         #[cfg(not(target_os = "macos"))]
         {
+        use std::os::unix::io::FromRawFd;
         let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
         if fd < 0 {
             return Err("Failed to create daemon IPC socket".into());

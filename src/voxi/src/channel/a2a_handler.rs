@@ -16,6 +16,7 @@ use super::{Channel, ChannelConfig};
 /// A2A task status.
 #[derive(Clone, Debug, PartialEq)]
 enum TaskStatus {
+    #[allow(dead_code)]
     Submitted,
     Working,
     Completed,
@@ -39,6 +40,7 @@ impl TaskStatus {
 struct A2aTask {
     id: String,
     status: TaskStatus,
+    #[allow(dead_code)]
     message: Value,
     artifacts: Value,
     session_id: String,

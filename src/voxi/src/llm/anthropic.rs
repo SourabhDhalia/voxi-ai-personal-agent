@@ -1,6 +1,5 @@
 //! Anthropic LLM backend (Claude) — uses serde_json + ureq.
 
-#![allow(clippy::all)]
 
 use super::backend::*;
 use crate::infra::http_client;

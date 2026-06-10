@@ -815,7 +815,7 @@ pub async fn web_search(
     query: &str,
     engine: Option<&str>,
     limit: usize,
-    workdir: &Path,
+    _workdir: &Path,
     config_dir: &Path,
 ) -> Value {
     let normalized_limit = limit.clamp(1, 10);
@@ -1191,7 +1191,7 @@ pub fn parse_html_to_aria(html: &str) -> (String, std::collections::HashMap<usiz
                     "style" => inside_style = true,
                     "head" => inside_head = true,
                     "a" => {
-                        if let Some(active) = active_tag.take() {
+                        if active_tag.take().is_some() {
                             let clean = clean_text(&active_text);
                             if !clean.is_empty() {
                                 out.push_str(&format!("{}\n", clean));
@@ -1203,7 +1203,7 @@ pub fn parse_html_to_aria(html: &str) -> (String, std::collections::HashMap<usiz
                         active_tag = Some(ActiveTag::Link(href, ref_counter));
                     }
                     "button" => {
-                        if let Some(active) = active_tag.take() {
+                        if active_tag.take().is_some() {
                             let clean = clean_text(&active_text);
                             if !clean.is_empty() {
                                 out.push_str(&format!("{}\n", clean));
@@ -1214,7 +1214,7 @@ pub fn parse_html_to_aria(html: &str) -> (String, std::collections::HashMap<usiz
                         active_tag = Some(ActiveTag::Button(ref_counter));
                     }
                     "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-                        if let Some(active) = active_tag.take() {
+                        if active_tag.take().is_some() {
                             let clean = clean_text(&active_text);
                             if !clean.is_empty() {
                                 out.push_str(&format!("{}\n", clean));
@@ -1225,7 +1225,7 @@ pub fn parse_html_to_aria(html: &str) -> (String, std::collections::HashMap<usiz
                         active_tag = Some(ActiveTag::Heading(level));
                     }
                     "p" => {
-                        if let Some(active) = active_tag.take() {
+                        if active_tag.take().is_some() {
                             let clean = clean_text(&active_text);
                             if !clean.is_empty() {
                                 out.push_str(&format!("{}\n", clean));

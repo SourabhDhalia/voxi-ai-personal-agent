@@ -1132,7 +1132,7 @@ impl AgentCore {
         }
 
         {
-            let mut bridge = self.action_bridge.lock().unwrap();
+            let mut bridge = self.action_bridge.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             bridge.start();
         }
 
@@ -1453,7 +1453,7 @@ impl AgentCore {
     }
 
     fn is_backend_available(&self, name: &str) -> bool {
-        let cb_guard = self.circuit_breakers.read().unwrap();
+        let cb_guard = self.circuit_breakers.read().unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(state) = cb_guard.get(name) {
             if state.consecutive_failures >= 2 {
                 if let Some(last_fail) = state.last_failure_time {
@@ -1467,7 +1467,7 @@ impl AgentCore {
     }
 
     fn record_success(&self, name: &str) {
-        let mut cb_guard = self.circuit_breakers.write().unwrap();
+        let mut cb_guard = self.circuit_breakers.write().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = cb_guard
             .entry(name.to_string())
             .or_insert(CircuitBreakerState {
@@ -1481,12 +1481,12 @@ impl AgentCore {
     /// Reset all circuit breakers. Called at the start of each new session
     /// so that failures from a prior session do not block new requests.
     fn reset_circuit_breakers(&self) {
-        let mut cb_guard = self.circuit_breakers.write().unwrap();
+        let mut cb_guard = self.circuit_breakers.write().unwrap_or_else(|poisoned| poisoned.into_inner());
         cb_guard.clear();
     }
 
     fn record_failure(&self, name: &str) {
-        let mut cb_guard = self.circuit_breakers.write().unwrap();
+        let mut cb_guard = self.circuit_breakers.write().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = cb_guard
             .entry(name.to_string())
             .or_insert(CircuitBreakerState {
@@ -2068,7 +2068,7 @@ impl AgentCore {
         on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
     ) -> Result<(), String> {
         let decision = {
-            let config = self.hooks_config.lock().unwrap();
+            let config = self.hooks_config.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             config.evaluate_pre_tool(tool_name, args)
         };
 
@@ -2099,12 +2099,12 @@ impl AgentCore {
                 }
 
                 let timeout_ms = {
-                    let config = self.hooks_config.lock().unwrap();
+                    let config = self.hooks_config.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     config.timeout_ms
                 };
 
                 let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
-                self.pending_approvals.lock().unwrap().insert(approval_id.clone(), tx);
+                self.pending_approvals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(approval_id.clone(), tx);
 
                 log::info!("Blocked waiting for user approval {} for tool {}", approval_id, tool_name);
                 let approved = match tokio::time::timeout(tokio::time::Duration::from_millis(timeout_ms), rx).await {
@@ -2115,7 +2115,7 @@ impl AgentCore {
                     }
                 };
 
-                self.pending_approvals.lock().unwrap().remove(&approval_id);
+                self.pending_approvals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&approval_id);
 
                 self.publish_runtime_event(
                     "hook_approval_resolved",
@@ -2145,7 +2145,7 @@ impl AgentCore {
         on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
     ) -> Result<(), String> {
         let decision = {
-            let config = self.hooks_config.lock().unwrap();
+            let config = self.hooks_config.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             config.evaluate_post_tool(tool_name, args, result)
         };
 
@@ -2169,12 +2169,12 @@ impl AgentCore {
                 }
 
                 let timeout_ms = {
-                    let config = self.hooks_config.lock().unwrap();
+                    let config = self.hooks_config.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                     config.timeout_ms
                 };
 
                 let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
-                self.pending_approvals.lock().unwrap().insert(approval_id.clone(), tx);
+                self.pending_approvals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).insert(approval_id.clone(), tx);
 
                 log::info!("Blocked waiting for user post_tool approval {} for tool {}", approval_id, tool_name);
                 let approved = match tokio::time::timeout(tokio::time::Duration::from_millis(timeout_ms), rx).await {
@@ -2185,7 +2185,7 @@ impl AgentCore {
                     }
                 };
 
-                self.pending_approvals.lock().unwrap().remove(&approval_id);
+                self.pending_approvals.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).remove(&approval_id);
 
                 if approved {
                     log::info!("User approved post_tool result: {}", tool_name);

@@ -62,7 +62,6 @@ impl Channel for DiscordChannel {
         if !self.bot_token.is_empty() && !self.channel_id.is_empty() {
             let running = self.running.clone();
             let channel_id = self.channel_id.clone();
-            let bot_token = self.bot_token.clone(); // In Discord API, token is needed for Authorization headers. Wait, our generic HttpClient doesn't have custom headers easily, but we'll leave it as is per legacy code.
 
             tokio::spawn(async move {
                 log::info!(

@@ -83,7 +83,6 @@ impl Channel for SlackChannel {
 
         if !self.bot_token.is_empty() && !self.channel_id.is_empty() {
             let running = self.running.clone();
-            let bot_token = self.bot_token.clone();
             let channel_id = self.channel_id.clone();
 
             tokio::spawn(async move {

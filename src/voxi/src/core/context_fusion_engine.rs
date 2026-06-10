@@ -1,6 +1,6 @@
 //! Context fusion engine — merges multiple context sources for LLM prompts.
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 pub struct ContextFusionEngine;
 

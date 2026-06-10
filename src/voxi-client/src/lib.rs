@@ -9,7 +9,6 @@
 
 // Suppress unused warnings during C++ → Rust migration.
 // TODO: Remove once all API functions are fully wired.
-#![allow(unused)]
 #![allow(clippy::missing_safety_doc)]
 
 pub mod api;
@@ -22,7 +21,7 @@ use std::sync::{Arc, Mutex};
 
 const VOXI_ERROR_NONE: i32 = 0;
 const VOXI_ERROR_INVALID_PARAMETER: i32 = -1;
-const VOXI_ERROR_OUT_OF_MEMORY: i32 = -2;
+const _VOXI_ERROR_OUT_OF_MEMORY: i32 = -2;
 const VOXI_ERROR_NOT_INITIALIZED: i32 = -3;
 const _VOXI_ERROR_ALREADY_INITIALIZED: i32 = -4;
 const _VOXI_ERROR_IO: i32 = -5;

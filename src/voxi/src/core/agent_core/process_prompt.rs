@@ -4,7 +4,7 @@ impl AgentCore {
         session_id: &str,
         prompt: &str,
         request_id: &str,
-        req_state: &RequestState,
+        _req_state: &RequestState,
         on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
     ) -> String {
         let prompt_trimmed = prompt.trim();

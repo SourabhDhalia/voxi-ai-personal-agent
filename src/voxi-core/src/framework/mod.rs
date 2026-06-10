@@ -11,7 +11,6 @@ pub mod generic_linux;
 pub mod paths;
 
 use serde_json::Value;
-use std::path::PathBuf;
 
 // ─────────────────────────────────────────
 // Core Traits

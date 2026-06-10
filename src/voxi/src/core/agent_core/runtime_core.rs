@@ -16,6 +16,7 @@ pub struct AgentCore {
     session_store: Mutex<Option<SessionStore>>,
     tool_dispatcher: tokio::sync::RwLock<ToolDispatcher>,
     safety_guard: Arc<Mutex<SafetyGuard>>,
+    #[allow(dead_code)]
     context_engine: Arc<SizedContextEngine>,
     event_bus: Arc<EventBus>,
     key_store: Mutex<KeyStore>,
@@ -37,6 +38,7 @@ pub struct AgentCore {
     mcp_client_manager: tokio::sync::RwLock<crate::channel::mcp_client::McpClientManager>,
     pending_mcp_confirmations: Mutex<HashMap<String, PendingMcpConfirmation>>,
     confirmed_mcp_actions: Mutex<HashMap<String, u64>>,
+    #[allow(dead_code)]
     llm_response_cache: LlmResponseCache,
     active_requests: Arc<Mutex<HashMap<String, RequestState>>>,
     session_locks: Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,

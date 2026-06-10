@@ -4,7 +4,7 @@
 //! available LLM backends alongside the built-in ones.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::backend::{self, LlmBackend};
 use super::plugin_llm_backend::PluginLlmBackend;

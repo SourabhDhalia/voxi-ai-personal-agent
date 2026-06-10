@@ -784,7 +784,7 @@ mod tests {
     fn test_add_task() {
         let scheduler = TaskScheduler::new();
         scheduler.add_task(sample_task("t1"));
-        let tasks = scheduler.tasks.lock().unwrap();
+        let tasks = scheduler.tasks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, "t1");
     }
@@ -795,7 +795,7 @@ mod tests {
         scheduler.add_task(sample_task("t1"));
         scheduler.add_task(sample_task("t2"));
         scheduler.remove_task("t1");
-        let tasks = scheduler.tasks.lock().unwrap();
+        let tasks = scheduler.tasks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, "t2");
     }
@@ -805,14 +805,14 @@ mod tests {
         let scheduler = TaskScheduler::new();
         scheduler.add_task(sample_task("t1"));
         scheduler.remove_task("nonexistent");
-        let tasks = scheduler.tasks.lock().unwrap();
+        let tasks = scheduler.tasks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         assert_eq!(tasks.len(), 1);
     }
 
     #[test]
     fn test_empty_scheduler() {
         let scheduler = TaskScheduler::new();
-        let tasks = scheduler.tasks.lock().unwrap();
+        let tasks = scheduler.tasks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         assert!(tasks.is_empty());
     }
 

@@ -136,7 +136,7 @@ impl HooksConfig {
                         "arguments": args
                     });
 
-                    match execute_external_hook(&base_dir, script_filename, &payload) {
+                    match execute_external_hook(&base_dir, script_filename, &payload, self.timeout_ms) {
                         Ok(true) => return HookDecision::Allow,
                         Ok(false) => return HookDecision::Deny("Denied by external pre_tool hook".into()),
                         Err(e) => return HookDecision::Deny(format!("External hook execution error: {}", e)),
@@ -182,7 +182,7 @@ impl HooksConfig {
                         "result": result
                     });
 
-                    match execute_external_hook(&base_dir, script_filename, &payload) {
+                    match execute_external_hook(&base_dir, script_filename, &payload, self.timeout_ms) {
                         Ok(true) => return HookDecision::Allow,
                         Ok(false) => return HookDecision::Deny("Denied by external post_tool hook".into()),
                         Err(e) => return HookDecision::Deny(format!("External hook execution error: {}", e)),
@@ -199,6 +199,7 @@ fn execute_external_hook(
     hooks_dir: &Path,
     action: &str,
     payload: &serde_json::Value,
+    timeout_ms: u64,
 ) -> Result<bool, String> {
     let resolved_hooks_dir = std::fs::canonicalize(hooks_dir)
         .map_err(|e| format!("Failed to canonicalize hooks directory: {}", e))?;
@@ -231,17 +232,48 @@ fn execute_external_hook(
 
     if let Some(mut stdin) = child.stdin.take() {
         let payload_str = payload.to_string();
-        stdin.write_all(payload_str.as_bytes())
-            .map_err(|e| format!("Failed to write to hook stdin: {}", e))?;
+        if let Err(e) = stdin.write_all(payload_str.as_bytes()) {
+            return Err(format!("Failed to write to hook stdin: {}", e));
+        }
     }
 
-    let output = child.wait_with_output()
-        .map_err(|e| format!("Failed to wait for hook script: {}", e))?;
+    let child_id = child.id();
+    
+    let (tx, rx) = std::sync::mpsc::channel();
+    
+    let thread_handle = std::thread::spawn(move || {
+        let res = child.wait_with_output();
+        let _ = tx.send(res);
+    });
 
-    if output.status.success() {
-        Ok(true)
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        Err(format!("Hook script exited with non-zero status. Stderr: {}", stderr))
+    match rx.recv_timeout(std::time::Duration::from_millis(timeout_ms)) {
+        Ok(res) => {
+            let _ = thread_handle.join();
+            let output = res.map_err(|e| format!("Failed to wait for hook script: {}", e))?;
+            if output.status.success() {
+                Ok(true)
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                Err(format!("Hook script exited with non-zero status. Stderr: {}", stderr))
+            }
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(child_id as libc::pid_t, libc::SIGKILL);
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = Command::new("taskkill")
+                    .args(&["/F", "/PID", &child_id.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+            Err(format!("Hook script execution timed out after {} ms", timeout_ms))
+        }
+        Err(e) => {
+            Err(format!("Channel error while waiting for hook script: {}", e))
+        }
     }
 }

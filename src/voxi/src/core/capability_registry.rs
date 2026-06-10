@@ -1,6 +1,6 @@
 //! Capability registry — tracks available agent capabilities and features.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
 pub struct Capability {

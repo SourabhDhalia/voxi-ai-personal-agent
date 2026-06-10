@@ -13,5 +13,8 @@ deliberately and reviewed before landing.
 | [0005](ADR-0005-tiered-memory.md) | core/archival/recall tiers + eviction | F7 | M–L |
 | [0006](ADR-0006-self-verification-loop.md) | Self-critique/verification pass before finalizing | G-A | M |
 | [0007](ADR-0007-reliability-no-unwrap.md) | Remove unwraps on hot paths; supervised tasks | F1 | M–L |
+| [0008](ADR-0008-llm-runtime-and-suggestions.md) | Expose get_llm_runtime, consolidate dashboard config, refine suggestion logic | Dashboard | S |
+| [0009](ADR-0009-robustness-and-hardening.md) | Poison-safe lock recovery, Result/Option propagation, cross-platform metrics, hook timeouts, remove broad lint suppressions | Hardening | M |
 
 Status legend: Proposed → Accepted → Implemented. All below are **Proposed**.
+

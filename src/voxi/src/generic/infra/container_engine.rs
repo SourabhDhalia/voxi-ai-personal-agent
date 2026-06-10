@@ -180,6 +180,7 @@ impl ContainerEngine {
     ) -> Result<Value, String> {
         let mut stdout = String::new();
         let mut stderr = String::new();
+        #[allow(unused_assignments)]
         let mut exit_code = -1;
 
         loop {

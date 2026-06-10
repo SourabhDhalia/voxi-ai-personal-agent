@@ -9,7 +9,6 @@
 //! Fallback: if cache creation fails, `chat()` falls back to inline
 //! `system_instruction` transparently.
 
-#![allow(clippy::all)]
 
 use super::backend::*;
 use crate::infra::http_client;

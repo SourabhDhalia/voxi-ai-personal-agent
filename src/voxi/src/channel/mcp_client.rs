@@ -712,7 +712,7 @@ fn run_sse_listener(
             req = req.header("Mcp-Session-Id", sid);
         }
 
-        let mut resp = match req.send() {
+        let resp = match req.send() {
             Ok(r) => r,
             Err(e) => {
                 log::error!("SSE connection error to '{}': {}", target_url, e);
@@ -768,7 +768,7 @@ fn run_sse_listener(
                         let data = trimmed["data:".len()..].trim().to_string();
 
                         if current_event == "endpoint" {
-                            let mut ep = endpoint_url.write().unwrap();
+                            let mut ep = endpoint_url.write().unwrap_or_else(|poisoned| poisoned.into_inner());
                             let resolved =
                                 if data.starts_with("http://") || data.starts_with("https://") {
                                     data
@@ -1815,7 +1815,7 @@ impl McpClient {
         }
     }
 
-    fn resolve_remote_tool_name<'a>(&'a self, full_name: &'a str) -> Option<&'a str> {
+    fn _resolve_remote_tool_name<'a>(&'a self, full_name: &'a str) -> Option<&'a str> {
         self.tool_infos
             .iter()
             .find(|tool| {
@@ -2322,7 +2322,7 @@ impl McpClientManager {
         if let Some(servers_map) = config["mcpServers"].as_object() {
             for (name, s) in servers_map {
                 let mut command = s["command"].as_str().unwrap_or("").to_string();
-                let mut args: Vec<String> = s["args"]
+                let args: Vec<String> = s["args"]
                     .as_array()
                     .map(|a| {
                         a.iter()
@@ -2388,7 +2388,7 @@ impl McpClientManager {
             for s in servers {
                 let name = s["name"].as_str().unwrap_or("").to_string();
                 let mut command = s["command"].as_str().unwrap_or("").to_string();
-                let mut args: Vec<String> = s["args"]
+                let args: Vec<String> = s["args"]
                     .as_array()
                     .map(|a| {
                         a.iter()
@@ -2939,7 +2939,7 @@ mod tests {
     fn normalizes_provider_address_aliases_and_display_ids() {
         let resource_ids = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
         {
-            let mut maps = resource_ids.lock().unwrap();
+            let mut maps = resource_ids.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             maps.insert(
                 "swiggy-instamart".to_string(),
                 HashMap::from([("1".to_string(), "swiggy-address-1".to_string())]),

@@ -1,6 +1,6 @@
 //! Proactive advisor — generates proactive suggestions based on context.
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 pub struct ProactiveAdvisor;
 

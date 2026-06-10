@@ -2704,7 +2704,7 @@ mod tests {
         assert!(first.text.contains("Started a new `chat` session: `chat-0002`."));
 
         {
-            let mut states = chat_states.lock().unwrap();
+            let mut states = chat_states.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             let state = states.entry(77).or_default();
             state.interaction_mode = TelegramInteractionMode::Coding;
         }

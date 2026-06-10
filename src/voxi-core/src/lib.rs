@@ -5,7 +5,6 @@
 //! - HTTP helper (curl-like API backed by ureq)
 //!   And internal framework logic for plugins.
 
-#![allow(unused)]
 #![allow(clippy::missing_safety_doc)]
 #![allow(clippy::vec_box)]
 

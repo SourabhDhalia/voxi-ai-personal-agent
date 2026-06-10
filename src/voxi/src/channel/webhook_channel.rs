@@ -4,13 +4,14 @@
 //! payload verification for GitHub-style webhook security.
 
 use super::{Channel, ChannelConfig};
-use serde_json::{json, Value};
-use std::io::{BufRead, Read, Write};
+use serde_json::json;
+use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 /// A webhook route mapping path → session.
+#[allow(dead_code)]
 struct WebhookRoute {
     path: String,
     session_id: String,
@@ -20,7 +21,9 @@ pub struct WebhookChannel {
     name: String,
     port: u16,
     running: Arc<AtomicBool>,
+    #[allow(dead_code)]
     routes: Vec<WebhookRoute>,
+    #[allow(dead_code)]
     hmac_secret: String,
     thread: Option<std::thread::JoinHandle<()>>,
 }

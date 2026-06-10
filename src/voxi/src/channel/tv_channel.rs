@@ -26,8 +26,6 @@ pub struct TvChannel {
 }
 
 impl TvChannel {
-    const PROCESS_COMM_NAME: &'static str = "voxi-tv"; // Truncated to 15 chars for Linux
-
     pub fn new(config: &ChannelConfig) -> Self {
         let port = config
             .settings

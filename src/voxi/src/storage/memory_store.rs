@@ -4,7 +4,7 @@
 
 use rusqlite::params;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
 use super::sqlite;
@@ -1189,11 +1189,6 @@ impl MemoryStore {
 
         let _g = self.file_lock.write().unwrap();
         let _ = fs::write(self.base_dir.join("memory.md"), md);
-    }
-
-    /// Legacy synchronization method (deprecated in favor of per-entry files)
-    fn sync_markdown(&self, _category: &str) {
-        // No-op: replaced by write_entry_markdown
     }
 }
 

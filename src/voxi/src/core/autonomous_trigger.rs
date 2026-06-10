@@ -61,7 +61,7 @@ impl AutonomousTrigger {
         log::info!("AutonomousTrigger: loaded {} rules", self.rules.len());
     }
 
-    pub fn check_event(&self, event_type: &str, data: &Value) -> Vec<&TriggerRule> {
+    pub fn check_event(&self, event_type: &str, _data: &Value) -> Vec<&TriggerRule> {
         self.rules
             .values()
             .filter(|r| r.enabled && r.event_type == event_type)

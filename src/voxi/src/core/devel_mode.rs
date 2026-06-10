@@ -761,6 +761,7 @@ fn remove_inotify_watch(fd: i32, watch_descriptor: i32) {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct ParsedInotifyEvent {
     watch_descriptor: i32,
     mask: u32,
@@ -798,6 +799,7 @@ fn parse_inotify_events(buffer: &[u8]) -> Vec<ParsedInotifyEvent> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 fn parse_inotify_events(_buffer: &[u8]) -> Vec<ParsedInotifyEvent> {
     Vec::new()
 }
@@ -1181,7 +1183,7 @@ mod tests {
         EnvGuard,
         CwdGuard,
     ) {
-        let env_lock = test_env_lock().lock().unwrap();
+        let env_lock = test_env_lock().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let repo = tempdir().unwrap();
         fs::create_dir_all(repo.path().join(".dev")).unwrap();
         fs::write(repo.path().join(".dev/ROADMAP.md"), "- [ ] next\n").unwrap();

@@ -204,6 +204,7 @@ impl AgentCore {
         None
     }
 
+    #[allow(dead_code)]
     fn is_zepto_address_selected(messages: &[LlmMessage]) -> bool {
         let mut selected = false;
         for msg in messages {
