@@ -49,6 +49,25 @@
         return d.innerHTML;
     }
 
+    // --- CSV export ---
+    function toCsv(rows) {
+        return rows.map(r => r.map(cell => {
+            const s = String(cell == null ? '' : cell);
+            return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+        }).join(',')).join('\r\n');
+    }
+    function downloadCsv(filename, rows) {
+        const blob = new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
     // --- Theme State ---
     const savedTheme = localStorage.getItem('voxi_theme') || 'dark';
     document.documentElement.setAttribute('data-theme', savedTheme);
@@ -738,6 +757,31 @@
         document.getElementById('task-selection-meta');
     const taskDeleteCurrentBtn =
         document.getElementById('task-delete-current');
+
+    // CSV export buttons (sessions + tasks). Data is already client-side.
+    const sessionExportBtn = document.getElementById('session-export-csv');
+    if (sessionExportBtn) {
+        sessionExportBtn.addEventListener('click', () => {
+            const rows = [['id', 'title', 'date', 'size_bytes', 'modified', 'message_count']];
+            (allSessions || []).forEach(s => rows.push([
+                s.id, s.title || '', s.date || '', s.size_bytes || 0,
+                s.modified ? new Date(s.modified * 1000).toISOString() : '',
+                s.message_count || 0,
+            ]));
+            downloadCsv('sessions.csv', rows);
+        });
+    }
+    const taskExportBtn = document.getElementById('task-export-csv');
+    if (taskExportBtn) {
+        taskExportBtn.addEventListener('click', () => {
+            const rows = [['id', 'title', 'date', 'size_bytes', 'modified']];
+            (allTasks || []).forEach(t => rows.push([
+                t.id, t.title || '', t.date || '', t.size_bytes || 0,
+                t.modified ? new Date(t.modified * 1000).toISOString() : '',
+            ]));
+            downloadCsv('tasks.csv', rows);
+        });
+    }
 
     async function loadTasks(filterDate) {
         const data = await apiFetch('tasks');
