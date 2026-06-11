@@ -405,6 +405,7 @@ fn applies_post_session_summary_and_compaction_hooks() {
             command: "compact".to_string(),
             enabled: true,
             env: BTreeMap::new(),
+            timeout_ms: 30000,
         }],
         model,
         tools,

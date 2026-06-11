@@ -112,6 +112,7 @@ fn lifecycle_merging_prefers_overlay_phase_and_keeps_hooks() {
             command: "hooks/pre.sh".to_string(),
             enabled: true,
             env: BTreeMap::new(),
+            timeout_ms: 30000,
         }],
     };
     let overlay = PluginLifecycleDefinition {
@@ -122,6 +123,7 @@ fn lifecycle_merging_prefers_overlay_phase_and_keeps_hooks() {
             command: "hooks/post.sh".to_string(),
             enabled: true,
             env: BTreeMap::new(),
+            timeout_ms: 30000,
         }],
     };
 

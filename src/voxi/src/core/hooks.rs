@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct HookRule {
@@ -227,14 +229,19 @@ fn execute_external_hook(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    #[cfg(unix)]
+    {
+        cmd.process_group(0);
+    }
+
     let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to spawn hook script: {}", e))?;
 
     if let Some(mut stdin) = child.stdin.take() {
         let payload_str = payload.to_string();
-        if let Err(e) = stdin.write_all(payload_str.as_bytes()) {
-            return Err(format!("Failed to write to hook stdin: {}", e));
-        }
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(payload_str.as_bytes());
+        });
     }
 
     let child_id = child.id();
@@ -259,20 +266,27 @@ fn execute_external_hook(
         }
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             #[cfg(unix)]
-            unsafe {
-                libc::kill(child_id as libc::pid_t, libc::SIGKILL);
+            {
+                let pgid = child_id as libc::pid_t;
+                if pgid > 1 {
+                    unsafe {
+                        libc::kill(-pgid, libc::SIGKILL);
+                    }
+                }
             }
             #[cfg(not(unix))]
             {
                 let _ = Command::new("taskkill")
-                    .args(&["/F", "/PID", &child_id.to_string()])
+                    .args(&["/F", "/T", "/PID", &child_id.to_string()])
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .status();
             }
+            let _ = thread_handle.join();
             Err(format!("Hook script execution timed out after {} ms", timeout_ms))
         }
         Err(e) => {
+            let _ = thread_handle.join();
             Err(format!("Channel error while waiting for hook script: {}", e))
         }
     }
