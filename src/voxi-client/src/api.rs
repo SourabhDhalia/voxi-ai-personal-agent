@@ -12,6 +12,10 @@ use serde_json::{json, Value};
 
 const MAX_IPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 const SOCKET_NAME: &str = "voxi.sock";
+/// Read timeout for blocking IPC reads from the daemon socket (seconds).
+/// Used only by the non-macOS abstract-socket connect path.
+#[cfg(not(target_os = "macos"))]
+const IPC_TIMEOUT_SECS: u64 = 60;
 
 /// Process uptime and system metrics.
 #[cfg(target_os = "macos")]
