@@ -39,7 +39,23 @@ done
 
 mkdir -p "${OUTPUT_DIR}"
 
-PYTHONPATH="${ROOT_DIR}:${PYTHONPATH:-}" python3 - <<'PY' "${ROOT_DIR}" "${OUTPUT_DIR}/python-runtime-summary.json"
+# run_mock_parity_diff.py uses tomllib (Python 3.11+ stdlib). Prefer a
+# tomllib-capable interpreter so the harness works on hosts whose default
+# python3 is older (e.g. macOS system Python 3.9).
+PY_BIN=""
+for cand in python3.13 python3.12 python3.11 python3; do
+  if command -v "${cand}" >/dev/null 2>&1 \
+     && "${cand}" -c 'import tomllib' >/dev/null 2>&1; then
+    PY_BIN="${cand}"
+    break
+  fi
+done
+if [[ -z "${PY_BIN}" ]]; then
+  echo "error: no Python interpreter with tomllib (3.11+) found on PATH" >&2
+  exit 3
+fi
+
+PYTHONPATH="${ROOT_DIR}:${PYTHONPATH:-}" "${PY_BIN}" - <<'PY' "${ROOT_DIR}" "${OUTPUT_DIR}/python-runtime-summary.json"
 from __future__ import annotations
 
 import json
@@ -57,7 +73,7 @@ print(output)
 PY
 
 REPORT_PATH="${OUTPUT_DIR}/parity-report.json"
-python3 "${ROOT_DIR}/rust/scripts/run_mock_parity_diff.py" \
+"${PY_BIN}" "${ROOT_DIR}/rust/scripts/run_mock_parity_diff.py" \
   --root "${ROOT_DIR}" \
   --output "${REPORT_PATH}" \
   --pretty
@@ -65,7 +81,7 @@ python3 "${ROOT_DIR}/rust/scripts/run_mock_parity_diff.py" \
 if [[ "${PRINT_JSON}" == true ]]; then
   cat "${REPORT_PATH}"
 else
-  python3 - <<'PY' "${REPORT_PATH}"
+  "${PY_BIN}" - <<'PY' "${REPORT_PATH}"
 from __future__ import annotations
 
 import json
