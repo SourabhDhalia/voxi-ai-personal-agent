@@ -682,7 +682,6 @@ pub fn skill_hubs_dir_from_paths(
 mod tests {
     use super::{
         extract_zip_archive, load_lock_file, parse_clawhub_slug, update_lock_file, ClawHubLock,
-        ClawHubLockEntry,
     };
     use std::io::Write as _;
     use tempfile::tempdir;

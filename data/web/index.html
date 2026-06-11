@@ -14,6 +14,7 @@
 </head>
 
 <body>
+  <a class="skip-link" href="#content">Skip to main content</a>
   <div class="app">
     <!-- Sidebar -->
     <nav class="sidebar" id="sidebar">
@@ -80,7 +81,7 @@
     </nav>
 
     <!-- Main Content -->
-    <main class="content" id="content">
+    <main class="content" id="content" tabindex="-1">
 
       <!-- Dashboard Page -->
       <section class="page active" id="page-dashboard">
@@ -296,6 +297,7 @@
       <section class="page" id="page-sessions">
         <div class="page-header">
           <h2 class="page-title">Sessions</h2>
+          <button id="session-export-csv" class="btn-outline btn-sm" type="button">Export CSV</button>
         </div>
         <div class="date-nav" id="session-date-nav"></div>
         <div class="card-list" id="session-list">
@@ -318,6 +320,7 @@
         <div class="chat-bulk-actions">
           <button id="task-select-all" class="btn-outline">Select All</button>
           <button id="task-delete-selected" class="btn-outline btn-danger-outline">Delete Selected</button>
+          <button id="task-export-csv" class="btn-outline btn-sm" type="button">Export CSV</button>
         </div>
         <div class="chat-selection-meta" id="task-selection-meta">No tasks selected</div>
         <div class="date-nav" id="task-date-nav"></div>
@@ -339,6 +342,7 @@
         <div class="page-header">
           <h2 class="page-title">Audit Logs</h2>
           <div class="log-pagination-controls" id="log-pagination-controls">
+            <button id="log-live-toggle" class="btn-outline btn-sm" type="button" aria-pressed="false">● Live</button>
             <button id="log-prev-day-btn" class="btn-outline btn-sm">&larr; Older Day</button>
             <span id="log-current-date-display" class="log-current-date-display">Loading Date...</span>
             <button id="log-next-day-btn" class="btn-outline btn-sm">Newer Day &rarr;</button>

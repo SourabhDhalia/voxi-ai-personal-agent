@@ -116,7 +116,7 @@ impl AudioBackend for CpalBackend {
             .build_output_stream(
                 &config.into(),
                 move |out: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let mut p = pos_cb.lock().unwrap();
+                    let mut p = pos_cb.lock().unwrap_or_else(|p| p.into_inner());
                     for frame in out.chunks_mut(channels.max(1)) {
                         let s = samples_cb.get(*p).copied().unwrap_or(0.0);
                         for ch in frame.iter_mut() {
@@ -145,7 +145,7 @@ impl AudioBackend for CpalBackend {
 
         // Block until the buffer has been fully emitted.
         let (lock, cvar) = &*done;
-        let mut d = lock.lock().unwrap();
+        let mut d = lock.lock().unwrap_or_else(|p| p.into_inner());
         while !*d {
             let (guard, timeout) = cvar
                 .wait_timeout(d, std::time::Duration::from_secs(30))

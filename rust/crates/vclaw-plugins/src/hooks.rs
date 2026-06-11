@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use serde::{Deserialize, Serialize};
 
@@ -24,10 +26,16 @@ pub struct HookSpec {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
 }
 
 fn default_enabled() -> bool {
     true
+}
+
+fn default_timeout_ms() -> u64 {
+    30000
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -127,8 +135,8 @@ fn execute_hook(
         }
     };
 
-    let output = Command::new("sh")
-        .arg(&command_path)
+    let mut cmd = Command::new("sh");
+    cmd.arg(&command_path)
         .current_dir(plugin_root)
         .env("VCLAW_PLUGIN_NAME", plugin_name)
         .env("VCLAW_HOOK_NAME", &hook.name)
@@ -141,34 +149,111 @@ fn execute_hook(
         )
         .envs(extra_env)
         .envs(&hook.env)
-        .output();
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
-    match output {
-        Ok(output) => HookExecutionResult {
-            hook_name: hook.name.clone(),
-            phase: hook.phase.clone(),
-            command_path,
-            status: if output.status.success() {
-                HookExecutionStatus::Succeeded
-            } else {
-                HookExecutionStatus::Failed
-            },
-            exit_code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            failure: (!output.status.success())
-                .then(|| format!("hook exited with status {:?}", output.status.code())),
-        },
-        Err(err) => HookExecutionResult {
-            hook_name: hook.name.clone(),
-            phase: hook.phase.clone(),
-            command_path,
-            status: HookExecutionStatus::Failed,
-            exit_code: None,
-            stdout: String::new(),
-            stderr: String::new(),
-            failure: Some(format!("failed to execute hook: {err}")),
-        },
+    #[cfg(unix)]
+    {
+        cmd.process_group(0);
+    }
+
+    let child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            return HookExecutionResult {
+                hook_name: hook.name.clone(),
+                phase: hook.phase.clone(),
+                command_path,
+                status: HookExecutionStatus::Failed,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                failure: Some(format!("failed to execute hook: {err}")),
+            };
+        }
+    };
+
+    let child_id = child.id();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let thread_handle = std::thread::spawn(move || {
+        let res = child.wait_with_output();
+        let _ = tx.send(res);
+    });
+
+    match rx.recv_timeout(std::time::Duration::from_millis(hook.timeout_ms)) {
+        Ok(res) => {
+            let _ = thread_handle.join();
+            match res {
+                Ok(output) => HookExecutionResult {
+                    hook_name: hook.name.clone(),
+                    phase: hook.phase.clone(),
+                    command_path,
+                    status: if output.status.success() {
+                        HookExecutionStatus::Succeeded
+                    } else {
+                        HookExecutionStatus::Failed
+                    },
+                    exit_code: output.status.code(),
+                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                    failure: (!output.status.success())
+                        .then(|| format!("hook exited with status {:?}", output.status.code())),
+                },
+                Err(err) => HookExecutionResult {
+                    hook_name: hook.name.clone(),
+                    phase: hook.phase.clone(),
+                    command_path,
+                    status: HookExecutionStatus::Failed,
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    failure: Some(format!("failed to wait for hook: {err}")),
+                },
+            }
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            #[cfg(unix)]
+            {
+                let pgid = child_id as libc::pid_t;
+                if pgid > 1 {
+                    unsafe {
+                        libc::kill(-pgid, libc::SIGKILL);
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = Command::new("taskkill")
+                    .args(&["/F", "/T", "/PID", &child_id.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+            let _ = thread_handle.join();
+            HookExecutionResult {
+                hook_name: hook.name.clone(),
+                phase: hook.phase.clone(),
+                command_path,
+                status: HookExecutionStatus::Failed,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                failure: Some(format!("hook timed out after {} ms", hook.timeout_ms)),
+            }
+        }
+        Err(e) => {
+            let _ = thread_handle.join();
+            HookExecutionResult {
+                hook_name: hook.name.clone(),
+                phase: hook.phase.clone(),
+                command_path,
+                status: HookExecutionStatus::Failed,
+                exit_code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                failure: Some(format!("channel error: {e}")),
+            }
+        }
     }
 }
 
@@ -269,6 +354,7 @@ mod tests {
                     command: "hooks/pre.sh".to_string(),
                     enabled: true,
                     env: BTreeMap::new(),
+                    timeout_ms: 30000,
                 },
                 HookSpec {
                     name: "post".to_string(),
@@ -276,6 +362,7 @@ mod tests {
                     command: "hooks/post.sh".to_string(),
                     enabled: true,
                     env: BTreeMap::new(),
+                    timeout_ms: 30000,
                 },
             ],
         );
@@ -304,6 +391,7 @@ mod tests {
                 command: "hooks/missing.sh".to_string(),
                 enabled: false,
                 env: BTreeMap::new(),
+                timeout_ms: 30000,
             }],
         );
 
@@ -312,6 +400,49 @@ mod tests {
         assert_eq!(report.results.len(), 1);
         assert_eq!(report.results[0].status, HookExecutionStatus::Skipped);
         assert!(!report.has_failures());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn hook_execution_times_out_and_is_killed() {
+        let root = temp_dir("vclaw-plugin-hook-timeout");
+        let hooks_dir = root.join("hooks");
+        fs::create_dir_all(&hooks_dir).expect("create hooks dir");
+        fs::write(
+            hooks_dir.join("slow.sh"),
+            "#!/bin/sh\nsleep 5\necho done\n",
+        )
+        .expect("write slow hook");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(hooks_dir.join("slow.sh"), fs::Permissions::from_mode(0o755)).expect("set permissions");
+        }
+
+        let plugin = test_plugin(
+            root.clone(),
+            vec![HookSpec {
+                name: "slow".to_string(),
+                phase: HookPhase::PrePrompt,
+                command: "hooks/slow.sh".to_string(),
+                enabled: true,
+                env: BTreeMap::new(),
+                timeout_ms: 100,
+            }],
+        );
+
+        let report = execute_plugin_hooks(&plugin, HookPhase::PrePrompt, &BTreeMap::new());
+
+        assert_eq!(report.results.len(), 1);
+        assert_eq!(report.results[0].status, HookExecutionStatus::Failed);
+        assert!(report.results[0]
+            .failure
+            .as_ref()
+            .map(|f| f.contains("timed out after 100 ms"))
+            .unwrap_or(false));
+        assert!(report.has_failures());
 
         let _ = fs::remove_dir_all(root);
     }

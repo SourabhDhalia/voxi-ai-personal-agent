@@ -1123,9 +1123,12 @@ fn current_local_timestamp_compact() -> String {
 mod tests {
     use super::{
         create_prompt_file, detect_repo_root, devel_status, latest_devel_result,
-        parse_inotify_events, prompt_key_for_progress_file, prompt_key_for_result_file,
+        prompt_key_for_progress_file, prompt_key_for_result_file,
         read_progress_delta, roadmap_progress, sync_devel_tasks, DevelPaths, ProgressStreamState,
     };
+    // Only used by the Linux-gated parse_inotify_events_extracts_name test.
+    #[cfg(target_os = "linux")]
+    use super::parse_inotify_events;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::{Mutex, MutexGuard, OnceLock};

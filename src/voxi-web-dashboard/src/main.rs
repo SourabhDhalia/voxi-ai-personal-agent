@@ -10,7 +10,7 @@
 
 use axum::{
     extract::{Path as AxumPath, Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware,
     response::{Json, Response},
     routing::{get, post},
@@ -19,16 +19,83 @@ use axum::{
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tower_http::{
-    cors::{Any, CorsLayer},
+    cors::CorsLayer,
     services::ServeDir,
 };
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 static DASHBOARD_SESSION_COUNTER: AtomicUsize = AtomicUsize::new(1);
 static START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+// ─── Golden-signal metrics (Prometheus exposition, no external crate) ─────────
+// Traffic, errors, saturation (in-flight), and latency for every HTTP request.
+const LATENCY_BUCKETS_MS: [u64; 10] = [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000];
+static HTTP_REQUESTS_TOTAL: AtomicU64 = AtomicU64::new(0);
+static HTTP_REQUESTS_ERRORS: AtomicU64 = AtomicU64::new(0);
+static HTTP_IN_FLIGHT: AtomicI64 = AtomicI64::new(0);
+static HTTP_LATENCY_SUM_MS: AtomicU64 = AtomicU64::new(0);
+// One counter per bucket; index == LATENCY_BUCKETS_MS index, last is implicit +Inf.
+static HTTP_LATENCY_BUCKETS: [AtomicU64; 10] = [const { AtomicU64::new(0) }; 10];
+
+/// Record one completed request into the golden-signal counters.
+fn record_request(elapsed_ms: u64, status: u16) {
+    HTTP_REQUESTS_TOTAL.fetch_add(1, Ordering::Relaxed);
+    if status >= 500 {
+        HTTP_REQUESTS_ERRORS.fetch_add(1, Ordering::Relaxed);
+    }
+    HTTP_LATENCY_SUM_MS.fetch_add(elapsed_ms, Ordering::Relaxed);
+    for (i, &edge) in LATENCY_BUCKETS_MS.iter().enumerate() {
+        if elapsed_ms <= edge {
+            HTTP_LATENCY_BUCKETS[i].fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+    }
+    // Over the largest bucket: counts only toward total/+Inf, handled at render.
+}
+
+/// Render the current metrics in Prometheus text exposition format.
+fn render_prometheus(daemon_up: bool, uptime_secs: u64) -> String {
+    let total = HTTP_REQUESTS_TOTAL.load(Ordering::Relaxed);
+    let errors = HTTP_REQUESTS_ERRORS.load(Ordering::Relaxed);
+    let in_flight = HTTP_IN_FLIGHT.load(Ordering::Relaxed);
+    let sum_ms = HTTP_LATENCY_SUM_MS.load(Ordering::Relaxed);
+    let mut out = String::with_capacity(1024);
+    out.push_str("# HELP voxi_dashboard_http_requests_total Total HTTP requests handled.\n");
+    out.push_str("# TYPE voxi_dashboard_http_requests_total counter\n");
+    out.push_str(&format!("voxi_dashboard_http_requests_total {}\n", total));
+    out.push_str("# HELP voxi_dashboard_http_request_errors_total HTTP responses with status >= 500.\n");
+    out.push_str("# TYPE voxi_dashboard_http_request_errors_total counter\n");
+    out.push_str(&format!("voxi_dashboard_http_request_errors_total {}\n", errors));
+    out.push_str("# HELP voxi_dashboard_http_in_flight In-flight HTTP requests.\n");
+    out.push_str("# TYPE voxi_dashboard_http_in_flight gauge\n");
+    out.push_str(&format!("voxi_dashboard_http_in_flight {}\n", in_flight.max(0)));
+    out.push_str("# HELP voxi_dashboard_http_request_duration_ms Request latency in milliseconds.\n");
+    out.push_str("# TYPE voxi_dashboard_http_request_duration_ms histogram\n");
+    let mut cumulative = 0u64;
+    for (i, &edge) in LATENCY_BUCKETS_MS.iter().enumerate() {
+        cumulative += HTTP_LATENCY_BUCKETS[i].load(Ordering::Relaxed);
+        out.push_str(&format!(
+            "voxi_dashboard_http_request_duration_ms_bucket{{le=\"{}\"}} {}\n",
+            edge, cumulative
+        ));
+    }
+    out.push_str(&format!(
+        "voxi_dashboard_http_request_duration_ms_bucket{{le=\"+Inf\"}} {}\n",
+        total
+    ));
+    out.push_str(&format!("voxi_dashboard_http_request_duration_ms_sum {}\n", sum_ms));
+    out.push_str(&format!("voxi_dashboard_http_request_duration_ms_count {}\n", total));
+    out.push_str("# HELP voxi_dashboard_daemon_up Daemon IPC reachability (1=up, 0=down).\n");
+    out.push_str("# TYPE voxi_dashboard_daemon_up gauge\n");
+    out.push_str(&format!("voxi_dashboard_daemon_up {}\n", if daemon_up { 1 } else { 0 }));
+    out.push_str("# HELP voxi_dashboard_uptime_seconds Dashboard process uptime.\n");
+    out.push_str("# TYPE voxi_dashboard_uptime_seconds gauge\n");
+    out.push_str(&format!("voxi_dashboard_uptime_seconds {}\n", uptime_secs));
+    out
+}
 
 async fn add_no_cache_headers(response: Response) -> Response {
     let mut response = response;
@@ -214,7 +281,10 @@ async fn main() {
 
     let args: Vec<String> = std::env::args().collect();
     let mut port: u16 = default_dashboard_port();
-    let mut localhost_only = false;
+    // Secure default: bind to loopback only. Operators opt into network
+    // exposure explicitly with --allow-remote. --localhost-only is still
+    // accepted (now the default) for backward compatibility.
+    let mut allow_remote = false;
     let mut web_root_str = String::new();
     let mut config_dir_str = String::new();
     let mut data_dir_str = String::new();
@@ -244,7 +314,11 @@ async fn main() {
                 i += 2;
             }
             "--localhost-only" => {
-                localhost_only = true;
+                // Default behavior now; kept for backward compatibility.
+                i += 1;
+            }
+            "--allow-remote" => {
+                allow_remote = true;
                 i += 1;
             }
             _ => {
@@ -293,22 +367,26 @@ async fn main() {
         event_pump_started: Arc::new(AtomicBool::new(false)),
     };
 
-    let bind_addr = if localhost_only {
-        format!("127.0.0.1:{}", port)
-    } else {
+    let bind_addr = if allow_remote {
+        log::warn!("--allow-remote set: binding 0.0.0.0 (dashboard reachable on the network)");
         format!("0.0.0.0:{}", port)
+    } else {
+        format!("127.0.0.1:{}", port)
     };
 
+    // No wildcard CORS: the dashboard UI is same-origin, so cross-origin browser
+    // requests are denied. Server-to-server A2A callers are unaffected (CORS is a
+    // browser mechanism). Limit methods/headers to what the same-origin UI uses.
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_methods([Method::GET, Method::POST, Method::DELETE])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
 
     let api_routes = Router::new()
         .route("/.well-known/agent.json", get(api_agent_card))
         .route("/api/status", get(api_status))
         .route("/api/metrics", get(api_metrics))
         .route("/api/chat", post(api_chat))
+        .route("/api/chat/stream", post(api_chat_stream))
         .route("/api/chat/stop", post(api_chat_stop))
         .route("/api/chat/active", get(api_chat_active))
         .route("/api/sessions/dates", get(api_session_dates))
@@ -368,11 +446,13 @@ async fn main() {
     ));
 
     let app = Router::new()
+        .route("/metrics", get(metrics_prometheus))
         .nest_service("/apps", ServeDir::new(web_root.join("apps")))
         .merge(api_routes)
         .nest_service("/", ServeDir::new(&web_root))
         .layer(cors)
         .layer(middleware::map_response(add_no_cache_headers))
+        .layer(middleware::from_fn(track_metrics))
         .with_state(state);
 
     let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
@@ -688,6 +768,45 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     out
 }
 
+/// Wrap every request to record golden-signal metrics (traffic, errors,
+/// saturation, latency), assign a request id, and emit one structured access
+/// log line. Applied as an outer layer so it covers all routes.
+async fn track_metrics(req: axum::extract::Request, next: middleware::Next) -> Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    // Short request id for correlation; reuse an inbound one if present.
+    let request_id = req
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()[..12].to_string());
+
+    HTTP_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
+    let start = std::time::Instant::now();
+    let mut response = next.run(req).await;
+    let elapsed_ms = start.elapsed().as_millis() as u64;
+    HTTP_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+    let status = response.status().as_u16();
+    record_request(elapsed_ms, status);
+
+    if let Ok(hv) = HeaderValue::from_str(&request_id) {
+        response.headers_mut().insert("x-request-id", hv);
+    }
+    // Log API and metrics traffic only; static-asset requests would be noise.
+    if path.starts_with("/api") || path == "/metrics" {
+        log::info!(
+            "request_id={} method={} path={} status={} duration_ms={}",
+            request_id,
+            method,
+            path,
+            status,
+            elapsed_ms
+        );
+    }
+    response
+}
+
 /// Auth gate for `/api/*`. Everything requires a valid Bearer token except a
 /// small public allowlist (login, health, the agent card) and the SSE stream,
 /// which self-validates via its query-string token because `EventSource`
@@ -731,7 +850,38 @@ async fn validate_token(headers: &HeaderMap, state: &AppState) -> bool {
 }
 
 async fn api_status() -> Json<Value> {
-    Json(json!({"status": "running", "version": "1.0.0", "channels": "active"}))
+    // Probe real daemon reachability over IPC instead of reporting a constant.
+    let daemon_connected = tokio::task::spawn_blocking(ipc_get_usage)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+    let uptime_secs = get_process_uptime() as u64;
+    Json(json!({
+        "status": if daemon_connected { "healthy" } else { "degraded" },
+        "version": env!("CARGO_PKG_VERSION"),
+        "daemon_connected": daemon_connected,
+        "uptime_seconds": uptime_secs,
+    }))
+}
+
+/// Prometheus scrape endpoint. Public (unauthenticated) so monitoring systems
+/// can scrape it, matching standard `/metrics` convention.
+async fn metrics_prometheus() -> Response {
+    use axum::response::IntoResponse;
+    let daemon_up = tokio::task::spawn_blocking(ipc_get_usage)
+        .await
+        .ok()
+        .flatten()
+        .is_some();
+    let uptime_secs = get_process_uptime() as u64;
+    let body = render_prometheus(daemon_up, uptime_secs);
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        body,
+    )
+        .into_response()
 }
 
 async fn api_metrics() -> Json<Value> {
@@ -844,6 +994,72 @@ async fn api_chat(
             &format!("Agent error: {}", e),
         )),
     }
+}
+
+/// Streaming chat: returns an NDJSON body that emits a `meta` line, then one
+/// `chunk` line per token chunk from the daemon, then a final `done` or
+/// `error` line. The browser reads it incrementally for live token output.
+async fn api_chat_stream(State(state): State<AppState>, Json(payload): Json<Value>) -> Response {
+    use axum::response::IntoResponse;
+    let prompt = payload
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let requested_session_id = payload
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let request_id = payload
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let session_id = if requested_session_id.trim().is_empty() {
+        generate_session_id(&state.channel_name)
+    } else {
+        requested_session_id.trim().to_string()
+    };
+    if prompt.is_empty() {
+        return json_error(StatusCode::BAD_REQUEST, "Empty prompt").into_response();
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    // First line: metadata so the client knows the resolved ids immediately.
+    let _ = tx.send(format!(
+        "{}\n",
+        json!({"type": "meta", "session_id": session_id, "request_id": request_id})
+    ));
+
+    let sid = session_id.clone();
+    let rid = request_id.clone();
+    let p = prompt.clone();
+    std::thread::spawn(move || {
+        let tx_chunk = tx.clone();
+        let on_chunk = move |chunk: &str| {
+            let _ = tx_chunk.send(format!("{}\n", json!({"type": "chunk", "chunk": chunk})));
+        };
+        match ipc_send_prompt_streaming(&sid, &p, Some(&rid), on_chunk) {
+            Ok(text) => {
+                let _ = tx.send(format!("{}\n", json!({"type": "done", "text": text})));
+            }
+            Err(e) => {
+                let _ = tx.send(format!("{}\n", json!({"type": "error", "error": e})));
+            }
+        }
+    });
+
+    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+        rx.recv()
+            .await
+            .map(|line| (Ok::<String, std::io::Error>(line), rx))
+    });
+    (
+        [(header::CONTENT_TYPE, "application/x-ndjson")],
+        axum::body::Body::from_stream(stream),
+    )
+        .into_response()
 }
 
 async fn api_chat_stop(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
@@ -2384,6 +2600,110 @@ fn ipc_send_prompt(session_id: &str, prompt: &str, request_id: Option<&str>) -> 
                 .to_string());
         }
         Err("Unexpected response format".into())
+    }
+}
+
+/// Send a prompt with `stream: true` and invoke `on_chunk` for each token chunk
+/// the daemon emits. Returns the final assembled text. The daemon sends
+/// newline-framed `stream_chunk` notifications on the same socket, followed by
+/// the final JSON-RPC `result` frame.
+fn ipc_send_prompt_streaming<F: FnMut(&str)>(
+    session_id: &str,
+    prompt: &str,
+    request_id: Option<&str>,
+    mut on_chunk: F,
+) -> Result<String, String> {
+    unsafe {
+        let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+        if fd < 0 {
+            return Err("Failed to create IPC socket".into());
+        }
+        let (addr, addr_len) = match get_ipc_addr() {
+            Ok(val) => val,
+            Err(e) => {
+                libc::close(fd);
+                return Err(e);
+            }
+        };
+        if libc::connect(fd, &addr as *const _ as *const libc::sockaddr, addr_len) < 0 {
+            libc::close(fd);
+            return Err("Failed to connect to agent".into());
+        }
+
+        let req = json!({
+            "jsonrpc": "2.0", "method": "prompt", "id": 1,
+            "params": {
+                "session_id": session_id,
+                "text": prompt,
+                "request_id": request_id,
+                "stream": true
+            }
+        });
+        let data = req.to_string();
+        let len_bytes = (data.len() as u32).to_be_bytes();
+        if libc::write(fd, len_bytes.as_ptr() as *const _, 4) != 4 {
+            libc::close(fd);
+            return Err("Failed to send request length".into());
+        }
+        let mut sent = 0usize;
+        while sent < data.len() {
+            let n = libc::write(fd, data.as_ptr().add(sent) as *const _, data.len() - sent);
+            if n <= 0 {
+                libc::close(fd);
+                return Err("Failed to send request".into());
+            }
+            sent += n as usize;
+        }
+
+        // Read length-prefixed frames until the final `result` frame arrives.
+        loop {
+            let mut len_buf = [0u8; 4];
+            if libc::recv(fd, len_buf.as_mut_ptr() as *mut _, 4, libc::MSG_WAITALL) != 4 {
+                libc::close(fd);
+                return Err("Stream ended before completion".into());
+            }
+            let frame_len = u32::from_be_bytes(len_buf) as usize;
+            if frame_len == 0 || frame_len > 10 * 1024 * 1024 {
+                libc::close(fd);
+                return Err("Invalid frame length".into());
+            }
+            let mut buf = vec![0u8; frame_len];
+            let mut got = 0usize;
+            while got < frame_len {
+                let n = libc::recv(fd, buf.as_mut_ptr().add(got) as *mut _, frame_len - got, 0);
+                if n <= 0 {
+                    break;
+                }
+                got += n as usize;
+            }
+            let raw = String::from_utf8_lossy(&buf[..got]).to_string();
+            let frame: Value = match serde_json::from_str(&raw) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if frame.get("method").and_then(|m| m.as_str()) == Some("stream_chunk") {
+                if let Some(chunk) = frame.pointer("/params/chunk").and_then(|v| v.as_str()) {
+                    on_chunk(chunk);
+                }
+                continue;
+            }
+            // Final frame: result or error.
+            libc::close(fd);
+            if let Some(result) = frame.get("result") {
+                if let Some(text) = result.get("text").and_then(|v| v.as_str()) {
+                    return Ok(text.to_string());
+                }
+                return Ok(serde_json::to_string_pretty(result).unwrap_or_default());
+            }
+            if let Some(err) = frame.get("error") {
+                return Err(err
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown error")
+                    .to_string());
+            }
+            return Err("Unexpected response format".into());
+        }
     }
 }
 

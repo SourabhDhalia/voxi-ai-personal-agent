@@ -2814,3 +2814,97 @@ input:checked + .slider:before {
 .llm-label { color: var(--text-secondary); font-size: 13px; min-width: 120px; }
 .llm-active { color: var(--accent-light); font-weight: 600; }
 .llm-value { color: var(--text-primary); }
+
+/* ─── Accessibility & Responsive (additive pass) ─────────────── */
+
+/* Skip-to-content link: visually hidden until focused via keyboard. */
+.skip-link {
+    position: fixed;
+    top: -60px;
+    left: 12px;
+    z-index: 2000;
+    padding: 10px 16px;
+    background: var(--accent, #6366f1);
+    color: #fff;
+    border-radius: var(--radius-sm, 8px);
+    font-weight: 600;
+    text-decoration: none;
+    transition: top 0.15s ease;
+}
+.skip-link:focus { top: 12px; outline: 2px solid #fff; outline-offset: 2px; }
+
+/* Consistent visible focus ring for keyboard users across interactive
+   elements. Mouse clicks (no :focus-visible) are unaffected. */
+a:focus-visible,
+button:focus-visible,
+.nav-item:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+    outline: 2px solid var(--accent, #6366f1);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm, 8px);
+}
+.content:focus { outline: none; }
+
+/* Empty / loading / error state utility classes (available for list views). */
+.state-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 40px 20px;
+    text-align: center;
+    color: var(--text-secondary, #94a3b8);
+}
+.state-block svg { width: 40px; height: 40px; opacity: 0.5; }
+.state-block .state-title { font-weight: 600; color: var(--text-primary, #e2e8f0); }
+.state-block .state-msg { font-size: 0.85rem; max-width: 360px; }
+.state-block.state-error .state-title { color: #ef4444; }
+.skeleton {
+    background: linear-gradient(90deg,
+        var(--bg-glass, rgba(255,255,255,0.04)) 25%,
+        rgba(255,255,255,0.10) 37%,
+        var(--bg-glass, rgba(255,255,255,0.04)) 63%);
+    background-size: 400% 100%;
+    animation: skeleton-shimmer 1.4s ease infinite;
+    border-radius: var(--radius-sm, 8px);
+}
+@keyframes skeleton-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+
+/* Tablet: tighten gutters and metric grid. */
+@media (max-width: 1024px) {
+    :root { --sidebar-w: 200px; }
+    .page-header { padding-left: 14px; padding-right: 14px; }
+}
+
+/* Small tablet / large phone: collapse sidebar to an icon rail. */
+@media (max-width: 768px) {
+    .sidebar { width: 60px; }
+    .sidebar .logo-text,
+    .nav-item span,
+    .sidebar-footer .footer-label { display: none; }
+    .nav-item { justify-content: center; padding: 10px 0; }
+    .nav-icon { width: 20px; height: 20px; }
+    .content { padding: 12px; }
+}
+
+/* Phone: stack chat and reduce metric cards to one column. */
+@media (max-width: 480px) {
+    .metric-grid,
+    [class*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+    .page-header { flex-wrap: wrap; gap: 8px; }
+    .btn-primary, .btn-send { min-height: 44px; }  /* touch target */
+}
+
+/* Live log tail toggle — active state. */
+.btn-live-on {
+    color: #fff !important;
+    background: #ef4444 !important;
+    border-color: #ef4444 !important;
+}
+.btn-live-on { animation: live-pulse 1.6s ease-in-out infinite; }
+@keyframes live-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.65; } }
+@media (prefers-reduced-motion: reduce) { .btn-live-on { animation: none; } }
