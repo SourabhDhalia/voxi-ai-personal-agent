@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 use std::io::{ErrorKind, Read, Write};
+#[cfg(not(target_os = "macos"))]
 use std::os::fd::FromRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;

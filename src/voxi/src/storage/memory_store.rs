@@ -209,7 +209,7 @@ impl MemoryStore {
                             .unwrap_or_default()
                             .replace(".md", "");
                         let cat = {
-                            let conn = self.db.lock().unwrap();
+                            let conn = self.db.lock().unwrap_or_else(|p| p.into_inner());
                             conn.query_row(
                                 "SELECT category FROM memories WHERE key LIKE ?1",
                                 params![format!("%{}%", key_part)],
@@ -227,7 +227,7 @@ impl MemoryStore {
         }
 
         // 3. Remove legacy flat files
-        let _g = self.file_lock.write().unwrap();
+        let _g = self.file_lock.write().unwrap_or_else(|p| p.into_inner());
         for file in legacy_files {
             let path = self.base_dir.join(file);
             if path.exists() {
@@ -238,7 +238,7 @@ impl MemoryStore {
     }
 
     fn init_tables(&self) -> rusqlite::Result<()> {
-        let conn = self.db.lock().unwrap();
+        let conn = self.db.lock().unwrap_or_else(|p| p.into_inner());
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS memories (
                 key TEXT PRIMARY KEY,
@@ -496,7 +496,7 @@ impl MemoryStore {
     pub fn set(&self, key: &str, value: &str, category: &str) {
         let embedding_text = format!("{} {}", key, value);
         let (embedding_blob, embedding_dim, embedding_model) = {
-            let engine_guard = self.embedding_engine.lock().unwrap();
+            let engine_guard = self.embedding_engine.lock().unwrap_or_else(|p| p.into_inner());
             if engine_guard.is_available() {
                 let embedding = engine_guard.encode(&embedding_text);
                 if embedding.is_empty() {
@@ -515,7 +515,7 @@ impl MemoryStore {
         let content_hash = Self::content_hash(&embedding_text);
 
         let updated_at = {
-            let conn = self.db.lock().unwrap();
+            let conn = self.db.lock().unwrap_or_else(|p| p.into_inner());
             let _ = conn.execute(
                 "INSERT OR REPLACE INTO memories
                     (key, value, category, embedding, embedding_dim, embedding_model, content_hash, updated_at)
@@ -545,7 +545,7 @@ impl MemoryStore {
     }
 
     pub fn get(&self, key: &str) -> Option<String> {
-        let conn = self.db.lock().unwrap();
+        let conn = self.db.lock().unwrap_or_else(|p| p.into_inner());
         conn.query_row(
             "SELECT value FROM memories WHERE key = ?1",
             params![key],
@@ -555,7 +555,7 @@ impl MemoryStore {
     }
 
     pub fn get_by_category(&self, category: &str, limit: usize) -> Vec<(String, String, String)> {
-        let conn = self.db.lock().unwrap();
+        let conn = self.db.lock().unwrap_or_else(|p| p.into_inner());
         let mut stmt = match conn.prepare(
             "SELECT key, value, updated_at FROM memories WHERE category = ?1
              ORDER BY updated_at DESC LIMIT ?2",
@@ -576,7 +576,7 @@ impl MemoryStore {
 
     pub fn search(&self, query: &str, limit: usize) -> Vec<(String, String, String)> {
         let pattern = format!("%{}%", query);
-        let conn = self.db.lock().unwrap();
+        let conn = self.db.lock().unwrap_or_else(|p| p.into_inner());
         let mut stmt = match conn.prepare(
             "SELECT key, value, updated_at FROM memories
              WHERE key LIKE ?1 OR value LIKE ?1
@@ -669,7 +669,7 @@ impl MemoryStore {
     pub fn delete(&self, key: &str) -> bool {
         // Find existing metadata before deleting from DB
         let (cat_opt, ts_opt) = {
-            let conn = self.db.lock().unwrap();
+            let conn = self.db.lock().unwrap_or_else(|p| p.into_inner());
             match conn.query_row(
                 "SELECT category, updated_at FROM memories WHERE key = ?1",
                 params![key],
@@ -682,7 +682,7 @@ impl MemoryStore {
 
         if let (Some(cat), Some(ts)) = (cat_opt, ts_opt) {
             let success = {
-                let conn = self.db.lock().unwrap();
+                let conn = self.db.lock().unwrap_or_else(|p| p.into_inner());
                 conn.execute("DELETE FROM memories WHERE key = ?1", params![key])
                     .map(|n| n > 0)
                     .unwrap_or(false)
@@ -692,7 +692,7 @@ impl MemoryStore {
                 let date_pref = &ts[0..10];
                 let filename = format!("{}_{}.md", date_pref, sanitize_filename(key));
                 let filepath = self.get_category_dir(&cat).join(filename);
-                let _g = self.file_lock.write().unwrap();
+                let _g = self.file_lock.write().unwrap_or_else(|p| p.into_inner());
                 let _ = fs::remove_file(filepath);
 
                 self.regenerate_summary();
@@ -715,7 +715,7 @@ impl MemoryStore {
         };
 
         {
-            let _g = self.file_lock.write().unwrap();
+            let _g = self.file_lock.write().unwrap_or_else(|p| p.into_inner());
             for name in ["short-term", "long-term", "episodic"] {
                 let dir = self.base_dir.join(name);
                 if dir.exists() {
@@ -804,7 +804,7 @@ impl MemoryStore {
     /// Loads subset of memory files by semantics using RAG OnDeviceEmbedding
     pub fn load_relevant_for_prompt(&self, prompt: &str, top_k: usize, threshold: f32) -> String {
         let effective_top_k = top_k.min(MEMORY_VECTOR_TOP_K_LIMIT);
-        let engine_guard = self.embedding_engine.lock().unwrap();
+        let engine_guard = self.embedding_engine.lock().unwrap_or_else(|p| p.into_inner());
         if !engine_guard.is_available() {
             // Fallback: load everything
             return self.load_for_prompt();
@@ -830,7 +830,7 @@ impl MemoryStore {
         let Ok(engine_guard) = self.embedding_engine.lock() else {
             return self.load_for_prompt();
         };
-        let _g = self.file_lock.read().unwrap();
+        let _g = self.file_lock.read().unwrap_or_else(|p| p.into_inner());
 
         let mut scored_memories = Vec::new();
 
@@ -881,7 +881,7 @@ impl MemoryStore {
         // Ensure embeddings are up-to-date
         let _ = self.backfill_missing_embeddings(MEMORY_VECTOR_BACKFILL_LIMIT);
         
-        let engine_guard = self.embedding_engine.lock().unwrap();
+        let engine_guard = self.embedding_engine.lock().unwrap_or_else(|p| p.into_inner());
         if !engine_guard.is_available() {
             return self.load_for_prompt();
         }
@@ -1059,7 +1059,7 @@ impl MemoryStore {
     /// Loads all markdown files recursively and concatenates them for LLM injection.
     /// Injects `memory.md` summary at the top if it exists.
     pub fn load_for_prompt(&self) -> String {
-        let _g = self.file_lock.read().unwrap();
+        let _g = self.file_lock.read().unwrap_or_else(|p| p.into_inner());
         let mut combined = String::new();
 
         // 1. Try to load memory.md first
@@ -1107,7 +1107,7 @@ impl MemoryStore {
         let target_dir = self.get_category_dir(category);
         let filepath = target_dir.join(&filename);
 
-        let _g = self.file_lock.write().unwrap();
+        let _g = self.file_lock.write().unwrap_or_else(|p| p.into_inner());
 
         // Clean up any existing files for this key with DIFFERENT dates (to prevent duplicates)
         // Search in all subdirs since a category might have changed
@@ -1134,7 +1134,7 @@ impl MemoryStore {
     /// Regenerates the `memory.md` summary file.
     pub fn regenerate_summary(&self) {
         let now_ts = {
-            let conn = self.db.lock().unwrap();
+            let conn = self.db.lock().unwrap_or_else(|p| p.into_inner());
             conn.query_row("SELECT datetime('now', 'localtime')", [], |row| {
                 row.get::<_, String>(0)
             })
@@ -1187,7 +1187,7 @@ impl MemoryStore {
         }
         md.push('\n');
 
-        let _g = self.file_lock.write().unwrap();
+        let _g = self.file_lock.write().unwrap_or_else(|p| p.into_inner());
         let _ = fs::write(self.base_dir.join("memory.md"), md);
     }
 }
@@ -1326,7 +1326,7 @@ mod tests {
             .unwrap();
         }
 
-        let store = MemoryStore::new(
+        let _store = MemoryStore::new(
             md_dir.to_str().unwrap(),
             db_path.to_str().unwrap(),
             tmp.path().to_str().unwrap(),

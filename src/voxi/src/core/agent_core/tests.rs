@@ -46,7 +46,7 @@ mod tests {
         prompt_requests_eli5_summary, prompt_requests_email_corpus_review,
         prompt_requests_email_triage_report,
         prompt_requests_gitignore_file, prompt_requests_numeric_market_fact,
-        prompt_requests_humanization, prompt_requests_image_generation,
+        prompt_requests_image_generation,
         prompt_allows_direct_longform_shortcut, extract_longform_topic,
         prompt_requests_prediction_market_briefing,
         prompt_supplies_prediction_market_briefing_evidence,

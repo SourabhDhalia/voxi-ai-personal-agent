@@ -100,8 +100,40 @@ fn parse_loadavg() -> (f64, f64, f64) {
 
 #[cfg(target_os = "macos")]
 fn get_process_uptime() -> f64 {
-    static START_TIME: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(std::time::Instant::now);
-    START_TIME.elapsed().as_secs_f64()
+    // Use the kernel-tracked elapsed time of this process (`ps etime`) so the
+    // value reflects the real process age rather than time since first query
+    // (a static Instant would report ~0 on the first call).
+    let pid = std::process::id();
+    match std::process::Command::new("ps")
+        .args(["-o", "etime=", "-p", &pid.to_string()])
+        .output()
+    {
+        Ok(out) => parse_etime_seconds(&String::from_utf8_lossy(&out.stdout)),
+        Err(_) => 0.0,
+    }
+}
+
+/// Parse the `ps` `etime` field (`[[DD-]HH:]MM:SS`) into seconds.
+#[cfg(target_os = "macos")]
+fn parse_etime_seconds(raw: &str) -> f64 {
+    let s = raw.trim();
+    if s.is_empty() {
+        return 0.0;
+    }
+    let (days, hms) = match s.split_once('-') {
+        Some((d, rest)) => (d.parse::<f64>().unwrap_or(0.0), rest),
+        None => (0.0, s),
+    };
+    let parts: Vec<f64> = hms
+        .split(':')
+        .map(|p| p.parse::<f64>().unwrap_or(0.0))
+        .collect();
+    let (h, m, sec) = match parts.as_slice() {
+        [m, s] => (0.0, *m, *s),
+        [h, m, s] => (*h, *m, *s),
+        _ => return 0.0,
+    };
+    days * 86_400.0 + h * 3_600.0 + m * 60.0 + sec
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -876,3 +908,18 @@ impl Drop for Voxi {
 
 /// Thread-safe shared handle for use in C FFI.
 pub type VoxiHandle = Arc<Mutex<Voxi>>;
+
+#[cfg(all(test, target_os = "macos"))]
+mod etime_tests {
+    use super::parse_etime_seconds;
+
+    #[test]
+    fn parses_ps_etime_formats() {
+        assert_eq!(parse_etime_seconds("00:42"), 42.0);
+        assert_eq!(parse_etime_seconds("01:02"), 62.0);
+        assert_eq!(parse_etime_seconds("01:00:00"), 3_600.0);
+        assert_eq!(parse_etime_seconds("2-03:04:05"), 2.0 * 86_400.0 + 3.0 * 3_600.0 + 4.0 * 60.0 + 5.0);
+        assert_eq!(parse_etime_seconds("   "), 0.0);
+        assert_eq!(parse_etime_seconds("garbage"), 0.0);
+    }
+}
