@@ -818,13 +818,22 @@ async fn require_auth(
 ) -> Response {
     use axum::response::IntoResponse;
     let path = req.uri().path();
+    // Endpoints that must NOT require the admin login token. These fall into
+    // two groups:
+    //  - admin-UI bootstrap / shared surfaces (login, health, agent card, SSE)
+    //  - separate trust surfaces with their own auth model: the `/api/bridge/*`
+    //    SDK that sandboxed mini-apps call (authenticated by app_id + rate
+    //    limiting, never the admin token) and the inbound `/api/a2a` agent
+    //    protocol. Gating these on the admin token returns 401 and breaks
+    //    embedded apps and agent-to-agent calls.
     const PUBLIC: &[&str] = &[
         "/api/auth/login",
         "/api/status",
         "/.well-known/agent.json",
         "/api/events",
+        "/api/a2a",
     ];
-    if PUBLIC.contains(&path) {
+    if PUBLIC.contains(&path) || path.starts_with("/api/bridge/") {
         return next.run(req).await;
     }
     if validate_token(req.headers(), &state).await {
