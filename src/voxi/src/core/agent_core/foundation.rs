@@ -973,7 +973,21 @@ fn select_relevant_skills(
 
             if let Some(ref p_emb) = prompt_emb {
                 let skill_text = format!("{} {}", skill.description, skill.tags.join(" "));
-                if let Some(s_emb) = memory_store.and_then(|ms| ms.encode_text_embedding(&skill_text)) {
+                let cached_emb = if let Ok(cache) = SKILL_EMBEDDING_CACHE.lock() {
+                    cache.get(&skill_text).cloned()
+                } else {
+                    None
+                };
+                let s_emb = if let Some(emb) = cached_emb {
+                    Some(emb)
+                } else {
+                    let emb = memory_store.and_then(|ms| ms.encode_text_embedding(&skill_text));
+                    if let (Some(ref e), Ok(mut cache)) = (&emb, SKILL_EMBEDDING_CACHE.lock()) {
+                        cache.insert(skill_text.clone(), e.clone());
+                    }
+                    emb
+                };
+                if let Some(s_emb) = s_emb {
                     let similarity: f32 = p_emb.iter().zip(s_emb.iter()).map(|(a, b)| a * b).sum();
                     // Align similarity with keyword scores; similarity is range [-1, 1], usually [0, 1]
                     score += similarity * 10.0;

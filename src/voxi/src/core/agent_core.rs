@@ -22,6 +22,10 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 static THINK_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"(?s)<think>(.*?)</think>").unwrap());
+static TOOL_EMBEDDING_CACHE: LazyLock<Mutex<HashMap<String, Vec<f32>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static SKILL_EMBEDDING_CACHE: LazyLock<Mutex<HashMap<String, Vec<f32>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 static EXPLICIT_PATH_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r#"(/(?:[^/\s"'`<>()\[\]{};,]+/)*[^/\s"'`<>()\[\]{};,]+/?)"#).unwrap()
 });

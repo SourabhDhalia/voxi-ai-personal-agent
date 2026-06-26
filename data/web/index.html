@@ -413,6 +413,14 @@
               </label>
               <div class="voice-settings-note" id="voice-settings-note"></div>
             </div>
+            <div class="chat-input-toolbar">
+              <button id="chat-thinking-toggle" class="chat-mode-toggle" type="button"
+                role="switch" aria-checked="false" aria-label="Toggle extended thinking mode"
+                title="Extended thinking: agent reasons step-by-step and shows its reasoning">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M9.5 2a7 7 0 0 0-4 12.7V17a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-2.3A7 7 0 0 0 9.5 2z"/><path d="M9 21h6"/></svg>
+                <span class="chat-mode-label">Quick</span>
+              </button>
+            </div>
             <div class="chat-input-area">
               <textarea id="chat-input" placeholder="Type your message...  ( / for commands, @ for skills )" rows="2"></textarea>
               <button id="voice-config-btn" class="btn-mic" title="Voice settings" aria-label="Voice settings">

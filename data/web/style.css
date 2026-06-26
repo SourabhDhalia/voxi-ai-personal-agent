@@ -35,6 +35,7 @@
     --c-violet:  #c084fc;
     --c-orange:  #fb923c;
     --c-slate:   #94a3b8;
+    --scrollbar-thumb: rgba(255, 255, 255, 0.15);
 }
 
 :root[data-theme="light"] {
@@ -55,6 +56,7 @@
     --danger:        #dc2626;
     --shadow-card:   0 4px 20px rgba(0, 0, 0, 0.05);
     --shadow-pop:    0 8px 32px rgba(99, 102, 241, 0.08);
+    --scrollbar-thumb: rgba(15, 23, 42, 0.15);
 }
 
 
@@ -967,7 +969,7 @@ body {
 
 .chat-msg.assistant {
     align-self: flex-start;
-    background: var(--bg-secondary);
+    background: var(--bg-primary);
     border: 1px solid var(--border);
     color: var(--text-primary);
     border-radius: var(--radius-xs) var(--radius) var(--radius) var(--radius);
@@ -2007,8 +2009,8 @@ body.modal-open {
 
 ::-webkit-scrollbar       { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.2); }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
 
 /* ─── Markdown Rendering ───────────────────────────────────── */
 
@@ -2908,3 +2910,105 @@ select:focus-visible,
 .btn-live-on { animation: live-pulse 1.6s ease-in-out infinite; }
 @keyframes live-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.65; } }
 @media (prefers-reduced-motion: reduce) { .btn-live-on { animation: none; } }
+
+/* ─── Chat: thinking-mode toggle + reasoning block ───────────── */
+.chat-input-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 2px 6px;
+}
+.chat-mode-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-secondary, #94a3b8);
+    background: var(--bg-glass, rgba(255,255,255,0.04));
+    border: 1px solid var(--border, rgba(255,255,255,0.08));
+    border-radius: 999px;
+    cursor: pointer;
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+    min-height: 28px;
+}
+.chat-mode-toggle:hover { color: var(--text-primary, #e2e8f0); }
+.chat-mode-toggle[aria-checked="true"] {
+    color: #fff;
+    background: linear-gradient(135deg, #6366f1, #7c3aed);
+    border-color: transparent;
+}
+.chat-mode-toggle svg { flex-shrink: 0; }
+
+/* Per-turn collapsible reasoning / tool-activity block. */
+.chat-reasoning {
+    margin: 6px 0 2px;
+    border: 1px solid var(--border, rgba(255,255,255,0.08));
+    border-radius: var(--radius-sm, 8px);
+    background: var(--bg-glass, rgba(255,255,255,0.03));
+    overflow: hidden;
+    font-size: 0.8rem;
+}
+.chat-reasoning-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    cursor: pointer;
+    color: var(--text-secondary, #94a3b8);
+    font-weight: 600;
+    user-select: none;
+    list-style: none;
+}
+.chat-reasoning-summary::-webkit-details-marker { display: none; }
+.chat-reasoning-summary .chevron { transition: transform 0.15s; }
+.chat-reasoning[open] .chat-reasoning-summary .chevron { transform: rotate(90deg); }
+.chat-reasoning-body {
+    padding: 4px 12px 10px;
+    border-top: 1px solid var(--border, rgba(255,255,255,0.06));
+}
+.chat-reasoning-step {
+    display: flex;
+    gap: 8px;
+    padding: 3px 0;
+    color: var(--text-secondary, #94a3b8);
+    line-height: 1.5;
+}
+.chat-reasoning-step .step-icon { flex-shrink: 0; opacity: 0.8; }
+.chat-reasoning-step.tool-ok .step-icon { color: #22c55e; }
+.chat-reasoning-step.tool-fail .step-icon { color: #ef4444; }
+.chat-reasoning-step .step-text { white-space: pre-wrap; word-break: break-word; }
+.chat-reasoning-pulse { animation: reasoning-pulse 1.2s ease infinite; }
+@keyframes reasoning-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* Per-message action row (regenerate / edit / copy). */
+.chat-msg-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 6px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.chat-msg:hover .chat-msg-actions { opacity: 1; }
+.chat-msg-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    font-size: 0.72rem;
+    color: var(--text-secondary, #94a3b8);
+    background: transparent;
+    border: 1px solid var(--border, rgba(255,255,255,0.08));
+    border-radius: var(--radius-sm, 6px);
+    cursor: pointer;
+}
+.chat-msg-action:hover { color: var(--text-primary, #e2e8f0); border-color: var(--accent, #6366f1); }
+
+/* Per-message token/cost meta. */
+.chat-msg-meta {
+    margin-top: 4px;
+    font-size: 0.68rem;
+    color: var(--text-muted, #64748b);
+    font-variant-numeric: tabular-nums;
+}

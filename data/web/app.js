@@ -1310,6 +1310,27 @@
         document.getElementById('chat-send');
     const chatMessages =
         document.getElementById('chat-messages');
+
+    // Thinking-mode toggle (Quick vs Thinking). Persisted; sent with each turn.
+    const chatThinkingToggle = document.getElementById('chat-thinking-toggle');
+    let thinkingMode = localStorage.getItem('voxi_thinking') === '1';
+    function applyThinkingToggle() {
+        if (!chatThinkingToggle) return;
+        chatThinkingToggle.setAttribute('aria-checked', thinkingMode ? 'true' : 'false');
+        const label = chatThinkingToggle.querySelector('.chat-mode-label');
+        if (label) label.textContent = thinkingMode ? 'Thinking' : 'Quick';
+    }
+    if (chatThinkingToggle) {
+        applyThinkingToggle();
+        chatThinkingToggle.addEventListener('click', () => {
+            thinkingMode = !thinkingMode;
+            localStorage.setItem('voxi_thinking', thinkingMode ? '1' : '0');
+            applyThinkingToggle();
+        });
+    }
+    // Track the last user prompt so the per-message Regenerate action can resend.
+    let lastUserPrompt = '';
+
     const chatSessionList =
         document.getElementById('chat-session-list');
     const chatSessionMeta =
@@ -1581,6 +1602,32 @@
         }
     }
 
+    function parseReasoningAndText(text) {
+        let reasoning = '';
+        let cleanedText = '';
+        let remaining = text || '';
+        while (remaining.length > 0) {
+            const startIdx = remaining.indexOf('<reasoning>');
+            if (startIdx === -1) {
+                cleanedText += remaining;
+                break;
+            }
+            cleanedText += remaining.slice(0, startIdx);
+            const endIdx = remaining.indexOf('</reasoning>', startIdx + 11);
+            if (endIdx === -1) {
+                reasoning += remaining.slice(startIdx + 11);
+                break;
+            } else {
+                reasoning += remaining.slice(startIdx + 11, endIdx) + '\n';
+                remaining = remaining.slice(endIdx + 12);
+            }
+        }
+        return {
+            reasoning: reasoning.trim(),
+            text: cleanedText.trim()
+        };
+    }
+
     function addChatMsg(role, text) {
         if (!chatMessages) return;
         if (role === 'assistant') {
@@ -1592,20 +1639,41 @@
 
         const el = document.createElement('div');
         el.className = 'chat-msg ' + role + (role === 'assistant' ? ' markdown-body' : '');
-        if (role === 'assistant' && text.startsWith('⚠️ **Safety Confirmation Required**')) {
-            el.classList.add('safety-card');
-            el.innerHTML = renderSafetyConfirmation(text);
-        } else if (role === 'assistant') {
-            el.innerHTML = renderMarkdown(text);
+        
+        let parsedText = text;
+        if (role === 'assistant') {
+            const parsed = parseReasoningAndText(text);
+            let innerHTML = '';
+            if (parsed.reasoning) {
+                innerHTML += '<details class="chat-reasoning" open>' +
+                    '<summary class="chat-reasoning-summary">' +
+                    '<svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">' +
+                    '<polyline points="9 18 15 12 9 6"></polyline></svg>' +
+                    '<span>Reasoning</span>' +
+                    '</summary>' +
+                    '<div class="chat-reasoning-body markdown-body">' +
+                    renderMarkdown(parsed.reasoning) +
+                    '</div>' +
+                    '</details>';
+            }
+            if (parsed.text.startsWith('⚠️ **Safety Confirmation Required**')) {
+                el.classList.add('safety-card');
+                innerHTML += renderSafetyConfirmation(parsed.text);
+            } else {
+                innerHTML += renderMarkdown(parsed.text);
+            }
+            el.innerHTML = innerHTML;
+            parsedText = parsed.text;
         } else {
             el.textContent = text;
         }
+
         if (role === 'assistant') {
             if (window.__voiceSpeakNext) {
                 window.__voiceSpeakNext = false;
-                if (typeof speakText === 'function') speakText(text);
+                if (typeof speakText === 'function') speakText(parsedText);
             }
-            const actions = inferChatActions(text);
+            const actions = inferChatActions(parsedText);
             if (actions.length) {
                 const actionRow = document.createElement('div');
                 actionRow.className = 'chat-action-row';
@@ -1618,6 +1686,45 @@
             }
             bindChatActionButtons(el);
         }
+        // Hover action row: copy + (assistant) regenerate / (user) edit-resend.
+        const msgActions = document.createElement('div');
+        msgActions.className = 'chat-msg-actions';
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'chat-msg-action';
+        copyBtn.type = 'button';
+        copyBtn.textContent = 'Copy';
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard && navigator.clipboard.writeText(parsedText);
+            copyBtn.textContent = 'Copied';
+            setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1200);
+        });
+        msgActions.appendChild(copyBtn);
+        if (role === 'assistant') {
+            const regen = document.createElement('button');
+            regen.className = 'chat-msg-action';
+            regen.type = 'button';
+            regen.textContent = 'Regenerate';
+            regen.addEventListener('click', () => {
+                if (lastUserPrompt && chatInput) {
+                    chatInput.value = lastUserPrompt;
+                    sendChat();
+                }
+            });
+            msgActions.appendChild(regen);
+        } else if (role === 'user') {
+            const edit = document.createElement('button');
+            edit.className = 'chat-msg-action';
+            edit.type = 'button';
+            edit.textContent = 'Edit';
+            edit.addEventListener('click', () => {
+                if (chatInput) {
+                    chatInput.value = text;
+                    chatInput.focus();
+                }
+            });
+            msgActions.appendChild(edit);
+        }
+        el.appendChild(msgActions);
         chatMessages.appendChild(el);
         chatMessages.scrollTop =
             chatMessages.scrollHeight;
@@ -1801,7 +1908,7 @@
             const resp = await fetch(API + '/api/chat/stream', {
                 method: 'POST',
                 headers: Object.assign({ 'Content-Type': 'application/json' }, getAuthHeaders()),
-                body: JSON.stringify({ prompt: prompt, session_id: sessionId, request_id: requestId })
+                body: JSON.stringify({ prompt: prompt, session_id: sessionId, request_id: requestId, thinking: thinkingMode })
             });
             if (!resp.ok || !resp.body) throw new Error('stream unavailable');
             const reader = resp.body.getReader();
@@ -1824,7 +1931,23 @@
                     } else if (msg.type === 'chunk') {
                         if (!acc && onFirst) onFirst();
                         acc += msg.chunk;
-                        live.textContent = acc;
+                        
+                        const parsed = parseReasoningAndText(acc);
+                        let html = '';
+                        if (parsed.reasoning) {
+                            html += '<details class="chat-reasoning" open>' +
+                                '<summary class="chat-reasoning-summary">' +
+                                '<svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">' +
+                                '<polyline points="9 18 15 12 9 6"></polyline></svg>' +
+                                '<span>Reasoning</span>' +
+                                '</summary>' +
+                                '<div class="chat-reasoning-body markdown-body">' +
+                                renderMarkdown(parsed.reasoning) +
+                                '</div>' +
+                                '</details>';
+                        }
+                        html += renderMarkdown(parsed.text);
+                        live.innerHTML = html;
                         chatMessages.scrollTop = chatMessages.scrollHeight;
                     } else if (msg.type === 'done') {
                         acc = (msg.text != null && msg.text !== '') ? msg.text : acc;
@@ -1846,6 +1969,7 @@
         if (!chatInput || !chatMessages) return;
         const prompt = chatInput.value.trim();
         if (!prompt) return;
+        lastUserPrompt = prompt;
         const sessionId = currentChatSessionId;
         const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
 
@@ -1902,7 +2026,7 @@
         showThinkingIndicator(sessionId || 'new', requestId);
         try {
             const resp = await apiPost('chat', {
-                prompt: prompt, session_id: sessionId, request_id: requestId
+                prompt: prompt, session_id: sessionId, request_id: requestId, thinking: thinkingMode
             });
             removeThinking();
             finishSession(resp && resp.session_id);
@@ -2015,19 +2139,16 @@
 
     async function loadVoiceConfigFile() {
         // Server config is the baseline; local prefs win for this browser.
-        try {
-            const res = await fetch(API + '/api/voice/config');
-            if (res.ok) {
-                const data = await res.json();
-                const cfg = (data && data.config) || data || {};
-                if (cfg.engine) voiceConfig.engine = cfg.engine;
-                if (cfg.language) voiceConfig.language = cfg.language;
-                if (typeof cfg.speak_replies === 'boolean') {
-                    voiceConfig.speak_replies = cfg.speak_replies;
-                }
-                if (cfg.browser_voice) voiceConfig.browser_voice = cfg.browser_voice;
+        const data = await apiFetch('voice/config');
+        if (data && data.__http_status === 200) {
+            const cfg = data.config || data || {};
+            if (cfg.engine) voiceConfig.engine = cfg.engine;
+            if (cfg.language) voiceConfig.language = cfg.language;
+            if (typeof cfg.speak_replies === 'boolean') {
+                voiceConfig.speak_replies = cfg.speak_replies;
             }
-        } catch (err) { /* endpoint optional; defaults apply */ }
+            if (cfg.browser_voice) voiceConfig.browser_voice = cfg.browser_voice;
+        }
         loadVoicePrefs();
         syncVoiceUI();
     }
@@ -2293,14 +2414,10 @@
 
     async function loadCapabilities() {
         if (capabilitiesCache) return capabilitiesCache;
-        try {
-            const res = await fetch(API + '/api/capabilities');
-            if (res.ok) {
-                capabilitiesCache = await res.json();
-            } else {
-                capabilitiesCache = { tools: [], workflows: [], roles: [] };
-            }
-        } catch (err) {
+        const data = await apiFetch('capabilities');
+        if (data && data.__http_status === 200) {
+            capabilitiesCache = data;
+        } else {
             capabilitiesCache = { tools: [], workflows: [], roles: [] };
         }
         return capabilitiesCache;
@@ -2330,13 +2447,14 @@
 
     async function loadSkillsList() {
         if (skillsCache) return skillsCache;
-        try {
-            const res = await fetch(API + '/api/skills');
-            const j = res.ok ? await res.json() : {};
+        const j = await apiFetch('skills');
+        if (j && j.__http_status === 200) {
             skillsCache = (j.skills || []).map(s => ({
                 name: s.name, desc: s.description || ''
             }));
-        } catch (e) { skillsCache = []; }
+        } else {
+            skillsCache = [];
+        }
         return skillsCache;
     }
 
@@ -2357,10 +2475,14 @@
             slashPalette.classList.add('hidden');
             return;
         }
-        slashActiveIdx = Math.min(slashActiveIdx, matches.length - 1);
+        
+        // Limit to 20 matches max for performance and UI readability
+        const slicedMatches = matches.slice(0, 20);
+        slashActiveIdx = Math.min(slashActiveIdx, slicedMatches.length - 1);
+        
         let html = '';
         let lastGroup = null;
-        matches.forEach((it, i) => {
+        slicedMatches.forEach((it, i) => {
             if (it.group !== lastGroup) {
                 html += '<div class="slash-group">' + escHtml(it.group) + '</div>';
                 lastGroup = it.group;
@@ -2373,11 +2495,11 @@
         });
         slashPalette.innerHTML = html;
         slashPalette.classList.remove('hidden');
-        slashPalette._matches = matches;
+        slashPalette._matches = slicedMatches;
         slashPalette.querySelectorAll('.slash-item').forEach(el => {
             el.addEventListener('mousedown', (e) => {
                 e.preventDefault();
-                chooseSlash(matches[parseInt(el.dataset.idx, 10)]);
+                chooseSlash(slicedMatches[parseInt(el.dataset.idx, 10)]);
             });
         });
     }

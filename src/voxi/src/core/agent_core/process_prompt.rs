@@ -507,37 +507,68 @@ impl AgentCore {
             && !prompt_prefers_direct_specialized_tools(prompt);
         let has_expected_file_targets = !expected_file_management_targets(prompt).is_empty();
         let mut session_profile = self.resolve_session_profile(session_id);
-        if session_profile.is_none() && is_dashboard_web_app_request {
-            session_profile = Some(SessionPromptProfile {
-                system_prompt: Some(
+        if let Some(ref mut profile) = session_profile {
+            if is_dashboard_web_app_request && profile.system_prompt.is_none() {
+                profile.system_prompt = Some(
                     "For browser-based apps in dashboard web sessions, use only the \
                      generate_web_app tool. Do not write raw HTML files into the \
                      session workdir, do not use run_generated_code for HTML, and do \
                      not open file:// or local workdir paths."
                         .to_string(),
-                ),
-                allowed_tools: Some(vec!["generate_web_app".to_string()]),
-                ..SessionPromptProfile::default()
-            });
-        }
-        if session_profile.is_none() && is_file_management_request {
-            session_profile = Some(SessionPromptProfile {
-                role_name: Some("file_manager_flow".to_string()),
-                role_description: Some(
+                );
+                if profile.allowed_tools.is_none() {
+                    profile.allowed_tools = Some(vec!["generate_web_app".to_string()]);
+                }
+            }
+            if is_file_management_request && profile.system_prompt.is_none() {
+                profile.role_name = Some("file_manager_flow".to_string());
+                profile.role_description = Some(
                     "Direct file management profile for normal file and directory operations."
                         .to_string(),
-                ),
-                system_prompt: Some(
+                );
+                profile.system_prompt = Some(
                     "For normal file and directory tasks, manage files directly with file_manager \
                      or file_write. Create directories explicitly, write the requested files \
                      into the working directory, and avoid run_generated_code unless the user \
                      explicitly asks for an executable script to be generated and run."
                         .to_string(),
-                ),
-                allowed_tools: Some(vec!["file_manager".to_string(), "file_write".to_string()]),
-                max_iterations: Some(0),
-                ..SessionPromptProfile::default()
-            });
+                );
+                profile.allowed_tools = Some(vec!["file_manager".to_string(), "file_write".to_string()]);
+                profile.max_iterations = Some(0);
+            }
+        } else {
+            if is_dashboard_web_app_request {
+                session_profile = Some(SessionPromptProfile {
+                    system_prompt: Some(
+                        "For browser-based apps in dashboard web sessions, use only the \
+                         generate_web_app tool. Do not write raw HTML files into the \
+                         session workdir, do not use run_generated_code for HTML, and do \
+                         not open file:// or local workdir paths."
+                            .to_string(),
+                    ),
+                    allowed_tools: Some(vec!["generate_web_app".to_string()]),
+                    ..SessionPromptProfile::default()
+                });
+            }
+            if is_file_management_request {
+                session_profile = Some(SessionPromptProfile {
+                    role_name: Some("file_manager_flow".to_string()),
+                    role_description: Some(
+                        "Direct file management profile for normal file and directory operations."
+                            .to_string(),
+                    ),
+                    system_prompt: Some(
+                        "For normal file and directory tasks, manage files directly with file_manager \
+                         or file_write. Create directories explicitly, write the requested files \
+                         into the working directory, and avoid run_generated_code unless the user \
+                         explicitly asks for an executable script to be generated and run."
+                            .to_string(),
+                    ),
+                    allowed_tools: Some(vec!["file_manager".to_string(), "file_write".to_string()]),
+                    max_iterations: Some(0),
+                    ..SessionPromptProfile::default()
+                });
+            }
         }
         if let Some(max_iterations) = session_profile
             .as_ref()
@@ -668,7 +699,21 @@ impl AgentCore {
                                 }
 
                                 let tool_text = format!("{} {}", tool.name, tool.description);
-                                if let Some(tool_emb) = ms.encode_text_embedding(&tool_text) {
+                                let cached_emb = if let Ok(cache) = TOOL_EMBEDDING_CACHE.lock() {
+                                    cache.get(&tool_text).cloned()
+                                } else {
+                                    None
+                                };
+                                let tool_emb = if let Some(emb) = cached_emb {
+                                    Some(emb)
+                                } else {
+                                    let emb = ms.encode_text_embedding(&tool_text);
+                                    if let (Some(ref e), Ok(mut cache)) = (&emb, TOOL_EMBEDDING_CACHE.lock()) {
+                                        cache.insert(tool_text.clone(), e.clone());
+                                    }
+                                    emb
+                                };
+                                if let Some(tool_emb) = tool_emb {
                                     let similarity: f32 = prompt_emb.iter().zip(tool_emb.iter()).map(|(a, b)| a * b).sum();
                                     scored_tools.push((similarity, tool));
                                 } else {

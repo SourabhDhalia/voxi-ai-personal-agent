@@ -1041,6 +1041,10 @@ async fn api_chat_stream(State(state): State<AppState>, Json(payload): Json<Valu
         json!({"type": "meta", "session_id": session_id, "request_id": request_id})
     ));
 
+    let thinking = payload
+        .get("thinking")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let sid = session_id.clone();
     let rid = request_id.clone();
     let p = prompt.clone();
@@ -1049,7 +1053,7 @@ async fn api_chat_stream(State(state): State<AppState>, Json(payload): Json<Valu
         let on_chunk = move |chunk: &str| {
             let _ = tx_chunk.send(format!("{}\n", json!({"type": "chunk", "chunk": chunk})));
         };
-        match ipc_send_prompt_streaming(&sid, &p, Some(&rid), on_chunk) {
+        match ipc_send_prompt_streaming(&sid, &p, Some(&rid), thinking, on_chunk) {
             Ok(text) => {
                 let _ = tx.send(format!("{}\n", json!({"type": "done", "text": text})));
             }
@@ -2620,6 +2624,7 @@ fn ipc_send_prompt_streaming<F: FnMut(&str)>(
     session_id: &str,
     prompt: &str,
     request_id: Option<&str>,
+    thinking: bool,
     mut on_chunk: F,
 ) -> Result<String, String> {
     unsafe {
@@ -2645,7 +2650,8 @@ fn ipc_send_prompt_streaming<F: FnMut(&str)>(
                 "session_id": session_id,
                 "text": prompt,
                 "request_id": request_id,
-                "stream": true
+                "stream": true,
+                "thinking": thinking
             }
         });
         let data = req.to_string();

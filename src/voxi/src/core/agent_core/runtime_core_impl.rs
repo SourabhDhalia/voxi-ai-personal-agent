@@ -137,6 +137,18 @@ impl AgentCore {
             .and_then(|profiles| profiles.get(session_id).cloned())
     }
 
+    pub fn set_session_reasoning_policy(&self, session_id: &str, policy: crate::core::prompt_builder::ReasoningPolicy) {
+        if let Ok(mut profiles) = self.session_profiles.lock() {
+            if let Some(profile) = profiles.get_mut(session_id) {
+                profile.reasoning_policy = Some(policy);
+            } else {
+                let mut profile = SessionPromptProfile::default();
+                profile.reasoning_policy = Some(policy);
+                profiles.insert(session_id.to_string(), profile);
+            }
+        }
+    }
+
     fn role_registry_snapshot(&self) -> Vec<AgentRole> {
         self.agent_roles
             .read()

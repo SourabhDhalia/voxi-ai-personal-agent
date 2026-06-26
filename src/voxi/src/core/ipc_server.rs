@@ -386,6 +386,17 @@ impl IpcServer {
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let thinking = params
+                    .get("thinking")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let policy = if thinking {
+                    crate::core::prompt_builder::ReasoningPolicy::Tagged
+                } else {
+                    crate::core::prompt_builder::ReasoningPolicy::Native
+                };
+                agent.set_session_reasoning_policy(&session_id, policy);
+
                 if text.is_empty() {
                     return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Empty prompt"},"id":req_id})
                         .to_string();
