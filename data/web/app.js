@@ -1311,6 +1311,49 @@
     const chatMessages =
         document.getElementById('chat-messages');
 
+    let currentSessionMessages = [];
+    let editingMessageIndex = null;
+
+    function autoResizeTextarea(textarea, maxHeight = 400) {
+        if (!textarea) return;
+        textarea.style.height = 'auto';
+        const scrollHeight = textarea.scrollHeight;
+        if (scrollHeight > maxHeight) {
+            textarea.style.height = maxHeight + 'px';
+            textarea.style.overflowY = 'auto';
+        } else {
+            textarea.style.height = scrollHeight + 'px';
+            textarea.style.overflowY = 'hidden';
+        }
+    }
+
+    function showEditingIndicator() {
+        const indicator = document.getElementById('chat-editing-indicator');
+        if (indicator) {
+            indicator.style.display = 'flex';
+        }
+    }
+
+    function hideEditingIndicator() {
+        const indicator = document.getElementById('chat-editing-indicator');
+        if (indicator) {
+            indicator.style.display = 'none';
+        }
+        editingMessageIndex = null;
+    }
+
+    if (chatInput) {
+        chatInput.addEventListener('input', () => autoResizeTextarea(chatInput, 200));
+        const cancelEditBtn = document.getElementById('chat-cancel-edit');
+        if (cancelEditBtn) {
+            cancelEditBtn.addEventListener('click', () => {
+                hideEditingIndicator();
+                chatInput.value = '';
+                autoResizeTextarea(chatInput, 200);
+            });
+        }
+    }
+
     // Thinking-mode toggle (Quick vs Thinking). Persisted; sent with each turn.
     const chatThinkingToggle = document.getElementById('chat-thinking-toggle');
     let thinkingMode = localStorage.getItem('voxi_thinking') === '1';
@@ -1572,9 +1615,12 @@
             return;
         }
 
+        currentSessionMessages = resp.messages || [];
+        hideEditingIndicator();
+
         chatMessages.innerHTML = '';
-        resp.messages.forEach(message => {
-            addChatMsg(message.role, message.text);
+        currentSessionMessages.forEach((message, idx) => {
+            addChatMsg(message.role, message.text, false, idx);
         });
         selectChatSession(sessionId);
 
@@ -1628,7 +1674,7 @@
         };
     }
 
-    function addChatMsg(role, text) {
+    function addChatMsg(role, text, shouldPush = true, index = null) {
         if (!chatMessages) return;
         if (role === 'assistant') {
             text = checkAndShowHookApproval(text);
@@ -1636,6 +1682,11 @@
         const welcome =
             chatMessages.querySelector('.chat-welcome');
         if (welcome) welcome.remove();
+
+        if (shouldPush) {
+            currentSessionMessages.push({ role, text });
+        }
+        const msgIdx = index !== null ? index : currentSessionMessages.length - 1;
 
         const el = document.createElement('div');
         el.className = 'chat-msg ' + role + (role === 'assistant' ? ' markdown-body' : '');
@@ -1720,6 +1771,9 @@
                 if (chatInput) {
                     chatInput.value = text;
                     chatInput.focus();
+                    editingMessageIndex = msgIdx;
+                    showEditingIndicator();
+                    autoResizeTextarea(chatInput, 200);
                 }
             });
             msgActions.appendChild(edit);
@@ -1752,6 +1806,9 @@
 
     function inferChatActions(text) {
         const lower = (text || '').toLowerCase();
+        if (lower.includes('```') || (lower.match(/mcp_/g) || []).length > 2 || (lower.match(/_/g) || []).length > 10) {
+            return [];
+        }
         const actions = [];
         const add = (label, prompt) => {
             if (!actions.some(action => action.prompt === prompt)) {
@@ -1971,11 +2028,34 @@
         if (!prompt) return;
         lastUserPrompt = prompt;
         const sessionId = currentChatSessionId;
+
+        if (editingMessageIndex !== null && sessionId) {
+            // Truncate message array to everything before the edited message
+            currentSessionMessages = currentSessionMessages.slice(0, editingMessageIndex);
+            
+            // Re-render UI up to the truncated point
+            chatMessages.innerHTML = '';
+            currentSessionMessages.forEach((message, idx) => {
+                addChatMsg(message.role, message.text, false, idx);
+            });
+
+            // Call backend to update session files
+            try {
+                await apiPost('sessions/' + encodeURIComponent(sessionId) + '/truncate', {
+                    messages: currentSessionMessages
+                });
+            } catch (e) {
+                console.error('Failed to sync truncated session with backend', e);
+            }
+            hideEditingIndicator();
+        }
+
         const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
 
         clearTimeline();
         addChatMsg('user', prompt);
         chatInput.value = '';
+        autoResizeTextarea(chatInput, 200);
 
         sessionStorage.setItem('active_request_id_' + (sessionId || 'new'), requestId);
 
@@ -2515,6 +2595,7 @@
         if (item.type === 'command') {
             runClientCommand(item.key);
             chatInput.value = '';
+            autoResizeTextarea(chatInput, 200);
             return;
         }
         if (item.type === 'skill') {
@@ -2522,11 +2603,13 @@
             // agent force-prefetches that skill for this prompt.
             chatInput.value = chatInput.value.replace(/@[\w-]*$/, '@' + item.key + ' ');
             chatInput.focus();
+            autoResizeTextarea(chatInput, 200);
             return;
         }
         // Tool/workflow: insert a starter prompt for the user to complete.
         chatInput.value = 'Use ' + item.key + ' to ';
         chatInput.focus();
+        autoResizeTextarea(chatInput, 200);
     }
 
     function runClientCommand(cmd) {
@@ -3119,6 +3202,14 @@
             ? entries.map(([key, value]) =>
                 renderConfigField(key, value)).join('')
             : '<p class="empty-state">No editable fields were found.</p>';
+
+        // Auto-resize rendered textareas in the structured configuration editor
+        fields.querySelectorAll('.config-field-input').forEach(ta => {
+            if (ta.tagName === 'TEXTAREA') {
+                autoResizeTextarea(ta, 400);
+                ta.addEventListener('input', () => autoResizeTextarea(ta, 400));
+            }
+        });
     }
 
     function setConfigModalMode(mode) {

@@ -240,10 +240,15 @@ struct LogEntry {
     has_more: bool,
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct DashboardSessionMessage {
     role: String,
     text: String,
+}
+
+#[derive(serde::Deserialize)]
+struct SessionTruncatePayload {
+    messages: Vec<DashboardSessionMessage>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -397,6 +402,10 @@ async fn main() {
         .route(
             "/api/sessions/:id",
             get(api_session_detail).delete(api_session_delete),
+        )
+        .route(
+            "/api/sessions/:id/truncate",
+            post(api_session_truncate),
         )
         .route("/api/tasks/dates", get(api_task_dates))
         .route("/api/tasks", get(api_tasks).delete(api_tasks_delete))
@@ -1219,6 +1228,58 @@ async fn api_session_delete(
     AxumPath(id): AxumPath<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     delete_session_dirs(&state.data_dir, &[id])
+}
+
+async fn api_session_truncate(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(payload): Json<SessionTruncatePayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+    if id.contains("..") || id.contains('/') {
+        return Err(json_error(StatusCode::BAD_REQUEST, "Invalid id"));
+    }
+    let path = state.data_dir.join("sessions").join(&id);
+    if !path.is_dir() {
+        return Err(json_error(StatusCode::NOT_FOUND, "Session not found"));
+    }
+
+    // Clean up existing md files in the session directory
+    if let Ok(entries) = std::fs::read_dir(&path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                if let Some(ext) = p.extension() {
+                    if ext == "md" {
+                        let _ = std::fs::remove_file(&p);
+                    }
+                }
+            }
+        }
+    }
+
+    // Write today's md file containing the new message list
+    let today_filename = format!("{}.md", today_date_str());
+    let today_file = path.join(&today_filename);
+
+    let mut content = format!("---\nid: {}\ndate: {}\n---\n\n", id, today_date_str());
+    for msg in payload.messages {
+        content.push_str(&format!("## {}\n{}\n\n", msg.role, msg.text));
+    }
+
+    if let Err(e) = std::fs::write(&today_file, content) {
+        return Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("Failed to write truncated session file: {}", e),
+        ));
+    }
+
+
+
+    Ok(Json(json!({"status": "ok"})))
 }
 
 async fn api_sessions_delete(
