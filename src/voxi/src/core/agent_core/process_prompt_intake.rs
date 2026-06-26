@@ -258,7 +258,22 @@ impl AgentCore {
             if let Ok(ms_guard) = self.memory_store.lock() {
                 if let Some(ms) = ms_guard.as_ref() {
                     if let Some(prompt_emb) = ms.encode_text_embedding(prompt) {
-                        if let Some(ref_emb) = ms.encode_text_embedding("shopping, grocery search, adding items to cart, checkout, store selection, address selection") {
+                        let ref_text = "shopping, grocery search, adding items to cart, checkout, store selection, address selection";
+                        let cached_ref_emb = if let Ok(cache) = TOOL_EMBEDDING_CACHE.lock() {
+                            cache.get(ref_text).cloned()
+                        } else {
+                            None
+                        };
+                        let ref_emb = if let Some(emb) = cached_ref_emb {
+                            Some(emb)
+                        } else {
+                            let emb = ms.encode_text_embedding(ref_text);
+                            if let (Some(ref e), Ok(mut cache)) = (&emb, TOOL_EMBEDDING_CACHE.lock()) {
+                                cache.insert(ref_text.to_string(), e.clone());
+                            }
+                            emb
+                        };
+                        if let Some(ref_emb) = ref_emb {
                             let similarity: f32 = prompt_emb.iter().zip(ref_emb.iter()).map(|(a, b)| a * b).sum();
                             if similarity > 0.30 {
                                 found = true;

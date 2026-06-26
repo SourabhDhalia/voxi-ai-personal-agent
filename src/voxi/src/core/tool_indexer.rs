@@ -775,8 +775,18 @@ pub fn fix_json_escapes(s: &str) -> String {
             } else {
                 if c == '"' {
                     in_string = false;
+                    result.push(c);
+                } else if c == '\n' {
+                    result.push_str("\\n");
+                } else if c == '\r' {
+                    result.push_str("\\r");
+                } else if c == '\t' {
+                    result.push_str("\\t");
+                } else if c.is_control() {
+                    result.push_str(&format!("\\u{:04x}", c as u32));
+                } else {
+                    result.push(c);
                 }
-                result.push(c);
             }
         } else {
             if c == '"' {
@@ -944,6 +954,39 @@ pub fn generate_fallback_index(metadata: &ToolsMetadata, root_dir: &str) {
         log::error!("ToolIndexer: fallback write failed: {}", e);
     } else {
         log::info!("ToolIndexer: wrote fallback tools.md ({} bytes)", md.len());
+    }
+
+    // Also generate per-category index.md files if we are falling back
+    for cat in &metadata.categories {
+        let cat_dir = Path::new(&cat.dir_path);
+        if cat_dir.exists() && cat_dir.is_dir() {
+            let mut cat_md = String::new();
+            cat_md.push_str(&format!("# {}\n\n", cat.name));
+            cat_md.push_str("> Auto-generated category index | Fallback template\n\n");
+            
+            if cat.name == "actions" {
+                cat_md.push_str("| Action Name | Description | Markdown |\n");
+                cat_md.push_str("|-------------|-------------|----------|\n");
+                for tool in &cat.tools {
+                    cat_md.push_str(&format!(
+                        "| {} | {} | [{}.md]({}.md) |\n",
+                        tool.name, tool.description, tool.name, tool.name
+                    ));
+                }
+            } else {
+                cat_md.push_str("| Tool | Description |\n");
+                cat_md.push_str("|------|-------------|\n");
+                for tool in &cat.tools {
+                    cat_md.push_str(&format!("| {} | {} |\n", tool.name, tool.description));
+                }
+            }
+            let index_path = cat_dir.join("index.md");
+            if let Err(e) = std::fs::write(&index_path, &cat_md) {
+                log::error!("ToolIndexer: fallback category {} index write failed: {}", cat.name, e);
+            } else {
+                log::info!("ToolIndexer: wrote fallback category {} index.md", cat.name);
+            }
+        }
     }
 }
 
@@ -1117,6 +1160,18 @@ mod tests {
                 .unwrap()
                 .dir_path,
             embedded_root.path().to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn test_fix_json_escapes_escapes_literal_newlines_and_tabs() {
+        let input = "{\n  \"tools_md\": \"# Header\n\nSome text with\t tab\r and newline\n\"\n}";
+        let fixed = fix_json_escapes(input);
+        
+        let parsed: serde_json::Value = serde_json::from_str(&fixed).unwrap();
+        assert_eq!(
+            parsed["tools_md"].as_str().unwrap(),
+            "# Header\n\nSome text with\t tab\r and newline\n"
         );
     }
 }

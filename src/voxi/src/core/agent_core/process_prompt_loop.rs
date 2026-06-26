@@ -1,4 +1,9 @@
 use super::*;
+use std::sync::{LazyLock, Mutex};
+use std::collections::HashMap;
+
+static WORKFLOW_EMBEDDING_CACHE: LazyLock<Mutex<HashMap<String, Vec<f32>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub(super) struct PromptLoopPreparation {
     pub messages: Vec<LlmMessage>,
@@ -79,12 +84,25 @@ impl AgentCore {
                         workflow_value.get("description").and_then(|value| value.as_str()),
                     ) {
                         let wf_text = format!("{} {}", name, description);
-                        let wf_emb = {
-                            if let Ok(ms_guard) = self.memory_store.lock() {
-                                ms_guard.as_ref().and_then(|ms| ms.encode_text_embedding(&wf_text))
-                            } else {
-                                None
+                        let cached_emb = if let Ok(cache) = WORKFLOW_EMBEDDING_CACHE.lock() {
+                            cache.get(&wf_text).cloned()
+                        } else {
+                            None
+                        };
+                        let wf_emb = if let Some(emb) = cached_emb {
+                            Some(emb)
+                        } else {
+                            let emb = {
+                                if let Ok(ms_guard) = self.memory_store.lock() {
+                                    ms_guard.as_ref().and_then(|ms| ms.encode_text_embedding(&wf_text))
+                                } else {
+                                    None
+                                }
+                            };
+                            if let (Some(ref e), Ok(mut cache)) = (&emb, WORKFLOW_EMBEDDING_CACHE.lock()) {
+                                cache.insert(wf_text.clone(), e.clone());
                             }
+                            emb
                         };
 
                         if let Some(wf_emb) = wf_emb {
