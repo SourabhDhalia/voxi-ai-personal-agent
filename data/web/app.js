@@ -1892,6 +1892,54 @@
         }
     }
 
+    // Poll outbound messages and append live tool execution logs to the
+    // thinking indicator bubble for the given requestId. Self-terminates
+    // when the thinking DOM element disappears.
+    function startOutboundLogsPolling(sessionId, requestId) {
+        if (window.activeOutboundPollInterval) {
+            clearInterval(window.activeOutboundPollInterval);
+            window.activeOutboundPollInterval = null;
+        }
+        let cursor = Date.now(); // only fetch messages created after this prompt
+        window.activeOutboundPollInterval = setInterval(async () => {
+            const thinkingId = 'think-' + requestId;
+            const thinkingEl = document.getElementById(thinkingId);
+            if (!thinkingEl) {
+                clearInterval(window.activeOutboundPollInterval);
+                window.activeOutboundPollInterval = null;
+                return;
+            }
+            try {
+                let url = 'outbound/messages?since=' + cursor;
+                if (sessionId && sessionId !== 'new') {
+                    url += '&session_id=' + encodeURIComponent(sessionId);
+                }
+                const resp = await apiFetch(url);
+                if (resp && Array.isArray(resp.messages) && resp.messages.length > 0) {
+                    const logsEl = thinkingEl.querySelector('.chat-thinking-logs');
+                    if (logsEl) {
+                        resp.messages.forEach(msg => {
+                            const text = msg.message;
+                            const exists = Array.from(logsEl.children).some(c => c.textContent === text);
+                            if (!exists) {
+                                const entry = document.createElement('div');
+                                entry.className = 'chat-thinking-log-entry';
+                                entry.textContent = text;
+                                logsEl.appendChild(entry);
+                            }
+                        });
+                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                    }
+                    if (typeof resp.cursor === 'number' && resp.cursor >= cursor) {
+                        cursor = resp.cursor;
+                    }
+                }
+            } catch (err) {
+                console.error('Error polling outbound logs:', err);
+            }
+        }, 1000);
+    }
+
     function startPollingSession(sessionId) {
         if (window.chatPollInterval) {
             clearInterval(window.chatPollInterval);
@@ -1985,6 +2033,8 @@
                     state.received = true;
                     if (msg.type === 'meta') {
                         resolvedSession = msg.session_id || resolvedSession;
+                        // Start polling with the resolved session id
+                        startOutboundLogsPolling(resolvedSession, requestId);
                     } else if (msg.type === 'chunk') {
                         if (!acc && onFirst) onFirst();
                         acc += msg.chunk;
@@ -2060,7 +2110,12 @@
         sessionStorage.setItem('active_request_id_' + (sessionId || 'new'), requestId);
 
         showThinkingIndicator(sessionId || 'new', requestId);
+        startOutboundLogsPolling(sessionId || 'new', requestId);
         const removeThinking = () => {
+            if (window.activeOutboundPollInterval) {
+                clearInterval(window.activeOutboundPollInterval);
+                window.activeOutboundPollInterval = null;
+            }
             const indicator = document.getElementById('think-' + requestId);
             if (indicator) indicator.remove();
         };
@@ -2104,6 +2159,7 @@
 
         // Fallback: non-streaming request/response.
         showThinkingIndicator(sessionId || 'new', requestId);
+        startOutboundLogsPolling(sessionId || 'new', requestId);
         try {
             const resp = await apiPost('chat', {
                 prompt: prompt, session_id: sessionId, request_id: requestId, thinking: thinkingMode

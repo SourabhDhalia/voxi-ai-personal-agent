@@ -973,6 +973,7 @@ body {
     border: 1px solid var(--border);
     color: var(--text-primary);
     border-radius: var(--radius-xs) var(--radius) var(--radius) var(--radius);
+    white-space: normal;
 }
 
 .chat-msg.assistant.safety-card {
