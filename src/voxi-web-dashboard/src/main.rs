@@ -903,13 +903,6 @@ async fn metrics_prometheus() -> Response {
 }
 
 async fn api_metrics() -> Json<Value> {
-    let (rss_kb, vm_kb, threads) = parse_proc_status();
-    let (load_1m, load_5m, load_15m) = parse_loadavg();
-    let uptime_secs = get_process_uptime();
-    let hours = uptime_secs as u64 / 3600;
-    let minutes = (uptime_secs as u64 % 3600) / 60;
-    let seconds = uptime_secs as u64 % 60;
-
     // Query live usage counters from the agent daemon via IPC.
     let usage = tokio::task::spawn_blocking(ipc_get_usage)
         .await
@@ -941,6 +934,31 @@ async fn api_metrics() -> Json<Value> {
         .and_then(|u| u["total_tool_calls"].as_i64())
         .unwrap_or(0);
 
+    let daemon_pid = usage
+        .as_ref()
+        .and_then(|u| u["daemon_pid"].as_u64())
+        .map(|p| p as u32);
+    let daemon_uptime = usage
+        .as_ref()
+        .and_then(|u| u["daemon_uptime"].as_u64());
+
+    let (rss_kb, vm_kb, threads) = if let Some(pid) = daemon_pid {
+        parse_proc_status_for_pid(pid)
+    } else {
+        parse_proc_status()
+    };
+
+    let uptime_secs = if let Some(up) = daemon_uptime {
+        up
+    } else {
+        get_process_uptime() as u64
+    };
+
+    let hours = uptime_secs / 3600;
+    let minutes = (uptime_secs % 3600) / 60;
+    let seconds = uptime_secs % 60;
+    let (load_1m, load_5m, load_15m) = parse_loadavg();
+
     Json(json!({
         "version": "1.0.0",
         "status": if agent_connected { "running" } else { "disconnected" },
@@ -965,7 +983,8 @@ async fn api_metrics() -> Json<Value> {
         "memory": {"vm_rss_kb": rss_kb, "vm_size_kb": vm_kb},
         "cpu": {"load_1m": load_1m, "load_5m": load_5m, "load_15m": load_15m},
         "threads": threads,
-        "pid": std::process::id()
+        "pid": std::process::id(),
+        "daemon_pid": daemon_pid
     }))
 }
 
@@ -2995,6 +3014,67 @@ fn parse_proc_status() -> (i64, i64, i32) {
                     act_list as usize,
                     (count as usize) * std::mem::size_of::<MachPortT>(),
                 );
+            }
+        }
+    }
+
+    (rss_kb, vm_kb, threads)
+}
+
+fn parse_proc_status_for_pid(pid: u32) -> (i64, i64, i32) {
+    let mut rss_kb = 0i64;
+    let mut vm_kb = 0i64;
+    let mut threads = 0i32;
+
+    if let Ok(content) = std::fs::read_to_string(format!("/proc/{}/status", pid)) {
+        for line in content.lines() {
+            if let Some(v) = line.strip_prefix("VmRSS:") {
+                rss_kb = v
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+            } else if let Some(v) = line.strip_prefix("VmSize:") {
+                vm_kb = v
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+            } else if let Some(v) = line.strip_prefix("Threads:") {
+                threads = v.trim().parse().unwrap_or(0);
+            }
+        }
+        return (rss_kb, vm_kb, threads);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("ps")
+            .args(&["-o", "rss=,vsz=", "-p", &pid.to_string()])
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let parts: Vec<&str> = stdout.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    rss_kb = parts[0].parse().unwrap_or(0);
+                    vm_kb = parts[1].parse().unwrap_or(0);
+                }
+            }
+        }
+
+        if let Ok(output) = std::process::Command::new("ps")
+            .args(&["-M", "-p", &pid.to_string()])
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let line_count = stdout.lines().count();
+                if line_count > 1 {
+                    threads = (line_count - 1) as i32;
+                } else {
+                    threads = 1;
+                }
             }
         }
     }

@@ -72,6 +72,138 @@
     const savedTheme = localStorage.getItem('voxi_theme') || 'dark';
     document.documentElement.setAttribute('data-theme', savedTheme);
 
+    // --- Theme Customizer State ---
+    const defaultUIConfig = {
+        accent: 'apple-blue',
+        bgMode: 'oled-black',
+        uiStyle: 'liquid-glass',
+        fontFamily: 'apple-system'
+    };
+
+    function applyUIConfig(config) {
+        const htmlEl = document.documentElement;
+        Array.from(htmlEl.classList).forEach(className => {
+            if (className.startsWith('accent-') || 
+                className.startsWith('bg-') || 
+                className.startsWith('style-') || 
+                className.startsWith('font-')) {
+                htmlEl.classList.remove(className);
+            }
+        });
+        if (config.accent) htmlEl.classList.add('accent-' + config.accent);
+        if (config.bgMode) htmlEl.classList.add('bg-' + config.bgMode);
+        if (config.uiStyle) htmlEl.classList.add('style-' + config.uiStyle);
+        if (config.fontFamily) htmlEl.classList.add('font-' + config.fontFamily);
+    }
+
+    function loadUIConfig() {
+        try {
+            const stored = localStorage.getItem('voxi_ui_config');
+            if (stored) {
+                return JSON.parse(stored);
+            }
+        } catch (e) {
+            console.error('Failed to load UI config', e);
+        }
+        return defaultUIConfig;
+    }
+
+    function saveUIConfig(config) {
+        try {
+            localStorage.setItem('voxi_ui_config', JSON.stringify(config));
+        } catch (e) {
+            console.error('Failed to save UI config', e);
+        }
+    }
+
+    function updateCustomizerForm(config) {
+        const form = document.getElementById('customizer-form');
+        if (!form) return;
+        if (config.accent) {
+            const radio = form.querySelector(`input[name="accent-color"][value="${config.accent}"]`);
+            if (radio) radio.checked = true;
+        }
+        if (config.bgMode) {
+            const radio = form.querySelector(`input[name="bg-mode"][value="${config.bgMode}"]`);
+            if (radio) radio.checked = true;
+        }
+        if (config.uiStyle) {
+            const radio = form.querySelector(`input[name="ui-style"][value="${config.uiStyle}"]`);
+            if (radio) radio.checked = true;
+        }
+        if (config.fontFamily) {
+            const radio = form.querySelector(`input[name="font-family"][value="${config.fontFamily}"]`);
+            if (radio) radio.checked = true;
+        }
+    }
+
+    function readCustomizerForm() {
+        const form = document.getElementById('customizer-form');
+        if (!form) return defaultUIConfig;
+        const accent = form.querySelector('input[name="accent-color"]:checked')?.value || 'apple-blue';
+        const bgMode = form.querySelector('input[name="bg-mode"]:checked')?.value || 'oled-black';
+        const uiStyle = form.querySelector('input[name="ui-style"]:checked')?.value || 'liquid-glass';
+        const fontFamily = form.querySelector('input[name="font-family"]:checked')?.value || 'apple-system';
+        return { accent, bgMode, uiStyle, fontFamily };
+    }
+
+    function initCustomizer() {
+        const modal = document.getElementById('customizer-modal');
+        const toggle = document.getElementById('customizer-toggle');
+        const closeBtn = document.getElementById('customizer-close');
+        const saveBtn = document.getElementById('customizer-save-btn');
+        const resetBtn = document.getElementById('customizer-reset-btn');
+
+        if (!modal || !toggle) return;
+
+        toggle.addEventListener('click', () => {
+            const current = loadUIConfig();
+            updateCustomizerForm(current);
+            modal.classList.remove('hidden');
+        });
+
+        const closeModal = () => {
+            modal.classList.add('hidden');
+        };
+
+        if (closeBtn) closeBtn.addEventListener('click', closeModal);
+
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                closeModal();
+            }
+        });
+
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => {
+                const config = readCustomizerForm();
+                saveUIConfig(config);
+                applyUIConfig(config);
+                closeModal();
+                if (typeof showToast === 'function') {
+                    showToast('Theme updated successfully!', 'success');
+                }
+            });
+        }
+
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                saveUIConfig(defaultUIConfig);
+                applyUIConfig(defaultUIConfig);
+                updateCustomizerForm(defaultUIConfig);
+                closeModal();
+                if (typeof showToast === 'function') {
+                    showToast('Theme reset to default!', 'success');
+                }
+            });
+        }
+    }
+
+    // Load, apply, and initialize customizer immediately
+    const activeUIConfig = loadUIConfig();
+    applyUIConfig(activeUIConfig);
+    initCustomizer();
+
     const API = '';  // Same origin
 
     // --- Auth State ---
@@ -1941,11 +2073,17 @@
     }
 
     function startPollingSession(sessionId) {
+        if (window.activeStreamingSessionId) {
+            return;
+        }
         if (window.chatPollInterval) {
             clearInterval(window.chatPollInterval);
         }
         let lastOutboundCursor = 0;
         window.chatPollInterval = setInterval(async () => {
+            if (window.activeStreamingSessionId) {
+                return;
+            }
             if (sessionId !== currentChatSessionId) {
                 clearInterval(window.chatPollInterval);
                 window.chatPollInterval = null;
@@ -2001,186 +2139,205 @@
     // the caller knows whether a fallback re-send is safe. `onFirst` fires when
     // the first chunk arrives (used to drop the thinking indicator).
     async function sendChatStreaming(prompt, sessionId, requestId, state, onFirst) {
-        const welcome = chatMessages.querySelector('.chat-welcome');
-        if (welcome) welcome.remove();
-        const live = document.createElement('div');
-        live.className = 'chat-msg assistant markdown-body chat-streaming';
-        chatMessages.appendChild(live);
-
-        let acc = '';
-        let resolvedSession = sessionId;
+        window.activeStreamingSessionId = sessionId || 'new';
         try {
-            const resp = await fetch(API + '/api/chat/stream', {
-                method: 'POST',
-                headers: Object.assign({ 'Content-Type': 'application/json' }, getAuthHeaders()),
-                body: JSON.stringify({ prompt: prompt, session_id: sessionId, request_id: requestId, thinking: thinkingMode })
-            });
-            if (!resp.ok || !resp.body) throw new Error('stream unavailable');
-            const reader = resp.body.getReader();
-            const decoder = new TextDecoder();
-            let buf = '';
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
-                buf += decoder.decode(value, { stream: true });
-                let nl;
-                while ((nl = buf.indexOf('\n')) >= 0) {
-                    const line = buf.slice(0, nl).trim();
-                    buf = buf.slice(nl + 1);
-                    if (!line) continue;
-                    let msg;
-                    try { msg = JSON.parse(line); } catch (e) { continue; }
-                    state.received = true;
-                    if (msg.type === 'meta') {
-                        resolvedSession = msg.session_id || resolvedSession;
-                        // Start polling with the resolved session id
-                        startOutboundLogsPolling(resolvedSession, requestId);
-                    } else if (msg.type === 'chunk') {
-                        if (!acc && onFirst) onFirst();
-                        acc += msg.chunk;
-                        
-                        const parsed = parseReasoningAndText(acc);
-                        let html = '';
-                        if (parsed.reasoning) {
-                            html += '<details class="chat-reasoning" open>' +
-                                '<summary class="chat-reasoning-summary">' +
-                                '<svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">' +
-                                '<polyline points="9 18 15 12 9 6"></polyline></svg>' +
-                                '<span>Reasoning</span>' +
-                                '</summary>' +
-                                '<div class="chat-reasoning-body markdown-body">' +
-                                renderMarkdown(parsed.reasoning) +
-                                '</div>' +
-                                '</details>';
+            const welcome = chatMessages.querySelector('.chat-welcome');
+            if (welcome) welcome.remove();
+            const live = document.createElement('div');
+            live.className = 'chat-msg assistant markdown-body chat-streaming';
+            chatMessages.appendChild(live);
+
+            let acc = '';
+            let resolvedSession = sessionId;
+            try {
+                const resp = await fetch(API + '/api/chat/stream', {
+                    method: 'POST',
+                    headers: Object.assign({ 'Content-Type': 'application/json' }, getAuthHeaders()),
+                    body: JSON.stringify({ prompt: prompt, session_id: sessionId, request_id: requestId, thinking: thinkingMode })
+                });
+                if (!resp.ok || !resp.body) throw new Error('stream unavailable');
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buf = '';
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buf += decoder.decode(value, { stream: true });
+                    let nl;
+                    while ((nl = buf.indexOf('\n')) >= 0) {
+                        const line = buf.slice(0, nl).trim();
+                        buf = buf.slice(nl + 1);
+                        if (!line) continue;
+                        let msg;
+                        try { msg = JSON.parse(line); } catch (e) { continue; }
+                        state.received = true;
+                        if (msg.type === 'meta') {
+                            resolvedSession = msg.session_id || resolvedSession;
+                            // Start polling with the resolved session id
+                            startOutboundLogsPolling(resolvedSession, requestId);
+                        } else if (msg.type === 'chunk') {
+                            if (!acc && onFirst) onFirst();
+                            acc += msg.chunk;
+                            
+                            const parsed = parseReasoningAndText(acc);
+                            let html = '';
+                            if (parsed.reasoning) {
+                                html += '<details class="chat-reasoning" open>' +
+                                    '<summary class="chat-reasoning-summary">' +
+                                    '<svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">' +
+                                    '<polyline points="9 18 15 12 9 6"></polyline></svg>' +
+                                    '<span>Reasoning</span>' +
+                                    '</summary>' +
+                                    '<div class="chat-reasoning-body markdown-body">' +
+                                    renderMarkdown(parsed.reasoning) +
+                                    '</div>' +
+                                    '</details>';
+                            }
+                            html += renderMarkdown(parsed.text);
+                            live.innerHTML = html;
+                            chatMessages.scrollTop = chatMessages.scrollHeight;
+                        } else if (msg.type === 'done') {
+                            acc = (msg.text != null && msg.text !== '') ? msg.text : acc;
+                        } else if (msg.type === 'error') {
+                            live.remove();
+                            throw new Error(msg.error || 'agent error');
                         }
-                        html += renderMarkdown(parsed.text);
-                        live.innerHTML = html;
-                        chatMessages.scrollTop = chatMessages.scrollHeight;
-                    } else if (msg.type === 'done') {
-                        acc = (msg.text != null && msg.text !== '') ? msg.text : acc;
-                    } else if (msg.type === 'error') {
-                        live.remove();
-                        throw new Error(msg.error || 'agent error');
                     }
                 }
+            } catch (err) {
+                live.remove();
+                throw err;
             }
-        } catch (err) {
             live.remove();
-            throw err;
+            return { session_id: resolvedSession, response: acc };
+        } finally {
+            window.activeStreamingSessionId = null;
         }
-        live.remove();
-        return { session_id: resolvedSession, response: acc };
     }
 
     async function sendChat() {
         if (!chatInput || !chatMessages) return;
         const prompt = chatInput.value.trim();
         if (!prompt) return;
-        lastUserPrompt = prompt;
-        const sessionId = currentChatSessionId;
 
-        if (editingMessageIndex !== null && sessionId) {
-            // Truncate message array to everything before the edited message
-            currentSessionMessages = currentSessionMessages.slice(0, editingMessageIndex);
-            
-            // Re-render UI up to the truncated point
-            chatMessages.innerHTML = '';
-            currentSessionMessages.forEach((message, idx) => {
-                addChatMsg(message.role, message.text, false, idx);
-            });
+        chatInput.disabled = true;
+        if (chatSend) chatSend.disabled = true;
 
-            // Call backend to update session files
-            try {
-                await apiPost('sessions/' + encodeURIComponent(sessionId) + '/truncate', {
-                    messages: currentSessionMessages
-                });
-            } catch (e) {
-                console.error('Failed to sync truncated session with backend', e);
-            }
-            hideEditingIndicator();
-        }
-
-        const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-
-        clearTimeline();
-        addChatMsg('user', prompt);
-        chatInput.value = '';
-        autoResizeTextarea(chatInput, 200);
-
-        sessionStorage.setItem('active_request_id_' + (sessionId || 'new'), requestId);
-
-        showThinkingIndicator(sessionId || 'new', requestId);
-        startOutboundLogsPolling(sessionId || 'new', requestId);
-        const removeThinking = () => {
-            if (window.activeOutboundPollInterval) {
-                clearInterval(window.activeOutboundPollInterval);
-                window.activeOutboundPollInterval = null;
-            }
-            const indicator = document.getElementById('think-' + requestId);
-            if (indicator) indicator.remove();
-        };
-        const finishSession = (resolvedId) => {
-            if (resolvedId) {
-                sessionStorage.removeItem('active_request_id_' + sessionId);
-                sessionStorage.removeItem('active_request_id_new');
-                if (!sessionId && currentChatSessionId === null) {
-                    currentChatSessionId = resolvedId;
-                    selectChatSession(resolvedId);
-                }
-            }
-        };
-
-        const streamState = { received: false };
         try {
-            const result = await sendChatStreaming(
-                prompt, sessionId, requestId, streamState, removeThinking);
-            removeThinking();
-            finishSession(result.session_id);
-            if (result.response) {
-                if (result.session_id === currentChatSessionId) {
-                    addChatMsg('assistant', result.response);
-                }
-                await loadChatSessions();
-            } else if (result.session_id === currentChatSessionId) {
-                addChatMsg('assistant', 'Error: no response from agent.');
+            if (window.chatPollInterval) {
+                clearInterval(window.chatPollInterval);
+                window.chatPollInterval = null;
             }
-            return;
-        } catch (err) {
-            removeThinking();
-            // Only fall back to the non-streaming path if nothing was received,
-            // so the prompt is never processed twice.
-            if (streamState.received) {
-                if (sessionId === currentChatSessionId) {
-                    addChatMsg('assistant', 'Error: ' + (err && err.message || 'stream interrupted'));
+            lastUserPrompt = prompt;
+            const sessionId = currentChatSessionId;
+
+            if (editingMessageIndex !== null && sessionId) {
+                // Truncate message array to everything before the edited message
+                currentSessionMessages = currentSessionMessages.slice(0, editingMessageIndex);
+                
+                // Re-render UI up to the truncated point
+                chatMessages.innerHTML = '';
+                currentSessionMessages.forEach((message, idx) => {
+                    addChatMsg(message.role, message.text, false, idx);
+                });
+
+                // Call backend to update session files
+                try {
+                    await apiPost('sessions/' + encodeURIComponent(sessionId) + '/truncate', {
+                        messages: currentSessionMessages
+                    });
+                } catch (e) {
+                    console.error('Failed to sync truncated session with backend', e);
+                }
+                hideEditingIndicator();
+            }
+
+            const requestId = 'req-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+
+            clearTimeline();
+            addChatMsg('user', prompt);
+            chatInput.value = '';
+            autoResizeTextarea(chatInput, 200);
+
+            sessionStorage.setItem('active_request_id_' + (sessionId || 'new'), requestId);
+
+            showThinkingIndicator(sessionId || 'new', requestId);
+            startOutboundLogsPolling(sessionId || 'new', requestId);
+            const removeThinking = () => {
+                if (window.activeOutboundPollInterval) {
+                    clearInterval(window.activeOutboundPollInterval);
+                    window.activeOutboundPollInterval = null;
+                }
+                const indicator = document.getElementById('think-' + requestId);
+                if (indicator) indicator.remove();
+            };
+            const finishSession = (resolvedId) => {
+                if (resolvedId) {
+                    sessionStorage.removeItem('active_request_id_' + sessionId);
+                    sessionStorage.removeItem('active_request_id_new');
+                    if (!sessionId && currentChatSessionId === null) {
+                        currentChatSessionId = resolvedId;
+                        selectChatSession(resolvedId);
+                    }
+                }
+            };
+
+            const streamState = { received: false };
+            try {
+                const result = await sendChatStreaming(
+                    prompt, sessionId, requestId, streamState, removeThinking);
+                removeThinking();
+                finishSession(result.session_id);
+                if (result.response) {
+                    if (result.session_id === currentChatSessionId) {
+                        addChatMsg('assistant', result.response);
+                    }
+                    await loadChatSessions();
+                } else if (result.session_id === currentChatSessionId) {
+                    addChatMsg('assistant', 'Error: no response from agent.');
                 }
                 return;
-            }
-        }
-
-        // Fallback: non-streaming request/response.
-        showThinkingIndicator(sessionId || 'new', requestId);
-        startOutboundLogsPolling(sessionId || 'new', requestId);
-        try {
-            const resp = await apiPost('chat', {
-                prompt: prompt, session_id: sessionId, request_id: requestId, thinking: thinkingMode
-            });
-            removeThinking();
-            finishSession(resp && resp.session_id);
-            if (resp && resp.response) {
-                if (resp.session_id === currentChatSessionId) {
-                    addChatMsg('assistant', resp.response);
+            } catch (err) {
+                removeThinking();
+                // Only fall back to the non-streaming path if nothing was received,
+                // so the prompt is never processed twice.
+                if (streamState.received) {
+                    if (sessionId === currentChatSessionId) {
+                        addChatMsg('assistant', 'Error: ' + (err && err.message || 'stream interrupted'));
+                    }
+                    return;
                 }
-                await loadChatSessions();
-            } else if (resp && resp.session_id === currentChatSessionId) {
-                addChatMsg('assistant', (resp && resp.error) || 'Error: no response from agent.');
             }
-        } catch (err) {
-            removeThinking();
-            sessionStorage.removeItem('active_request_id_' + sessionId);
-            sessionStorage.removeItem('active_request_id_new');
-            if (sessionId === currentChatSessionId) {
-                addChatMsg('assistant', 'Error: connection failed.');
+
+            // Fallback: non-streaming request/response.
+            showThinkingIndicator(sessionId || 'new', requestId);
+            startOutboundLogsPolling(sessionId || 'new', requestId);
+            try {
+                const resp = await apiPost('chat', {
+                    prompt: prompt, session_id: sessionId, request_id: requestId, thinking: thinkingMode
+                });
+                removeThinking();
+                finishSession(resp && resp.session_id);
+                if (resp && resp.response) {
+                    if (resp.session_id === currentChatSessionId) {
+                        addChatMsg('assistant', resp.response);
+                    }
+                    await loadChatSessions();
+                } else if (resp && resp.session_id === currentChatSessionId) {
+                    addChatMsg('assistant', (resp && resp.error) || 'Error: no response from agent.');
+                }
+            } catch (err) {
+                removeThinking();
+                sessionStorage.removeItem('active_request_id_' + sessionId);
+                sessionStorage.removeItem('active_request_id_new');
+                if (sessionId === currentChatSessionId) {
+                    addChatMsg('assistant', 'Error: connection failed.');
+                }
             }
+        } finally {
+            chatInput.disabled = false;
+            if (chatSend) chatSend.disabled = false;
+            chatInput.focus();
         }
     }
 

@@ -20,6 +20,8 @@ static SESSION_COUNTER: AtomicUsize = AtomicUsize::new(1);
 // Arc through every handler signature.
 static ACTIVE_SUBSCRIPTIONS: AtomicUsize = AtomicUsize::new(0);
 
+pub static DAEMON_START_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
 pub struct IpcServer {
     running: Arc<AtomicBool>,
     active_clients: Arc<AtomicUsize>,
@@ -524,6 +526,8 @@ impl IpcServer {
             }
 
             "get_usage" => {
+                let _ = DAEMON_START_TIME.set(std::time::Instant::now());
+                let daemon_uptime = DAEMON_START_TIME.get().map(|t| t.elapsed().as_secs()).unwrap_or(0);
                 if let Some(ss_ref) = agent.get_session_store() {
                     let session_id = params
                         .get("session_id")
@@ -539,7 +543,7 @@ impl IpcServer {
                         Ok(s) => s,
                         Err(err) => {
                             log::error!("IPC get_usage: {}", err);
-                            return json!({"error": err}).to_string();
+                            return json!({"error": err, "daemon_pid": std::process::id(), "daemon_uptime": daemon_uptime}).to_string();
                         }
                     };
                     let usage = if session_id.is_empty() {
@@ -563,10 +567,16 @@ impl IpcServer {
                         "cache_creation_input_tokens": usage.total_cache_creation_input_tokens,
                         "cache_read_input_tokens": usage.total_cache_read_input_tokens,
                         "total_requests": usage.total_requests,
-                        "total_tool_calls": total_tool_calls
+                        "total_tool_calls": total_tool_calls,
+                        "daemon_pid": std::process::id(),
+                        "daemon_uptime": daemon_uptime
                     })
                 } else {
-                    json!({"error": "No session store"})
+                    json!({
+                        "error": "No session store",
+                        "daemon_pid": std::process::id(),
+                        "daemon_uptime": daemon_uptime
+                    })
                 }
             }
 

@@ -614,6 +614,129 @@
     </div>
   </div>
 
+  <!-- Floating Gear Button -->
+  <button id="customizer-toggle" class="customizer-toggle" aria-label="Open theme customizer" title="Customize UI Theme">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>
+  </button>
+
+  <!-- Theme Customizer Modal -->
+  <div id="customizer-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-card-header">
+        <h3>Theme Customizer</h3>
+        <button id="customizer-close" class="modal-close-btn" aria-label="Close customizer">&times;</button>
+      </div>
+      <div class="modal-card-body">
+        <form id="customizer-form" onsubmit="event.preventDefault();">
+          <div class="customizer-group">
+            <label class="customizer-label">Accent Color</label>
+            <div class="customizer-options color-grid">
+              <label class="option-pill">
+                <input type="radio" name="accent-color" value="apple-blue" checked>
+                <span>Apple Blue</span>
+              </label>
+              <label class="option-pill">
+                <input type="radio" name="accent-color" value="cyber-teal">
+                <span>Cyber Teal</span>
+              </label>
+              <label class="option-pill">
+                <input type="radio" name="accent-color" value="emerald-green">
+                <span>Emerald Green</span>
+              </label>
+              <label class="option-pill">
+                <input type="radio" name="accent-color" value="sunset-orange">
+                <span>Sunset Orange</span>
+              </label>
+              <label class="option-pill">
+                <input type="radio" name="accent-color" value="electric-purple">
+                <span>Electric Purple</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="customizer-group">
+            <label class="customizer-label">Background Mode</label>
+            <div class="customizer-options select-grid">
+              <label class="option-card">
+                <input type="radio" name="bg-mode" value="oled-black" checked>
+                <div class="option-card-content">
+                  <span class="option-title">OLED Black</span>
+                </div>
+              </label>
+              <label class="option-card">
+                <input type="radio" name="bg-mode" value="deep-space-gray">
+                <div class="option-card-content">
+                  <span class="option-title">Deep Space Gray</span>
+                </div>
+              </label>
+              <label class="option-card">
+                <input type="radio" name="bg-mode" value="midnight-navy">
+                <div class="option-card-content">
+                  <span class="option-title">Midnight Navy</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div class="customizer-group">
+            <label class="customizer-label">UI Style</label>
+            <div class="customizer-options select-grid">
+              <label class="option-card">
+                <input type="radio" name="ui-style" value="liquid-glass" checked>
+                <div class="option-card-content">
+                  <span class="option-title">Liquid Glass</span>
+                </div>
+              </label>
+              <label class="option-card">
+                <input type="radio" name="ui-style" value="flat-minimalist">
+                <div class="option-card-content">
+                  <span class="option-title">Flat Minimalist</span>
+                </div>
+              </label>
+              <label class="option-card">
+                <input type="radio" name="ui-style" value="bento-grid">
+                <div class="option-card-content">
+                  <span class="option-title">Bento Grid</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div class="customizer-group">
+            <label class="customizer-label">Font Family</label>
+            <div class="customizer-options select-grid">
+              <label class="option-card">
+                <input type="radio" name="font-family" value="apple-system" checked>
+                <div class="option-card-content">
+                  <span class="option-title">Apple System UI</span>
+                </div>
+              </label>
+              <label class="option-card">
+                <input type="radio" name="font-family" value="inter-outfit">
+                <div class="option-card-content">
+                  <span class="option-title">Inter/Outfit</span>
+                </div>
+              </label>
+              <label class="option-card">
+                <input type="radio" name="font-family" value="sf-jetbrains">
+                <div class="option-card-content">
+                  <span class="option-title">SF Pro + Mono</span>
+                </div>
+              </label>
+            </div>
+          </div>
+        </form>
+      </div>
+      <div class="modal-card-footer">
+        <button id="customizer-save-btn" class="btn-primary">Save & Apply</button>
+        <button id="customizer-reset-btn" class="btn-outline">Reset to Default</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/marked.min.js"></script>
   <script src="/app.js?v=20260608c"></script>
 </body>
