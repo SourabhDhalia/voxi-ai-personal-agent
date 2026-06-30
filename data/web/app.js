@@ -643,16 +643,31 @@
         } else if (cfg.backends && typeof cfg.backends === 'object') {
             providers = Object.keys(cfg.backends);
         }
-        let html = '<div class="llm-card">';
-        html += '<div class="llm-row"><span class="llm-label">Active backend</span>'
-            + '<span class="llm-active">' + escHtml(String(active)) + '</span></div>';
+        let html = '<div class="llm-providers-container">';
+        html += '<div class="llm-provider-group">';
+        html += '<span class="llm-group-label">Active Backend</span>';
+        html += '<div class="llm-chips-flex">';
+        html += '<span class="llm-chip active-backend-chip">' + escHtml(String(active)) + '</span>';
+        html += '</div></div>';
+        
         if (fallbacks.length) {
-            html += '<div class="llm-row"><span class="llm-label">Fallbacks</span>'
-                + '<span class="llm-value">' + fallbacks.map(f => escHtml(String(f))).join(', ') + '</span></div>';
+            html += '<div class="llm-provider-group">';
+            html += '<span class="llm-group-label">Fallbacks</span>';
+            html += '<div class="llm-chips-flex">';
+            fallbacks.forEach(f => {
+                html += '<span class="llm-chip fallback-chip">' + escHtml(String(f)) + '</span>';
+            });
+            html += '</div></div>';
         }
+        
         if (providers.length) {
-            html += '<div class="llm-row"><span class="llm-label">Configured</span>'
-                + '<span class="llm-value">' + providers.map(p => escHtml(String(p))).join(', ') + '</span></div>';
+            html += '<div class="llm-provider-group">';
+            html += '<span class="llm-group-label">Configured Providers</span>';
+            html += '<div class="llm-chips-flex">';
+            providers.forEach(p => {
+                html += '<span class="llm-chip provider-chip">' + escHtml(String(p)) + '</span>';
+            });
+            html += '</div></div>';
         }
         html += '</div>';
         el.innerHTML = html;

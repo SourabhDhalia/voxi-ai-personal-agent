@@ -90,27 +90,54 @@
           <span class="refresh-hint">Auto-refresh: 5s</span>
         </div>
 
-        <!-- Primary Stats -->
-        <div class="stats-grid stats-grid-4" id="stats-grid">
-          <div class="stat-card">
+        <div class="bento-dashboard-grid">
+          <!-- Agent Status Card (Hero) -->
+          <div class="stat-card bento-hero bento-status">
             <div class="stat-icon stat-icon--green">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             </div>
             <div class="stat-body">
               <div class="stat-label">Agent Status</div>
-              <div class="stat-value stat-value--md" id="stat-status">—</div>
+              <div class="stat-value stat-value--lg" id="stat-status">—</div>
             </div>
           </div>
-          <div class="stat-card">
+
+          <!-- System Health Stats (Memory, CPU, Threads, PID) in a compact sub-grid -->
+          <div class="stat-card bento-health">
+            <div class="bento-health-title">System Health</div>
+            <div class="bento-health-subgrid">
+              <div class="health-subitem">
+                <span class="health-label">Memory (RSS)</span>
+                <span class="health-value" id="stat-memory">—</span>
+              </div>
+              <div class="health-subitem">
+                <span class="health-label">CPU Load (1m)</span>
+                <span class="health-value" id="stat-cpu">—</span>
+              </div>
+              <div class="health-subitem">
+                <span class="health-label">Threads</span>
+                <span class="health-value" id="stat-threads">—</span>
+              </div>
+              <div class="health-subitem">
+                <span class="health-label">PID</span>
+                <span class="health-value" id="stat-pid">—</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Uptime Card (Hero) -->
+          <div class="stat-card bento-hero bento-uptime">
             <div class="stat-icon stat-icon--blue">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
             </div>
             <div class="stat-body">
               <div class="stat-label">Uptime</div>
-              <div class="stat-value stat-value--md" id="stat-uptime">—</div>
+              <div class="stat-value stat-value--lg" id="stat-uptime">—</div>
             </div>
           </div>
-          <div class="stat-card">
+
+          <!-- Sessions Card -->
+          <div class="stat-card bento-tile">
             <div class="stat-icon stat-icon--purple">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
             </div>
@@ -119,7 +146,9 @@
               <div class="stat-value" id="stat-sessions">—</div>
             </div>
           </div>
-          <div class="stat-card">
+
+          <!-- Tasks Card -->
+          <div class="stat-card bento-tile">
             <div class="stat-icon stat-icon--teal">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
             </div>
@@ -128,33 +157,9 @@
               <div class="stat-value" id="stat-tasks">—</div>
             </div>
           </div>
-        </div>
 
-        <!-- LLM Usage -->
-        <h3 class="section-title">
-          LLM Usage
-          <span class="section-badge" id="usage-source-badge"></span>
-        </h3>
-        <div class="stats-grid stats-grid-3">
-          <div class="stat-card">
-            <div class="stat-icon stat-icon--indigo">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>
-            </div>
-            <div class="stat-body">
-              <div class="stat-label">LLM Calls (today)</div>
-              <div class="stat-value" id="stat-llm">—</div>
-            </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon stat-icon--amber">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-            </div>
-            <div class="stat-body">
-              <div class="stat-label">Tool Calls</div>
-              <div class="stat-value" id="stat-tools">—</div>
-            </div>
-          </div>
-          <div class="stat-card">
+          <!-- Errors Card -->
+          <div class="stat-card bento-tile bento-danger">
             <div class="stat-icon stat-icon--red">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             </div>
@@ -163,15 +168,31 @@
               <div class="stat-value stat-error" id="stat-errors">—</div>
             </div>
           </div>
-        </div>
 
-        <!-- Token Usage -->
-        <h3 class="section-title">
-          Token Usage
-          <span class="section-sub">(today, all sessions)</span>
-        </h3>
-        <div class="stats-grid stats-grid-4">
-          <div class="stat-card">
+          <!-- LLM Calls -->
+          <div class="stat-card bento-tile">
+            <div class="stat-icon stat-icon--indigo">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/></svg>
+            </div>
+            <div class="stat-body">
+              <div class="stat-label">LLM Calls</div>
+              <div class="stat-value" id="stat-llm">—</div>
+            </div>
+          </div>
+
+          <!-- Tool Calls -->
+          <div class="stat-card bento-tile">
+            <div class="stat-icon stat-icon--amber">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            </div>
+            <div class="stat-body">
+              <div class="stat-label">Tool Calls</div>
+              <div class="stat-value" id="stat-tools">—</div>
+            </div>
+          </div>
+
+          <!-- Prompt Tokens -->
+          <div class="stat-card bento-tile">
             <div class="stat-icon stat-icon--violet">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
             </div>
@@ -180,7 +201,9 @@
               <div class="stat-value" id="stat-prompt-tokens">—</div>
             </div>
           </div>
-          <div class="stat-card">
+
+          <!-- Completion Tokens -->
+          <div class="stat-card bento-tile">
             <div class="stat-icon stat-icon--cyan">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
             </div>
@@ -189,7 +212,9 @@
               <div class="stat-value" id="stat-completion-tokens">—</div>
             </div>
           </div>
-          <div class="stat-card">
+
+          <!-- Cache Read -->
+          <div class="stat-card bento-tile">
             <div class="stat-icon stat-icon--green">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             </div>
@@ -198,7 +223,9 @@
               <div class="stat-value" id="stat-cache-read">—</div>
             </div>
           </div>
-          <div class="stat-card">
+
+          <!-- Cache Write -->
+          <div class="stat-card bento-tile">
             <div class="stat-icon stat-icon--orange">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 9v4a2 2 0 01-2 2H5a2 2 0 01-2-2V9"/><polyline points="7 14 12 9 17 14"/><line x1="12" y1="9" x2="12" y2="21"/></svg>
             </div>
@@ -207,65 +234,21 @@
               <div class="stat-value" id="stat-cache-write">—</div>
             </div>
           </div>
-        </div>
 
-        <!-- System Health -->
-        <h3 class="section-title">System Health</h3>
-        <div class="stats-grid stats-grid-4" id="health-grid">
-          <div class="stat-card">
-            <div class="stat-icon stat-icon--blue">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M9 9h1v6H9zM12 7h1v8h-1zM15 11h1v4h-1z"/></svg>
-            </div>
-            <div class="stat-body">
-              <div class="stat-label">Memory (RSS)</div>
-              <div class="stat-value" id="stat-memory">—</div>
-            </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon stat-icon--purple">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-            </div>
-            <div class="stat-body">
-              <div class="stat-label">CPU Load (1m)</div>
-              <div class="stat-value" id="stat-cpu">—</div>
-            </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon stat-icon--teal">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>
-            </div>
-            <div class="stat-body">
-              <div class="stat-label">Threads</div>
-              <div class="stat-value" id="stat-threads">—</div>
-            </div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-icon stat-icon--slate">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-            </div>
-            <div class="stat-body">
-              <div class="stat-label">PID</div>
-              <div class="stat-value" id="stat-pid">—</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Live Trends -->
-        <h3 class="section-title">Live Trends <span class="section-sub">(this session · 5s samples)</span></h3>
-        <div class="trends-grid">
-          <div class="trend-card">
+          <!-- Live Trends Cards -->
+          <div class="trend-card bento-trend-cpu">
             <div class="trend-head"><span class="trend-label">CPU Load (1m)</span><span class="trend-now" id="trend-cpu-now">—</span></div>
             <canvas class="trend-canvas" id="chart-cpu" width="300" height="64" role="img" aria-label="CPU load trend (live)"></canvas>
           </div>
-          <div class="trend-card">
+          <div class="trend-card bento-trend-mem">
             <div class="trend-head"><span class="trend-label">Memory (MB)</span><span class="trend-now" id="trend-mem-now">—</span></div>
             <canvas class="trend-canvas" id="chart-mem" width="300" height="64" role="img" aria-label="Memory usage trend (live)"></canvas>
           </div>
-          <div class="trend-card">
+          <div class="trend-card bento-trend-calls">
             <div class="trend-head"><span class="trend-label">LLM Calls (today)</span><span class="trend-now" id="trend-calls-now">—</span></div>
             <canvas class="trend-canvas" id="chart-calls" width="300" height="64" role="img" aria-label="LLM calls trend (live)"></canvas>
           </div>
-          <div class="trend-card">
+          <div class="trend-card bento-trend-tokens">
             <div class="trend-head"><span class="trend-label">Total Tokens (today)</span><span class="trend-now" id="trend-tokens-now">—</span></div>
             <canvas class="trend-canvas" id="chart-tokens" width="300" height="64" role="img" aria-label="Total tokens trend (live)"></canvas>
           </div>
