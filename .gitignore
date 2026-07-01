@@ -130,3 +130,7 @@ src/voxi/error.log
 .dev_note/
 plans/
 
+# Subagent workspaces
+.agents/
+/ORIGINAL_REQUEST.md
+
