@@ -1,20 +1,21 @@
-# Project: Voxi Dashboard Redesign
+# Project: Voxi OS Workspace Redesign
 
 ## Architecture
 - Single Page Application (SPA) served as static assets by Axum Rust web server.
 - Interface with the Voxi Agent daemon via UNIX socket API endpoint `/api/metrics` for stats, and `/api/chat/stream` for chat streaming.
 - CSS style variables in `:root` and user customizer class rules on `<html>` control colors, shadows, borders, backgrounds, fonts, and styles.
 - Customizer settings persisted in browser `localStorage` as JSON (`voxi_ui_config`).
+- Unified workspace canvas (`#workspace-canvas`) replacing standard layouts with resizable, snappable window panels.
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| 1 | Stage 1: Planning | Define scope, analyze requirements, establish bindings preservation map | None | DONE |
-| 2 | Stage 2: Design | Draft the CSS layout architecture, Bento grid structure, frosted glass effects, navigation styles, and custom scrollbars | M1 | IN_PROGRESS |
-| 3 | Stage 3: Development | Implement UI structural changes in `index.html`, style variables and elements in `style.css`, and chat streaming/metric stability in `app.js` | M2 | PLANNED |
-| 4 | Stage 4: Build/Deploy | Execute GBS deployment via `./deploy.sh` to package and serve new web assets | M3 | PLANNED |
-| 5 | Stage 5: Test/Review | Run `./deploy.sh --test` to verify front-end serving, metric polling integrity, and test coverage | M4 | PLANNED |
-| 6 | Stage 6: Commit/Push | Save changes via version manager skill to repository with upstream-compliant commit message | M5 | PLANNED |
+| 1 | Stage 1: Planning | Define workspace redesign requirements, map DOM bindings to preserve, and outline panel structure | None | DONE |
+| 2 | Stage 2: Design | Draft the workspace grid layout, window header layout, command palette, and context menu | M1 | DONE |
+| 3 | Stage 3: Development | Implement `.nav-rail`, `#workspace-canvas`, panel snapping, Command Palette, and Custom Context Menu in html/css/js | M2 | DONE |
+| 4 | Stage 4: Build/Deploy | Execute deployment via `./deploy.sh` to package and serve new OS workspace assets | M3 | DONE |
+| 5 | Stage 5: Test/Review | Run `./deploy.sh --test` to verify telemetry data, chat streams, window controls, and run reviews/audits | M4 | DONE |
+| 6 | Stage 6: Commit/Push | Save changes via version manager skill to repository with upstream-compliant commit message | M5 | DONE |
 
 ## Interface Contracts
 ### `app.js` ↔ `index.html` (DOM Bindings)

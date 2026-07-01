@@ -238,7 +238,7 @@
 
     // --- Navigation ---
     const navItems =
-        document.querySelectorAll('.nav-item');
+        document.querySelectorAll('.rail-item');
     const pages =
         document.querySelectorAll('.page');
     let metricsInterval = null;
@@ -248,24 +248,30 @@
             'dashboard_outbound_cursor') || '0', 10) || 0;
 
     function navigateTo(page) {
+        const canvas = document.getElementById('workspace-canvas');
+        const badge = document.getElementById('workspace-mode-badge');
+        
         navItems.forEach(n =>
             n.classList.remove('active'));
-        pages.forEach(p =>
-            p.classList.remove('active'));
+        pages.forEach(p => {
+            p.classList.remove('active');
+            p.classList.remove('maximized');
+        });
 
         // Stop dashboard auto-refresh when leaving
-        if (page !== 'dashboard' && metricsInterval) {
-            clearInterval(metricsInterval);
-            metricsInterval = null;
-        }
-
-        if (page !== 'chat' && window.chatPollInterval) {
-            clearInterval(window.chatPollInterval);
-            window.chatPollInterval = null;
-        }
-
-        if (page !== 'logs' && logLiveTimer) {
-            stopLogLive();
+        const inGrid = page === 'workspace-grid';
+        if (!inGrid) {
+            if (page !== 'dashboard' && metricsInterval) {
+                clearInterval(metricsInterval);
+                metricsInterval = null;
+            }
+            if (page !== 'chat' && window.chatPollInterval) {
+                clearInterval(window.chatPollInterval);
+                window.chatPollInterval = null;
+            }
+            if (page !== 'logs' && logLiveTimer) {
+                stopLogLive();
+            }
         }
 
         const navEl =
@@ -273,23 +279,45 @@
         const pageEl =
             document.getElementById('page-' + page);
         if (navEl) navEl.classList.add('active');
-        if (pageEl) pageEl.classList.add('active');
-
-        if (page === 'dashboard') loadDashboard();
-        else if (page === 'search') focusSearch();
-        else if (page === 'sessions') loadSessions();
-        else if (page === 'tasks') loadTasks();
-        else if (page === 'logs') loadLogs();
-        else if (page === 'chat') {
+        
+        if (inGrid) {
+            if (canvas) canvas.classList.add('grid-mode');
+            if (badge) badge.textContent = 'Grid Mode';
+            pages.forEach(p => {
+                p.classList.add('active');
+            });
+            loadDashboard();
+            loadLogs();
+            loadTasks();
             loadChatSessions().then(() => {
                 if (currentChatSessionId) {
                     loadChatSessionDetail(currentChatSessionId);
                 }
             });
+        } else {
+            if (canvas) canvas.classList.remove('grid-mode');
+            if (badge) badge.textContent = 'Focus Mode';
+            if (pageEl) {
+                pageEl.classList.add('active');
+                pageEl.classList.add('maximized');
+            }
+
+            if (page === 'dashboard') loadDashboard();
+            else if (page === 'search') focusSearch();
+            else if (page === 'sessions') loadSessions();
+            else if (page === 'tasks') loadTasks();
+            else if (page === 'logs') loadLogs();
+            else if (page === 'chat') {
+                loadChatSessions().then(() => {
+                    if (currentChatSessionId) {
+                        loadChatSessionDetail(currentChatSessionId);
+                    }
+                });
+            }
+            else if (page === 'skills') loadSkills();
+            else if (page === 'ota') loadOta();
+            else if (page === 'admin') loadAdmin();
         }
-        else if (page === 'skills') loadSkills();
-        else if (page === 'ota') loadOta();
-        else if (page === 'admin') loadAdmin();
     }
 
     navItems.forEach(item => {
@@ -2353,6 +2381,9 @@
             chatInput.disabled = false;
             if (chatSend) chatSend.disabled = false;
             chatInput.focus();
+            if (typeof window._highlightChatInputNeeded === 'function') {
+                window._highlightChatInputNeeded(true);
+            }
         }
     }
 
@@ -4138,10 +4169,22 @@
     function handleIncomingEvent(type, data, timestamp) {
         if (type === 'tool_start') {
             addTimelineNode(data.tool, data.arguments);
+            if (data && data.tool === 'run_command') {
+                const logsPanel = document.getElementById('page-logs');
+                if (logsPanel) {
+                    logsPanel.classList.remove('closed');
+                    logsPanel.classList.remove('hidden');
+                    logsPanel.classList.remove('minimized');
+                    logsPanel.classList.add('active');
+                }
+            }
         } else if (type === 'tool_end') {
             updateTimelineNode(data.tool, data.success, data.error);
         } else if (type === 'hook_approval_request') {
             showHookApprovalModal(data);
+            if (typeof window._highlightChatInputNeeded === 'function') {
+                window._highlightChatInputNeeded(true);
+            }
         } else if (type === 'hook_approval_resolved') {
             if (currentApprovalId === data.approval_id) {
                 hideHookApprovalModal();
@@ -4397,40 +4440,390 @@
         setNow('trend-tokens-now', tokens != null ? fmtTokens(tokens) : '—');
     }
 
-    // --- Theme toggle (light / dark) ---
-    (function initTheme() {
-        const saved = localStorage.getItem('voxi-theme');
-        if (saved === 'light' || saved === 'dark') {
-            document.documentElement.setAttribute('data-theme', saved);
-        }
-        const toggle = document.getElementById('theme-toggle');
-        if (toggle) {
+    // --- Unified Theme State & Toggle ---
+    function initTheme() {
+        const saved = localStorage.getItem('voxi_theme') || 'dark';
+        document.documentElement.setAttribute('data-theme', saved);
+        
+        const toggles = document.querySelectorAll('.theme-toggle');
+        toggles.forEach(toggle => {
             toggle.addEventListener('click', function () {
                 const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
                 const next = cur === 'light' ? 'dark' : 'light';
                 document.documentElement.setAttribute('data-theme', next);
-                localStorage.setItem('voxi-theme', next);
+                localStorage.setItem('voxi_theme', next);
                 if (typeof window.__voxiRedrawCharts === 'function') window.__voxiRedrawCharts();
             });
+        });
+    }
+
+    // --- Workspace Redesign Initialization ---
+    function initWorkspaceRedesign() {
+        // Navigation Rail toggle (Expand/Collapse)
+        const rail = document.getElementById('nav-rail');
+        const railToggleBtns = document.querySelectorAll('#rail-toggle-btn');
+        railToggleBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (rail) rail.classList.toggle('collapsed');
+            });
+        });
+
+        // Panel Actions (Minimize, Maximize, Close, split, stack/tabs)
+        const panels = document.querySelectorAll('.canvas-panel');
+        panels.forEach(panel => {
+            const minBtn = panel.querySelector('.btn-panel-minimize');
+            const maxBtn = panel.querySelector('.btn-panel-maximize');
+            const closeBtn = panel.querySelector('.btn-panel-close');
+            const splitVBtn = panel.querySelector('.btn-panel-split-v');
+
+            if (minBtn) {
+                minBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    panel.classList.toggle('minimized');
+                });
+            }
+
+            if (maxBtn) {
+                maxBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const isMax = panel.classList.contains('maximized');
+                    panels.forEach(p => p.classList.remove('maximized'));
+                    if (!isMax) {
+                        panel.classList.add('maximized');
+                        const canvas = document.getElementById('workspace-canvas');
+                        if (canvas) canvas.classList.remove('grid-mode');
+                        const badge = document.getElementById('workspace-mode-badge');
+                        if (badge) badge.textContent = 'Focus Mode';
+                    } else {
+                        const canvas = document.getElementById('workspace-canvas');
+                        if (canvas) canvas.classList.add('grid-mode');
+                        const badge = document.getElementById('workspace-mode-badge');
+                        if (badge) badge.textContent = 'Grid Mode';
+                    }
+                });
+            }
+
+            if (closeBtn) {
+                closeBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    panel.classList.add('closed');
+                });
+            }
+
+            if (splitVBtn) {
+                splitVBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    panel.classList.toggle('split-v');
+                    
+                    let body = panel.querySelector('.panel-body');
+                    if (!body) return;
+                    
+                    let secondary = body.querySelector('.pane-secondary');
+                    if (panel.classList.contains('split-v')) {
+                        if (!secondary) {
+                            let primary = body.querySelector('.pane-primary');
+                            if (!primary) {
+                                primary = document.createElement('div');
+                                primary.className = 'pane-primary';
+                                while (body.firstChild) {
+                                    primary.appendChild(body.firstChild);
+                                }
+                                body.appendChild(primary);
+                            }
+                            
+                            secondary = document.createElement('div');
+                            secondary.className = 'pane-secondary';
+                            secondary.innerHTML = `
+                                <div class="split-pane-header">
+                                    <span>Terminal Console</span>
+                                    <button class="btn-close-split" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer;">&times;</button>
+                                </div>
+                                <div class="split-pane-content" style="padding: 12px; font-family:var(--font-mono); font-size:0.75rem; color:var(--text-secondary); height:100%; overflow-y:auto;">
+                                    <p style="color:var(--success)">$ systemctl status voxi</p>
+                                    <p>● voxi.service - Voxi Autonomous Agent Daemon</p>
+                                    <p>   Active: active (running) since Wed 2026-07-01 08:40:23 UTC</p>
+                                    <p style="color:var(--warning); margin-top:8px;">[LOG] Watching files for changes...</p>
+                                </div>
+                            `;
+                            body.appendChild(secondary);
+                            
+                            secondary.querySelector('.btn-close-split').addEventListener('click', () => {
+                                panel.classList.remove('split-v');
+                                secondary.remove();
+                            });
+                        }
+                    } else {
+                        if (secondary) {
+                            secondary.remove();
+                        }
+                    }
+                });
+            }
+        });
+
+        // Panel Stacking & Tabs
+        document.querySelectorAll('.panel-tabs').forEach(tabsContainer => {
+            const btns = tabsContainer.querySelectorAll('.panel-tab-btn');
+            btns.forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    btns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    
+                    const tabName = btn.dataset.tab;
+                    const panel = btn.closest('.canvas-panel');
+                    const sidebar = panel.querySelector('.chat-sidebar');
+                    const main = panel.querySelector('.chat-main');
+                    
+                    if (tabName === 'chat-main-tab') {
+                        if (main) main.style.display = 'flex';
+                        if (sidebar) sidebar.style.display = 'none';
+                    } else if (tabName === 'chat-history-tab') {
+                        if (main) main.style.display = 'none';
+                        if (sidebar) sidebar.style.display = 'flex';
+                    }
+                });
+            });
+        });
+
+        // Command Palette Setup
+        const palette = document.getElementById('command-palette');
+        const paletteInput = document.getElementById('palette-input');
+        const paletteResults = palette ? palette.querySelector('.palette-results') : null;
+
+        if (palette && paletteInput && paletteResults) {
+            const commands = [
+                { name: "Open Chat Workspace", action: () => navigateTo('chat'), shortcut: "⌘1" },
+                { name: "Open System Metrics", action: () => navigateTo('dashboard'), shortcut: "⌘2" },
+                { name: "Open Audit Console", action: () => navigateTo('logs'), shortcut: "⌘3" },
+                { name: "Open Tasks Checklist", action: () => navigateTo('tasks'), shortcut: "⌘4" },
+                { name: "Open Semantic Search", action: () => navigateTo('search'), shortcut: "⌘5" },
+                { name: "Open Session Manager", action: () => navigateTo('sessions'), shortcut: "⌘6" },
+                { name: "Open Skills Console", action: () => navigateTo('skills'), shortcut: "⌘7" },
+                { name: "Open OTA Updates", action: () => navigateTo('ota'), shortcut: "⌘8" },
+                { name: "Open Admin Console", action: () => navigateTo('admin'), shortcut: "⌘9" },
+                { name: "Enable Grid Workspace Layout", action: () => navigateTo('workspace-grid'), shortcut: "⌘G" },
+                { name: "Reset Workspace Layout", action: () => resetWorkspaceLayout(), shortcut: "⌘R" },
+                { name: "Toggle Theme (Light / Dark)", action: () => toggleTheme(), shortcut: "⌘T" },
+                { name: "Switch to Liquid Glass Style", action: () => switchUIStyle('liquid-glass'), shortcut: "⌥L" },
+                { name: "Switch to Flat Minimalist Style", action: () => switchUIStyle('flat-minimalist'), shortcut: "⌥F" },
+                { name: "Switch to Bento Grid Style", action: () => switchUIStyle('bento-grid'), shortcut: "⌥B" },
+                { name: "Create New Chat Session", action: () => {
+                    const btn = document.getElementById('chat-new-session');
+                    if (btn) btn.click();
+                }, shortcut: "⌘N" }
+            ];
+
+            let selectedIdx = 0;
+            let filtered = [...commands];
+
+            const renderResults = () => {
+                paletteResults.innerHTML = '';
+                if (filtered.length === 0) {
+                    paletteResults.innerHTML = '<div class="palette-empty">No commands found</div>';
+                    return;
+                }
+                const group = document.createElement('div');
+                group.className = 'palette-group';
+                group.innerHTML = '<span class="palette-group-label">Commands & Actions</span>';
+                filtered.forEach((cmd, idx) => {
+                    const item = document.createElement('div');
+                    item.className = 'palette-item' + (idx === selectedIdx ? ' active' : '');
+                    item.innerHTML = `
+                        <span class="palette-item-name">${cmd.name}</span>
+                        <kbd class="palette-shortcut">${cmd.shortcut}</kbd>
+                    `;
+                    item.addEventListener('click', () => {
+                        cmd.action();
+                        closePalette();
+                    });
+                    group.appendChild(item);
+                });
+                paletteResults.appendChild(group);
+            };
+
+            const openPalette = () => {
+                palette.classList.remove('hidden');
+                palette.showModal && palette.showModal();
+                paletteInput.value = '';
+                selectedIdx = 0;
+                filtered = [...commands];
+                renderResults();
+                setTimeout(() => paletteInput.focus(), 50);
+            };
+
+            const closePalette = () => {
+                palette.classList.add('hidden');
+                palette.close && palette.close();
+            };
+
+            window.toggleCommandPalette = openPalette;
+
+            paletteInput.addEventListener('input', () => {
+                const q = paletteInput.value.toLowerCase().trim();
+                if (!q) {
+                    filtered = [...commands];
+                } else {
+                    filtered = commands.filter(c => c.name.toLowerCase().includes(q));
+                }
+                selectedIdx = 0;
+                renderResults();
+            });
+
+            palette.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    closePalette();
+                } else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    selectedIdx = (selectedIdx + 1) % filtered.length;
+                    renderResults();
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    selectedIdx = (selectedIdx - 1 + filtered.length) % filtered.length;
+                    renderResults();
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (filtered[selectedIdx]) {
+                        filtered[selectedIdx].action();
+                        closePalette();
+                    }
+                }
+            });
+
+            palette.addEventListener('click', (e) => {
+                if (e.target === palette) {
+                    closePalette();
+                }
+            });
+
+            const headerCmdBtn = document.getElementById('header-cmd-btn');
+            if (headerCmdBtn) {
+                headerCmdBtn.addEventListener('click', openPalette);
+            }
         }
-    })();
+
+        // Global keydown Ctrl/Cmd+K to open Command Palette
+        window.addEventListener('keydown', (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+                e.preventDefault();
+                if (window.toggleCommandPalette) {
+                    window.toggleCommandPalette();
+                }
+            }
+        });
+
+        // Context Action Menu Setup
+        const ctxMenu = document.getElementById('context-action-menu');
+        const canvas = document.getElementById('workspace-canvas');
+        if (ctxMenu && canvas) {
+            canvas.addEventListener('contextmenu', (e) => {
+                if (e.target === canvas || e.target.classList.contains('workspace-canvas') || e.target.id === 'workspace-canvas') {
+                    e.preventDefault();
+                    ctxMenu.style.left = e.clientX + 'px';
+                    ctxMenu.style.top = e.clientY + 'px';
+                    ctxMenu.classList.remove('hidden');
+                } else {
+                    ctxMenu.classList.add('hidden');
+                }
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!ctxMenu.contains(e.target)) {
+                    ctxMenu.classList.add('hidden');
+                }
+            });
+
+            ctxMenu.querySelectorAll('.context-menu-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const action = item.dataset.action;
+                    if (action === 'grid') {
+                        navigateTo('workspace-grid');
+                    } else if (action === 'reset') {
+                        resetWorkspaceLayout();
+                    } else if (action === 'chat') {
+                        navigateTo('chat');
+                    } else if (action === 'metrics') {
+                        navigateTo('dashboard');
+                    }
+                    ctxMenu.classList.add('hidden');
+                });
+            });
+        }
+
+        const headerResetBtn = document.getElementById('header-reset-btn');
+        if (headerResetBtn) {
+            headerResetBtn.addEventListener('click', resetWorkspaceLayout);
+        }
+
+        // Expose input needed highlight helper
+        window._highlightChatInputNeeded = (needed) => {
+            const chatPanel = document.getElementById('page-chat');
+            if (chatPanel) {
+                if (needed) {
+                    chatPanel.classList.add('input-needed');
+                } else {
+                    chatPanel.classList.remove('input-needed');
+                }
+            }
+        };
+
+        // Listen for user typing in chat to clear input-needed highlight
+        const chatInputArea = document.getElementById('chat-input');
+        if (chatInputArea) {
+            chatInputArea.addEventListener('input', () => {
+                window._highlightChatInputNeeded(false);
+            });
+        }
+    }
+
+    // Reset Workspace Layout helper
+    function resetWorkspaceLayout() {
+        const canvas = document.getElementById('workspace-canvas');
+        if (canvas) canvas.classList.add('grid-mode');
+        const badge = document.getElementById('workspace-mode-badge');
+        if (badge) badge.textContent = 'Grid Mode';
+        
+        const panels = document.querySelectorAll('.canvas-panel');
+        panels.forEach(p => {
+            p.classList.remove('closed');
+            p.classList.remove('minimized');
+            p.classList.remove('maximized');
+            p.classList.remove('split-v');
+            p.classList.remove('split-h');
+            p.classList.add('active');
+            
+            let secondary = p.querySelector('.pane-secondary');
+            if (secondary) secondary.remove();
+        });
+        
+        navigateTo('workspace-grid');
+    }
+
+    // Theme Toggle helper
+    function toggleTheme() {
+        const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+        const next = cur === 'light' ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', next);
+        localStorage.setItem('voxi_theme', next);
+        if (typeof window.__voxiRedrawCharts === 'function') window.__voxiRedrawCharts();
+    }
+
+    // Style Switcher helper
+    function switchUIStyle(style) {
+        const config = loadUIConfig();
+        config.uiStyle = style;
+        saveUIConfig(config);
+        applyUIConfig(config);
+        updateCustomizerForm(config);
+    }
 
     // --- Initial Load ---
+    initTheme();
     formatChatSessionMeta();
     startOutboundPolling();
     initEventStream();
-    loadDashboard();
-
-    // Theme toggle button handler
-    const themeBtn = document.getElementById('theme-toggle-btn');
-    if (themeBtn) {
-        themeBtn.addEventListener('click', () => {
-            const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
-            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('voxi_theme', newTheme);
-        });
-    }
+    navigateTo('workspace-grid'); // Bootstrap in grid-mode workspace
+    initWorkspaceRedesign();
 
     // Wire up event delegation for log tail buttons once
     const logContentEl = document.getElementById('log-content');
@@ -4508,13 +4901,6 @@
                 if (e.key === 'Enter') { e.preventDefault(); runSearch(); }
             });
         }
-        // Global Ctrl/Cmd+K opens semantic search.
-        document.addEventListener('keydown', function (e) {
-            if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
-                e.preventDefault();
-                navigateTo('search');
-                focusSearch();
-            }
-        });
     })();
+})();
 })();
